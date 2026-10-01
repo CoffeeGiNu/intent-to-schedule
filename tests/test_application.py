@@ -173,7 +173,7 @@ def test_scheduling_execute_returns_command_rejection() -> None:
     )
 
     assert isinstance(result, Rejected)
-    assert result.violations == Violations((Violation("Task does not exist"),))
+    assert result.violations == Violations((Violation("Task missing does not exist"),))
     assert validator.problems == []
     assert original.tasks == ()
 
@@ -219,7 +219,7 @@ def test_conversation_ambiguous_and_failures() -> None:
     assert solver.problem is None
 
     rejected: Conversation = Conversation(Translator(Translated((RemoveTask(TaskId("a")),))), Scheduling(solver, ()))
-    with pytest.raises(ConsistencyError, match="Task does not exist"):
+    with pytest.raises(ConsistencyError, match="Task a does not exist"):
         rejected.respond((), original, None)
 
     first: Validator = Validator("first")

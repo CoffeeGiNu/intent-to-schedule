@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, PlainValidator, WithJsonSchema
 
 from intent_to_schedule.application.command import AddConstraint, AddTask, RemoveConstraint, RemoveTask, ReplaceTask, SchedulingCommand
 from intent_to_schedule.domain.calendar import TimeInterval
@@ -11,6 +11,25 @@ from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantit
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance, Task, TaskId
+
+
+def _parse_id(value: object, id_type: type[TaskId] | type[PersonId] | type[ConstraintId]) -> TaskId | PersonId | ConstraintId:
+    """Accept a string or an existing domain ID."""
+    if isinstance(value, id_type):
+        return value
+    if isinstance(value, str):
+        return id_type(value)
+    raise ValueError("ID must be a string")
+
+
+type TaskIdField = Annotated[TaskId, PlainValidator(lambda value: _parse_id(value, TaskId)), PlainSerializer(lambda value: value.value), WithJsonSchema({"type": "string"})]
+"""Task ID encoded as a JSON string."""
+
+type PersonIdField = Annotated[PersonId, PlainValidator(lambda value: _parse_id(value, PersonId)), PlainSerializer(lambda value: value.value), WithJsonSchema({"type": "string"})]
+"""Person ID encoded as a JSON string."""
+
+type ConstraintIdField = Annotated[ConstraintId, PlainValidator(lambda value: _parse_id(value, ConstraintId)), PlainSerializer(lambda value: value.value), WithJsonSchema({"type": "string"})]
+"""Constraint ID encoded as a JSON string."""
 
 
 class OutputModel(BaseModel):
@@ -31,7 +50,7 @@ class TaskOutput(OutputModel):
 
     name: str
     duration: timedelta
-    participant_ids: tuple[PersonId, ...]
+    participant_ids: tuple[PersonIdField, ...]
     importance: Literal["low", "medium", "high"]
     required: bool
     stability: Literal["weak", "normal", "strong"]
@@ -41,29 +60,29 @@ class PointMeasureOutput(OutputModel):
     """Structured output form of PointMeasure."""
 
     kind: Literal["point"]
-    task_id: TaskId
+    task_id: TaskIdField
 
 
 class IntervalMeasureOutput(OutputModel):
     """Structured output form of IntervalMeasure."""
 
     kind: Literal["interval"]
-    task_id: TaskId
+    task_id: TaskIdField
 
 
 class DependencyMeasureOutput(OutputModel):
     """Structured output form of DependencyMeasure."""
 
     kind: Literal["dependency"]
-    from_task_id: TaskId
-    to_task_id: TaskId
+    from_task_id: TaskIdField
+    to_task_id: TaskIdField
 
 
 class AggregateMeasureOutput(OutputModel):
     """Structured output form of AggregateMeasure."""
 
     kind: Literal["aggregate"]
-    task_ids: tuple[TaskId, ...]
+    task_ids: tuple[TaskIdField, ...]
     quantity: Literal["count", "total_duration"]
 
 
@@ -156,7 +175,7 @@ class ReplaceTaskOutput(OutputModel):
     """Structured output form of ReplaceTask."""
 
     kind: Literal["replace_task"]
-    task_id: TaskId
+    task_id: TaskIdField
     replacement: TaskOutput
 
 
@@ -164,7 +183,7 @@ class RemoveTaskOutput(OutputModel):
     """Structured output form of RemoveTask."""
 
     kind: Literal["remove_task"]
-    task_id: TaskId
+    task_id: TaskIdField
 
 
 class AddConstraintOutput(OutputModel):
@@ -178,7 +197,7 @@ class RemoveConstraintOutput(OutputModel):
     """Structured output form of RemoveConstraint."""
 
     kind: Literal["remove_constraint"]
-    constraint_id: ConstraintId
+    constraint_id: ConstraintIdField
 
 
 type ElementCommandOutput = AddTaskOutput | ReplaceTaskOutput | RemoveTaskOutput

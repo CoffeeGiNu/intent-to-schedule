@@ -86,7 +86,7 @@ def test_apply_reject_and_solve(tmp_path: Path, capsys: pytest.CaptureFixture[st
     path: Path = initialized(tmp_path, capsys)
     task_file: Path = tmp_path / "task.json"
     task_file.write_text(json.dumps({"commands": [{"kind": "add_task", "task": {
-        "name": "Review", "duration": "PT1H", "participant_ids": [{"value": "alice"}],
+        "name": "Review", "duration": "PT1H", "participant_ids": ["alice"],
         "importance": "high", "required": True, "stability": "normal",
     }}]}), encoding="utf-8")
     status: int
@@ -98,7 +98,7 @@ def test_apply_reject_and_solve(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
     constraint_input: dict[str, object] = {"commands": [{"kind": "add_constraint", "constraint": {
         "kind": "hard",
-        "measure": {"kind": "point", "task_id": {"value": task_id}},
+        "measure": {"kind": "point", "task_id": task_id},
         "evaluation": {"kind": "distance", "target": {
             "kind": "instant", "value": datetime(2026, 10, 1, 9, tzinfo=timezone.utc).isoformat(),
         }},
@@ -115,10 +115,10 @@ def test_apply_reject_and_solve(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
     unchanged: str = path.read_text(encoding="utf-8")
     rejected_file: Path = tmp_path / "rejected.json"
-    rejected_file.write_text(json.dumps({"commands": [{"kind": "remove_task", "task_id": {"value": "missing"}}]}), encoding="utf-8")
+    rejected_file.write_text(json.dumps({"commands": [{"kind": "remove_task", "task_id": "missing"}]}), encoding="utf-8")
     status, output = invoke(capsys, "--state", str(path), "apply", "--file", str(rejected_file))
     assert status == 1
-    assert output == {"rejected": ["Task does not exist"]}
+    assert output == {"rejected": ["Task missing does not exist"]}
     assert path.read_text(encoding="utf-8") == unchanged
 
     status, output = invoke(capsys, "--state", str(path), "solve")

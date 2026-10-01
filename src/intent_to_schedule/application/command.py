@@ -33,7 +33,7 @@ class AddTask:
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
         if any(task.id == self.task.id for task in problem.tasks):
-            return Rejected(Violations((Violation("Task already exists"),)))
+            return Rejected(Violations((Violation(f"Task {self.task.id.value} already exists"),)))
         return Executed(replace(problem, tasks=(*problem.tasks, self.task)))
 
 
@@ -45,7 +45,7 @@ class ReplaceTask:
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
         if not any(task.id == self.task.id for task in problem.tasks):
-            return Rejected(Violations((Violation("Task does not exist"),)))
+            return Rejected(Violations((Violation(f"Task {self.task.id.value} does not exist"),)))
         tasks: tuple[Task, ...] = tuple(self.task if task.id == self.task.id else task for task in problem.tasks)
         return Executed(replace(problem, tasks=tasks))
 
@@ -58,7 +58,7 @@ class RemoveTask:
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
         if not any(task.id == self.task_id for task in problem.tasks):
-            return Rejected(Violations((Violation("Task does not exist"),)))
+            return Rejected(Violations((Violation(f"Task {self.task_id.value} does not exist"),)))
         tasks: tuple[Task, ...] = tuple(task for task in problem.tasks if task.id != self.task_id)
         constraints: list[Constraint] = []
         for constraint in problem.constraints:
@@ -76,7 +76,7 @@ class AddConstraint:
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
         if any(constraint.id == self.constraint.id for constraint in problem.constraints):
-            return Rejected(Violations((Violation("Constraint already exists"),)))
+            return Rejected(Violations((Violation(f"Constraint {self.constraint.id.value} already exists"),)))
         return Executed(replace(problem, constraints=(*problem.constraints, self.constraint)))
 
 
@@ -88,7 +88,7 @@ class RemoveConstraint:
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
         if not any(constraint.id == self.constraint_id for constraint in problem.constraints):
-            return Rejected(Violations((Violation("Constraint does not exist"),)))
+            return Rejected(Violations((Violation(f"Constraint {self.constraint_id.value} does not exist"),)))
         constraints: tuple[Constraint, ...] = tuple(
             constraint for constraint in problem.constraints if constraint.id != self.constraint_id
         )

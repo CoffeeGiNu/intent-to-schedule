@@ -23,14 +23,14 @@ def test_commands_input_converts_mixed_commands() -> None:
     }
     data: CommandsInput = CommandsInput.model_validate({"commands": [
         {"kind": "add_task", "task": task_data},
-        {"kind": "replace_task", "task_id": {"value": "old"}, "replacement": task_data},
-        {"kind": "remove_task", "task_id": {"value": "old"}},
+        {"kind": "replace_task", "task_id": "old", "replacement": task_data},
+        {"kind": "remove_task", "task_id": "old"},
         {"kind": "add_constraint", "constraint": {
             "kind": "hard",
-            "measure": {"kind": "point", "task_id": {"value": "old"}},
+            "measure": {"kind": "point", "task_id": "old"},
             "evaluation": {"kind": "distance", "target": {"kind": "instant", "value": start.isoformat()}},
         }},
-        {"kind": "remove_constraint", "constraint_id": {"value": "obsolete"}},
+        {"kind": "remove_constraint", "constraint_id": "obsolete"},
     ]})
     with patch.object(TaskId, "generate", return_value=TaskId("new")), patch.object(
         ConstraintId, "generate", return_value=ConstraintId("c1")

@@ -151,7 +151,7 @@ def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
     ]
     assert '"current_time"' in client.responses.calls[0][1][0]["content"]
     assert '"previous_schedule"' in client.responses.calls[0][1][0]["content"]
-    assert "Task does not exist" in client.responses.calls[1][1][-1]["content"]
+    assert "Task missing does not exist" in client.responses.calls[1][1][-1]["content"]
     assert client.responses.calls[1][1][-2]["role"] == "assistant"
     assert '"new"' in client.responses.calls[2][1][0]["content"]
 

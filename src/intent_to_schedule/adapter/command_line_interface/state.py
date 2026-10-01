@@ -7,11 +7,14 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from intent_to_schedule.adapter.data_model import (
+    ConstraintIdField,
     EvaluationOutput,
     HardConstraintOutput,
     MeasureOutput,
     OutputModel,
+    PersonIdField,
     SoftConstraintOutput,
+    TaskIdField,
     TaskOutput,
     TimeIntervalOutput,
     convert_evaluation,
@@ -24,32 +27,31 @@ from intent_to_schedule.adapter.data_model import (
 )
 from intent_to_schedule.application.translate import Speaker, Utterance
 from intent_to_schedule.domain.calendar import Availability, BusyInterval, Calendar, TimeGrid, TimeInterval
-from intent_to_schedule.domain.constraint import Constraint, ConstraintId, HardConstraint, SoftConstraint
-from intent_to_schedule.domain.person import Person, PersonId
+from intent_to_schedule.domain.constraint import Constraint, HardConstraint, SoftConstraint
+from intent_to_schedule.domain.person import Person
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import TaskId
 
 
 class PersonState(OutputModel):
     """A person with a stable external ID."""
 
-    id: str
+    id: PersonIdField
     name: str
 
 
 class AvailabilityState(OutputModel):
     """Available intervals for one person."""
 
-    person_id: str
+    person_id: PersonIdField
     intervals: tuple[TimeIntervalOutput, ...]
 
 
 class BusyIntervalState(OutputModel):
     """A busy interval for one person."""
 
-    person_id: str
+    person_id: PersonIdField
     interval: TimeIntervalOutput
 
 
@@ -71,19 +73,19 @@ class CalendarInput(CalendarState):
 class TaskState(TaskOutput):
     """A task with its persisted ID."""
 
-    id: str
+    id: TaskIdField
 
 
 class HardConstraintState(HardConstraintOutput):
     """A persisted hard constraint with an ID."""
 
-    id: str
+    id: ConstraintIdField
 
 
 class SoftConstraintState(SoftConstraintOutput):
     """A persisted soft constraint with an ID."""
 
-    id: str
+    id: ConstraintIdField
 
 
 type ConstraintState = Annotated[HardConstraintState | SoftConstraintState, Field(discriminator="kind")]
@@ -101,7 +103,7 @@ class ProblemState(OutputModel):
 class ScheduledTaskState(OutputModel):
     """A persisted scheduled task."""
 
-    task_id: str
+    task_id: TaskIdField
     start: datetime
 
 
@@ -109,7 +111,7 @@ class ScheduleState(OutputModel):
     """A persisted schedule."""
 
     scheduled: tuple[ScheduledTaskState, ...]
-    dropped_task_ids: tuple[str, ...]
+    dropped_task_ids: tuple[TaskIdField, ...]
 
 
 class UtteranceState(OutputModel):
@@ -137,16 +139,16 @@ def to_problem(form: ProblemState) -> SchedulingProblem:
     calendar: Calendar = Calendar(
         TimeGrid(to_interval(form.calendar.horizon), form.calendar.slot),
         tuple(
-            Availability(PersonId(item.person_id), tuple(to_interval(interval) for interval in item.intervals))
+            Availability(item.person_id, tuple(to_interval(interval) for interval in item.intervals))
             for item in form.calendar.availabilities
         ),
-        tuple(BusyInterval(PersonId(item.person_id), to_interval(item.interval)) for item in form.calendar.busy_intervals),
+        tuple(BusyInterval(item.person_id, to_interval(item.interval)) for item in form.calendar.busy_intervals),
     )
     constraints: tuple[Constraint, ...] = tuple(to_constraint(item) for item in form.constraints)
     return SchedulingProblem(
         calendar,
-        tuple(Person(PersonId(item.id), item.name) for item in form.people),
-        tuple(convert_task(TaskId(item.id), item) for item in form.tasks),
+        tuple(Person(item.id, item.name) for item in form.people),
+        tuple(convert_task(item.id, item) for item in form.tasks),
         constraints,
     )
 
@@ -155,10 +157,10 @@ def to_constraint(form: HardConstraintState | SoftConstraintState) -> Constraint
     """Convert a persisted constraint to the domain."""
     match form:
         case HardConstraintState(id=identifier, measure=measure, evaluation=evaluation):
-            return HardConstraint(ConstraintId(identifier), convert_measure(measure), convert_evaluation(evaluation))
+            return HardConstraint(identifier, convert_measure(measure), convert_evaluation(evaluation))
         case SoftConstraintState(id=identifier, measure=measure, evaluation=evaluation, strength=strength):
             return SoftConstraint(
-                ConstraintId(identifier), convert_measure(measure), convert_evaluation(evaluation), Strength(strength)
+                identifier, convert_measure(measure), convert_evaluation(evaluation), Strength(strength)
             )
 
 
@@ -171,17 +173,17 @@ def to_problem_state(problem: SchedulingProblem) -> ProblemState:
             slot=calendar.grid.slot,
             availabilities=tuple(
                 AvailabilityState(
-                    person_id=item.person_id.value,
+                    person_id=item.person_id,
                     intervals=tuple(to_time_interval_output(interval) for interval in item.intervals),
                 )
                 for item in calendar.availabilities
             ),
             busy_intervals=tuple(
-                BusyIntervalState(person_id=item.person_id.value, interval=to_time_interval_output(item.interval))
+                BusyIntervalState(person_id=item.person_id, interval=to_time_interval_output(item.interval))
                 for item in calendar.busy_intervals
             ),
         ),
-        people=tuple(PersonState(id=item.id.value, name=item.name) for item in problem.people),
+        people=tuple(PersonState(id=item.id, name=item.name) for item in problem.people),
         tasks=tuple(TaskState.model_validate({"id": item.id.value, **to_task_output(item).model_dump()}) for item in problem.tasks),
         constraints=tuple(to_constraint_state(item) for item in problem.constraints),
     )
@@ -193,10 +195,10 @@ def to_constraint_state(constraint: Constraint) -> HardConstraintState | SoftCon
     evaluation: EvaluationOutput = to_evaluation_output(constraint.evaluation)
     match constraint:
         case HardConstraint(id=identifier):
-            return HardConstraintState(id=identifier.value, kind="hard", measure=measure, evaluation=evaluation)
+            return HardConstraintState(id=identifier, kind="hard", measure=measure, evaluation=evaluation)
         case SoftConstraint(id=identifier, strength=strength):
             return SoftConstraintState(
-                id=identifier.value, kind="soft", measure=measure, evaluation=evaluation, strength=strength.value
+                id=identifier, kind="soft", measure=measure, evaluation=evaluation, strength=strength.value
             )
 
 
@@ -205,8 +207,8 @@ def to_schedule(form: ScheduleState | None) -> Schedule | None:
     if form is None:
         return None
     return Schedule(
-        tuple(ScheduledTask(TaskId(item.task_id), item.start) for item in form.scheduled),
-        frozenset(TaskId(identifier) for identifier in form.dropped_task_ids),
+        tuple(ScheduledTask(item.task_id, item.start) for item in form.scheduled),
+        frozenset(form.dropped_task_ids),
     )
 
 
@@ -215,8 +217,8 @@ def to_schedule_state(schedule: Schedule | None) -> ScheduleState | None:
     if schedule is None:
         return None
     return ScheduleState(
-        scheduled=tuple(ScheduledTaskState(task_id=item.task_id.value, start=item.start) for item in schedule.scheduled),
-        dropped_task_ids=tuple(sorted(identifier.value for identifier in schedule.dropped_task_ids)),
+        scheduled=tuple(ScheduledTaskState(task_id=item.task_id, start=item.start) for item in schedule.scheduled),
+        dropped_task_ids=tuple(sorted(schedule.dropped_task_ids, key=lambda identifier: identifier.value)),
     )
 
 
