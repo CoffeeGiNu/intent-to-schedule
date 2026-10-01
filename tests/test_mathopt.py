@@ -11,7 +11,7 @@ from intent_to_schedule.adapter.mathopt.measure import PointExpression
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.solve import Infeasible, Solved
-from intent_to_schedule.domain.calendar import Availability, BusyInterval, Calendar, TimeGrid, TimeInterval
+from intent_to_schedule.domain.calendar import Availability, Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint, SoftConstraint
 from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
 from intent_to_schedule.domain.measure import (
@@ -25,12 +25,12 @@ from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 
-START = datetime(2026, 10, 1, 9)
-SLOT = timedelta(minutes=30)
-SOLVER = MathOptSchedulingSolver(DEFAULT_POLICY)
+START: datetime = datetime(2026, 10, 1, 9)
+SLOT: timedelta = timedelta(minutes=30)
+SOLVER: MathOptSchedulingSolver = MathOptSchedulingSolver(DEFAULT_POLICY)
 
 
 def task(name: str, *, duration: timedelta = SLOT, people: frozenset[PersonId] = frozenset(), required: bool = True) -> Task:
@@ -42,16 +42,16 @@ def problem(
     constraints: tuple[HardConstraint | SoftConstraint, ...] = (),
     end: datetime = START + timedelta(hours=3),
     availabilities: tuple[Availability, ...] | None = None,
-    busy: tuple[BusyInterval, ...] = (),
+    fixed_tasks: tuple[FixedTask, ...] = (),
 ) -> SchedulingProblem:
     people: tuple[Person, ...] = tuple(
         Person(person_id, person_id.value)
-        for person_id in {person_id for item in tasks for person_id in item.participant_ids}
+        for person_id in {person_id for item in (*tasks, *fixed_tasks) for person_id in item.participant_ids}
     )
     if availabilities is None:
         availabilities = tuple(Availability(person.id, (TimeInterval(START, end),)) for person in people)
-    calendar: Calendar = Calendar(TimeGrid(TimeInterval(START, end), SLOT), availabilities, busy)
-    return SchedulingProblem(calendar, people, tasks, constraints)
+    calendar: Calendar = Calendar(TimeGrid(TimeInterval(START, end), SLOT), availabilities)
+    return SchedulingProblem(calendar, people, tasks, fixed_tasks, constraints)
 
 
 def schedule_for(value: SchedulingProblem) -> Schedule:
@@ -148,19 +148,19 @@ def test_hard_intrusion_excludes_region() -> None:
     assert starts(result)[item.id] >= START + timedelta(hours=1)
 
 
-def test_busy_interval_rounds_outward() -> None:
+def test_fixed_task_rounds_outward() -> None:
     person_id: PersonId = PersonId("person")
-    item: Task = task("busy", people=frozenset({person_id}))
-    busy: BusyInterval = BusyInterval(
-        person_id, TimeInterval(START + timedelta(minutes=10), START + timedelta(minutes=20))
+    item: Task = task("movable", people=frozenset({person_id}))
+    fixed: FixedTask = FixedTask(
+        TaskId("fixed"), "Existing", START + timedelta(minutes=10), timedelta(minutes=30), frozenset({person_id})
     )
     preference: SoftConstraint = SoftConstraint(
         ConstraintId("early"), PointMeasure(item.id), Distance(START), Strength.STRONG
     )
-    value: SchedulingProblem = problem(item, constraints=(preference,), end=START + timedelta(hours=1), busy=(busy,))
+    value: SchedulingProblem = problem(item, constraints=(preference,), end=START + timedelta(minutes=90), fixed_tasks=(fixed,))
     compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
-    assert set(compiled.placements[item.id]) == {1}
-    assert starts(schedule_for(value))[item.id] == START + SLOT
+    assert set(compiled.placements[item.id]) == {2}
+    assert starts(schedule_for(value))[item.id] == START + 2 * SLOT
 
 
 def test_intervals_before_horizon_leave_free_slots_unchanged() -> None:
@@ -175,15 +175,86 @@ def test_intervals_before_horizon_leave_free_slots_unchanged() -> None:
         item, end=in_horizon.end,
         availabilities=(Availability(person_id, (before_horizon, in_horizon)),),
     )
-    busy: SchedulingProblem = problem(
+    fixed: SchedulingProblem = problem(
         item, end=in_horizon.end,
         availabilities=(Availability(person_id, (in_horizon,)),),
-        busy=(BusyInterval(person_id, before_horizon),),
+        fixed_tasks=(FixedTask(TaskId("fixed"), "Before", before_horizon.start, before_horizon.end - before_horizon.start, frozenset({person_id})),),
     )
     expected: list[bool] = _free_slots(person_id, baseline, 2)
     assert expected == [True, True]
     assert _free_slots(person_id, availability, 2) == expected
-    assert _free_slots(person_id, busy, 2) == expected
+    assert _free_slots(person_id, fixed, 2) == expected
+
+
+def test_overlapping_fixed_tasks_still_solve() -> None:
+    person_id: PersonId = PersonId("person")
+    first: FixedTask = FixedTask(TaskId("first"), "First", START, timedelta(hours=1), frozenset({person_id}))
+    second: FixedTask = replace(first, id=TaskId("second"), start=START + SLOT)
+    movable: Task = task("movable", people=frozenset({person_id}))
+    result: Schedule = schedule_for(problem(movable, fixed_tasks=(first, second)))
+    assert set(starts(result)) == {movable.id}
+    assert starts(result)[movable.id] >= START + timedelta(minutes=90)
+    assert result.dropped_task_ids == frozenset()
+    assert schedule_for(problem(fixed_tasks=(first, second), availabilities=(Availability(person_id, ()),))) == Schedule((), frozenset())
+
+
+def test_dependency_shortfall_schedules_task_after_rounded_fixed_task() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=10), timedelta(minutes=30), frozenset())
+    movable: Task = task("movable")
+    constraint: HardConstraint = HardConstraint(ConstraintId("after"), DependencyMeasure(fixed.id, movable.id), Shortfall(SLOT))
+    preference: SoftConstraint = SoftConstraint(ConstraintId("early"), PointMeasure(movable.id), Distance(START), Strength.STRONG)
+    value: SchedulingProblem = problem(movable, fixed_tasks=(fixed,), constraints=(constraint, preference))
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    assert set(compiled.placements[fixed.id]) == {0}
+    assert compiled.placements[fixed.id][0].lower_bound == compiled.placements[fixed.id][0].upper_bound == 1
+    assert compiled.presences[fixed.id].lower_bound == compiled.presences[fixed.id].upper_bound == 1
+    assert compiled.starts[fixed.id].lower_bound == compiled.starts[fixed.id].upper_bound == 0
+    assert starts(schedule_for(value)) == {movable.id: START + 3 * SLOT}
+
+
+def test_dependency_shortfall_to_fixed_task_schedules_task_before_it() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=100), SLOT, frozenset())
+    movable: Task = task("movable")
+    constraint: HardConstraint = HardConstraint(ConstraintId("before"), DependencyMeasure(movable.id, fixed.id), Shortfall(SLOT))
+    preference: SoftConstraint = SoftConstraint(ConstraintId("late"), PointMeasure(movable.id), Distance(START + timedelta(hours=2)), Strength.STRONG)
+    assert starts(schedule_for(problem(movable, fixed_tasks=(fixed,), constraints=(constraint, preference)))) == {movable.id: START + SLOT}
+
+
+@pytest.mark.parametrize("quantity, upper", [(AggregateQuantity.COUNT, 0), (AggregateQuantity.TOTAL_DURATION, SLOT)])
+def test_fixed_task_aggregates_use_rounded_duration(quantity: AggregateQuantity, upper: int | timedelta) -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=10), SLOT, frozenset())
+    constraint: HardConstraint = HardConstraint(ConstraintId("aggregate"), AggregateMeasure(frozenset({fixed.id}), quantity), Excess(upper))
+    assert isinstance(SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(constraint,))), Infeasible)
+
+
+def test_fixed_task_point_and_interval_measures_use_rounded_slots() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=10), SLOT, frozenset())
+    point: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(fixed.id), Distance(START))
+    assert schedule_for(problem(fixed_tasks=(fixed,), constraints=(point,))) == Schedule((), frozenset())
+    interval: HardConstraint = HardConstraint(ConstraintId("interval"), IntervalMeasure(fixed.id), Intrusion((TimeInterval(START + SLOT, START + 2 * SLOT),)))
+    assert isinstance(SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(interval,))), Infeasible)
+
+
+@pytest.mark.parametrize("offset, duration, expected", [
+    (-60, 30, [True, True]),
+    (60, 30, [True, True]),
+    (-10, 20, [False, True]),
+    (50, 20, [True, False]),
+    (-10, 80, [False, False]),
+])
+def test_fixed_tasks_clip_blocked_slots_to_horizon(offset: int, duration: int, expected: list[bool]) -> None:
+    person_id: PersonId = PersonId("person")
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=offset), timedelta(minutes=duration), frozenset({person_id}))
+    value: SchedulingProblem = problem(fixed_tasks=(fixed,), end=START + timedelta(hours=1))
+    assert _free_slots(person_id, value, 2) == expected
+
+
+def test_dependency_to_fixed_task_outside_horizon_is_inactive_when_task_drops() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Past event", START - timedelta(days=1), SLOT, frozenset())
+    movable: Task = task("optional", required=False)
+    constraint: HardConstraint = HardConstraint(ConstraintId("before"), DependencyMeasure(movable.id, fixed.id), Shortfall(SLOT))
+    result: Schedule = schedule_for(problem(movable, fixed_tasks=(fixed,), constraints=(constraint,)))
+    assert result == Schedule((), frozenset({movable.id}))
 
 
 def test_count_penalty_scales_soft_objective() -> None:

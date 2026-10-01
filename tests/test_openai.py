@@ -1,4 +1,6 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -48,7 +50,7 @@ from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
@@ -61,10 +63,10 @@ def _task_output(participant_ids: tuple[PersonId, ...] = ()) -> TaskData:
 
 def _problem() -> SchedulingProblem:
     """Create a small scheduling problem."""
-    calendar: Calendar = Calendar(TimeGrid(TimeInterval(START, START + timedelta(days=1)), timedelta(minutes=30)), (), ())
+    calendar: Calendar = Calendar(TimeGrid(TimeInterval(START, START + timedelta(days=1)), timedelta(minutes=30)), ())
     person: Person = Person(PersonId("p1"), "Alex")
     task: Task = Task(TaskId("t1"), "Existing", timedelta(hours=1), frozenset({person.id}), Importance.MEDIUM, False)
-    return SchedulingProblem(calendar, (person,), (task,), ())
+    return SchedulingProblem(calendar, (person,), (task,), (), ())
 
 
 class _FakeResponses:
@@ -164,3 +166,21 @@ def test_translate_retries_validator_violations_then_raises() -> None:
         translator.translate((Utterance(Speaker.USER, "Add a review"),), _problem(), None)
     assert len(client.responses.calls) == 3
     assert "missing person id" in client.responses.calls[1][1][-1]["content"]
+
+
+def test_translation_prompts_and_snapshots_include_fixed_tasks() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing meeting", START + timedelta(minutes=15), timedelta(minutes=30), frozenset({PersonId("p1")}))
+    problem: SchedulingProblem = replace(_problem(), fixed_tasks=(fixed,))
+    elements: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=()))
+    constraints: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=()))
+    client: _FakeClient = _FakeClient([elements, constraints])
+    result: Translated | Ambiguous = OpenAICommandTranslator(client, "test", ReferencesExist(), lambda: START).translate((), problem, None)
+    assert result == Translated(())
+    call: tuple[str, list[dict[str, str]], type[DataModel]]
+    for call in client.responses.calls:
+        content: str = call[1][0]["content"]
+        assert "fixed_tasks are existing events that cannot be moved" in content
+        assert "replace it with a Task of the same id" in content
+        snapshot: dict[str, object] = json.loads(content.split("\nSnapshot: ", 1)[1])
+        assert snapshot["problem"]["fixed_tasks"][0]["id"] == {"value": "fixed"}
+        assert snapshot["problem"]["fixed_tasks"][0]["name"] == "Existing meeting"

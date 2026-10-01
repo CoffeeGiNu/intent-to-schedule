@@ -27,7 +27,7 @@ from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantit
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 
 START: datetime = datetime(2026, 10, 1, 9)
@@ -41,9 +41,8 @@ def problem(*tasks: Task, constraints: tuple[HardConstraint, ...] = ()) -> Sched
     calendar: Calendar = Calendar(
         TimeGrid(TimeInterval(START, START + timedelta(days=1)), timedelta(minutes=30)),
         (),
-        (),
     )
-    return SchedulingProblem(calendar, (), tasks, constraints)
+    return SchedulingProblem(calendar, (), tasks, (), constraints)
 
 
 def test_policy_uses_mappings() -> None:
@@ -130,6 +129,44 @@ def test_constraint_commands_check_only_ids() -> None:
     removed: Executed | Rejected = RemoveConstraint(constraint.id).execute(added.problem)
     assert isinstance(removed, Executed)
     assert removed.problem == original
+
+
+def test_remove_fixed_task_repairs_constraints() -> None:
+    movable: Task = task("movable")
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset())
+    aggregate: HardConstraint = HardConstraint(
+        ConstraintId("aggregate"), AggregateMeasure(frozenset({movable.id, fixed.id}), AggregateQuantity.COUNT), Distance(1)
+    )
+    point: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(fixed.id), Distance(START))
+    original: SchedulingProblem = replace(problem(movable, constraints=(aggregate, point)), fixed_tasks=(fixed,))
+    result: Executed | Rejected = RemoveTask(fixed.id).execute(original)
+    assert isinstance(result, Executed)
+    assert result.problem.tasks == (movable,)
+    assert result.problem.fixed_tasks == ()
+    assert result.problem.constraints == (replace(aggregate, measure=replace(aggregate.measure, task_ids=frozenset({movable.id}))),)
+    assert original.fixed_tasks == (fixed,)
+
+
+def test_replace_fixed_task_makes_it_movable_and_keeps_constraints() -> None:
+    movable: Task = task("movable")
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset())
+    other: FixedTask = replace(fixed, id=TaskId("other"))
+    constraint: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(fixed.id), Distance(START))
+    original: SchedulingProblem = replace(problem(movable, constraints=(constraint,)), fixed_tasks=(fixed, other))
+    replacement: Task = task("fixed", "Movable meeting")
+    assert isinstance(AddTask(replacement).execute(original), Rejected)
+    result: Executed | Rejected = ReplaceTask(replacement).execute(original)
+    assert isinstance(result, Executed)
+    assert result.problem.tasks == (movable, replacement)
+    assert result.problem.fixed_tasks == (other,)
+    assert result.problem.constraints == original.constraints
+    assert original.fixed_tasks == (fixed, other)
+
+
+def test_fixed_tasks_get_no_stability_constraints() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset())
+    previous: Schedule = Schedule((ScheduledTask(fixed.id, START),), frozenset())
+    assert stability_constraints(replace(problem(), fixed_tasks=(fixed,)), previous) == ()
 
 
 def test_stability_constraints_use_previous_starts() -> None:

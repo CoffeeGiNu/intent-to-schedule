@@ -1,6 +1,6 @@
 """Tests for the JSON command line adapter."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
@@ -11,6 +11,7 @@ import pytest
 from intent_to_schedule.adapter.command_line_interface.main import main
 from intent_to_schedule.adapter.command_line_interface.state import State, load_state, save_state, to_problem, to_problem_state
 from intent_to_schedule.domain.problem import SchedulingProblem
+from intent_to_schedule.domain.task import FixedTask
 
 
 def calendar_data() -> dict[str, object]:
@@ -23,7 +24,7 @@ def calendar_data() -> dict[str, object]:
             "person_id": "alice",
             "intervals": [{"start": "2026-10-01T09:00:00+00:00", "end": "2026-10-01T12:00:00+00:00"}],
         }],
-        "busy_intervals": [],
+        "fixed_tasks": [],
     }
 
 
@@ -79,6 +80,45 @@ def test_init_rejects_invalid_calendar_without_writing_state(
     assert status == 1
     assert output == {"rejected": ["Person alice has no availability."]}
     assert not state_path.exists()
+
+
+def test_init_fixed_tasks_persists_ids_and_round_trips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Initialize fixed events with generated IDs and preserve their exact times."""
+    calendar: dict[str, object] = calendar_data()
+    calendar["fixed_tasks"] = [{"name": "Existing review", "start": "2026-10-01T09:15:00+00:00", "duration": "PT30M", "participant_ids": ["alice"]}]
+    calendar_path: Path = tmp_path / "calendar.json"
+    path: Path = tmp_path / "state.json"
+    calendar_path.write_text(json.dumps(calendar), encoding="utf-8")
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "init", "--state", str(path), "--calendar", str(calendar_path))
+    assert status == 0
+    assert output["problem"]["fixed_tasks"][0]["id"]
+    assert set(output["problem"]["calendar"]) == {"horizon", "slot", "availabilities"}
+    state: State = load_state(path)
+    problem: SchedulingProblem = to_problem(state.problem)
+    fixed: FixedTask = problem.fixed_tasks[0]
+    assert fixed.start == datetime(2026, 10, 1, 9, 15, tzinfo=timezone.utc)
+    assert fixed.duration == timedelta(minutes=30)
+    assert to_problem(to_problem_state(problem)) == problem
+    status, output = invoke(capsys, "solve", "--state", str(path))
+    assert status == 0
+    assert output == {"scheduled": [], "dropped": []}
+
+
+def test_init_rejects_fixed_task_with_unknown_participant(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Reject fixed events that reference a missing person."""
+    calendar: dict[str, object] = calendar_data()
+    calendar["fixed_tasks"] = [{"name": "Existing review", "start": "2026-10-01T09:15:00+00:00", "duration": "PT30M", "participant_ids": ["missing"]}]
+    calendar_path: Path = tmp_path / "calendar.json"
+    path: Path = tmp_path / "state.json"
+    calendar_path.write_text(json.dumps(calendar), encoding="utf-8")
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "init", "--state", str(path), "--calendar", str(calendar_path))
+    assert status == 1
+    assert "missing person id missing" in output["rejected"][0]
+    assert not path.exists()
 
 
 def test_apply_reject_and_solve(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:

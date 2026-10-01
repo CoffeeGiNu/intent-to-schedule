@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
@@ -22,7 +23,7 @@ from intent_to_schedule.domain.measure import (
 )
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 
 def make_problem() -> SchedulingProblem:
@@ -31,9 +32,10 @@ def make_problem() -> SchedulingProblem:
     task_id: TaskId = TaskId("t1")
     task: Task = Task(task_id, "Task", timedelta(minutes=30), frozenset({person_id}), Importance.MEDIUM, True)
     return SchedulingProblem(
-        Calendar(TimeGrid(TimeInterval(start, start + timedelta(hours=4)), timedelta(minutes=30)), (), ()),
+        Calendar(TimeGrid(TimeInterval(start, start + timedelta(hours=4)), timedelta(minutes=30)), ()),
         (Person(person_id, "Person"),),
         (task,),
+        (),
         (),
     )
 
@@ -61,6 +63,7 @@ def test_validators_report_duplicate_missing_and_unaligned_values() -> None:
         problem.calendar,
         problem.people,
         (task, duplicate),
+        (),
         (missing_task_constraint, bad_constraint),
     )
     assert not UniqueIds().validate(invalid).is_empty
@@ -84,10 +87,33 @@ def test_availability_for_everyone_reports_person_without_availability() -> None
 def test_all_of_merges_violations_and_nests() -> None:
     original: SchedulingProblem = make_problem()
     problem: SchedulingProblem = SchedulingProblem(
-        original.calendar, original.people, (*original.tasks, original.tasks[0]), original.constraints
+        original.calendar, original.people, (*original.tasks, original.tasks[0]), original.fixed_tasks, original.constraints
     )
     validator: AllOf = AllOf(ReferencesExist(), AllOf(AvailabilityForEveryone(), UniqueIds()))
     assert validator.validate(problem) == Violations((
         Violation("Person p1 has no availability."),
         Violation("Duplicate Task id t1."),
+    ))
+
+
+def test_unique_ids_checks_tasks_and_fixed_tasks_together() -> None:
+    problem: SchedulingProblem = make_problem()
+    task: Task = problem.tasks[0]
+    fixed: FixedTask = FixedTask(task.id, "Existing", problem.calendar.grid.horizon.start, task.duration, task.participant_ids)
+    assert UniqueIds().validate(replace(problem, fixed_tasks=(fixed,))) == Violations((
+        Violation("Duplicate Task id t1."),
+    ))
+    assert not UniqueIds().validate(replace(problem, tasks=(), fixed_tasks=(fixed, fixed))).is_empty
+
+
+def test_fixed_task_references_and_off_grid_times() -> None:
+    problem: SchedulingProblem = make_problem()
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", datetime(2026, 1, 1, 0, 15), timedelta(minutes=10), frozenset({PersonId("p1")}))
+    constraint: HardConstraint = HardConstraint(ConstraintId("fixed"), PointMeasure(fixed.id), Distance(datetime(2026, 1, 1)))
+    problem = replace(problem, fixed_tasks=(fixed,), constraints=(constraint,))
+    assert ReferencesExist().validate(problem).is_empty
+    assert AlignedToSlots().validate(problem).is_empty
+    missing: FixedTask = replace(fixed, participant_ids=frozenset({PersonId("missing")}))
+    assert ReferencesExist().validate(replace(problem, fixed_tasks=(missing,))) == Violations((
+        Violation("Task fixed references missing person id missing."),
     ))

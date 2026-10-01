@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from intent_to_schedule.adapter.data_model import CommandsData, convert_commands_input
+from intent_to_schedule.adapter.data_model import CommandsData, FixedTaskData, convert_commands_input, convert_fixed_task, to_fixed_task_data
 from intent_to_schedule.application.command import AddConstraint, AddTask, RemoveConstraint, RemoveTask, ReplaceTask
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
 from intent_to_schedule.domain.evaluation import Distance
 from intent_to_schedule.domain.measure import PointMeasure
+from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 
 def test_commands_input_converts_mixed_commands() -> None:
@@ -45,3 +46,17 @@ def test_commands_input_converts_mixed_commands() -> None:
         AddConstraint(HardConstraint(ConstraintId("c1"), PointMeasure(TaskId("old")), Distance(start))),
         RemoveConstraint(ConstraintId("obsolete")),
     )
+
+
+def test_fixed_task_data_converts_and_generates_ids() -> None:
+    start: datetime = datetime(2026, 10, 1, 9, 15, tzinfo=timezone.utc)
+    data: FixedTaskData = FixedTaskData.model_validate({
+        "name": "Existing meeting", "start": start.isoformat(), "duration": "PT30M", "participant_ids": ["alice", "alice"],
+    })
+    expected: FixedTask = FixedTask(TaskId("fixed"), "Existing meeting", start, timedelta(minutes=30), frozenset({PersonId("alice")}))
+    with patch.object(TaskId, "generate", return_value=expected.id):
+        assert convert_fixed_task(data) == expected
+    assert convert_fixed_task(data, expected.id) == expected
+    output: FixedTaskData = to_fixed_task_data(expected)
+    assert output.model_dump(mode="json")["participant_ids"] == ["alice"]
+    assert convert_fixed_task(FixedTaskData.model_validate_json(output.model_dump_json()), expected.id) == expected
