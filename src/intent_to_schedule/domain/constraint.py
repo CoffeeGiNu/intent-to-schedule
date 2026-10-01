@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Self
+import uuid
 
 from intent_to_schedule.domain.evaluation import Evaluation
 from intent_to_schedule.domain.measure import Measure
@@ -15,7 +16,7 @@ class ConstraintId:
     @classmethod
     def generate(cls) -> Self:
         """Create a new unique ConstraintId."""
-        ...
+        return cls(uuid.uuid4().hex)
 
 
 @dataclass(frozen=True)

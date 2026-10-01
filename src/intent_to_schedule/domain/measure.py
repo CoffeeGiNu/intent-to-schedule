@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
+from typing import Self
 
 from intent_to_schedule.domain.task import TaskId
 
@@ -14,6 +15,10 @@ class PointMeasure:
     def task_ids(self) -> frozenset[TaskId]:
         return frozenset({self.task_id})
 
+    def without_task(self, task_id: TaskId) -> Self | None:
+        """Measure left after removing a Task, or None if it no longer makes sense."""
+        return self if task_id not in self.task_ids else None
+
 
 @dataclass(frozen=True)
 class IntervalMeasure:
@@ -24,6 +29,10 @@ class IntervalMeasure:
     @property
     def task_ids(self) -> frozenset[TaskId]:
         return frozenset({self.task_id})
+
+    def without_task(self, task_id: TaskId) -> Self | None:
+        """Measure left after removing a Task, or None if it no longer makes sense."""
+        return self if task_id not in self.task_ids else None
 
 
 @dataclass(frozen=True)
@@ -36,6 +45,10 @@ class DependencyMeasure:
     @property
     def task_ids(self) -> frozenset[TaskId]:
         return frozenset({self.from_task_id, self.to_task_id})
+
+    def without_task(self, task_id: TaskId) -> Self | None:
+        """Measure left after removing a Task, or None if it no longer makes sense."""
+        return self if task_id not in self.task_ids else None
 
 
 class AggregateQuantity(Enum):
@@ -51,6 +64,11 @@ class AggregateMeasure:
 
     task_ids: frozenset[TaskId]
     quantity: AggregateQuantity
+
+    def without_task(self, task_id: TaskId) -> Self | None:
+        """Measure left after removing a Task, or None if it no longer makes sense."""
+        task_ids: frozenset[TaskId] = self.task_ids - {task_id}
+        return replace(self, task_ids=task_ids) if task_ids else None
 
 
 type Measure = PointMeasure | IntervalMeasure | DependencyMeasure | AggregateMeasure
