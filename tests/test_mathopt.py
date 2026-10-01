@@ -1,14 +1,15 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 from ortools.math_opt.python import mathopt
 
-from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
+from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, _free_slots, compile_problem
 from intent_to_schedule.adapter.mathopt.evaluate import compile_evaluation
 from intent_to_schedule.adapter.mathopt.measure import PointExpression
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
-from intent_to_schedule.application.policy import DEFAULT_POLICY
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.solve import Infeasible, Solved
 from intent_to_schedule.domain.calendar import Availability, BusyInterval, Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint, SoftConstraint
@@ -162,6 +163,54 @@ def test_busy_interval_rounds_outward() -> None:
     assert starts(schedule_for(value))[item.id] == START + SLOT
 
 
+def test_intervals_before_horizon_leave_free_slots_unchanged() -> None:
+    person_id: PersonId = PersonId("person")
+    item: Task = task("early", people=frozenset({person_id}))
+    in_horizon: TimeInterval = TimeInterval(START, START + timedelta(hours=1))
+    before_horizon: TimeInterval = TimeInterval(START - timedelta(hours=1), START - SLOT)
+    baseline: SchedulingProblem = problem(
+        item, end=in_horizon.end, availabilities=(Availability(person_id, (in_horizon,)),)
+    )
+    availability: SchedulingProblem = problem(
+        item, end=in_horizon.end,
+        availabilities=(Availability(person_id, (before_horizon, in_horizon)),),
+    )
+    busy: SchedulingProblem = problem(
+        item, end=in_horizon.end,
+        availabilities=(Availability(person_id, (in_horizon,)),),
+        busy=(BusyInterval(person_id, before_horizon),),
+    )
+    expected: list[bool] = _free_slots(person_id, baseline, 2)
+    assert expected == [True, True]
+    assert _free_slots(person_id, availability, 2) == expected
+    assert _free_slots(person_id, busy, 2) == expected
+
+
+def test_count_penalty_scales_soft_objective() -> None:
+    item: Task = task("count", required=False)
+    preference: SoftConstraint = SoftConstraint(
+        ConstraintId("count"),
+        AggregateMeasure(frozenset({item.id}), AggregateQuantity.COUNT),
+        Excess(0),
+        Strength.WEAK,
+    )
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=10.0)
+    result: Solved | Infeasible = MathOptSchedulingSolver(policy).solve(problem(item, constraints=(preference,)))
+    assert isinstance(result, Solved)
+    assert result.schedule.dropped_task_ids == frozenset({item.id})
+
+
+def test_solver_passes_time_limit() -> None:
+    limit: timedelta = timedelta(seconds=1)
+    solve_mock: MagicMock
+    with patch("intent_to_schedule.adapter.mathopt.solve.mathopt.solve", wraps=mathopt.solve) as solve_mock:
+        result: Solved | Infeasible = MathOptSchedulingSolver(DEFAULT_POLICY, time_limit=limit).solve(
+            problem(task("timed"))
+        )
+    assert isinstance(result, Solved)
+    assert solve_mock.call_args.kwargs["params"].time_limit == limit
+
+
 def test_shared_person_tasks_do_not_overlap() -> None:
     person_id: PersonId = PersonId("shared")
     first: Task = task("first", duration=timedelta(hours=1), people=frozenset({person_id}))
@@ -200,4 +249,4 @@ def test_unsupported_evaluation_raises_value_error() -> None:
     model: mathopt.Model = mathopt.Model()
     expression: PointExpression = PointExpression({0: model.add_binary_variable()})
     with pytest.raises(ValueError, match="Unsupported evaluation"):
-        compile_evaluation(expression, Shortfall(SLOT), model, grid, DEFAULT_POLICY)
+        compile_evaluation(expression, Shortfall(SLOT), model, grid)

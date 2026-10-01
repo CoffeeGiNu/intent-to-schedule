@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
@@ -15,14 +17,17 @@ class MathOptSchedulingSolver(SchedulingSolver):
         self,
         policy: ObjectivePolicy,
         solver_type: mathopt.SolverType = mathopt.SolverType.GSCIP,
+        time_limit: timedelta | None = None,
     ) -> None:
         self.policy: ObjectivePolicy = policy
         self.solver_type: mathopt.SolverType = solver_type
+        self.time_limit: timedelta | None = time_limit
 
     def solve(self, problem: SchedulingProblem) -> SolveResult:
         """Solve a SchedulingProblem."""
         compiled: CompiledProblem = compile_problem(problem, self.policy)
-        result: mathopt.SolveResult = mathopt.solve(compiled.model, self.solver_type)
+        parameters: mathopt.SolveParameters = mathopt.SolveParameters(time_limit=self.time_limit)
+        result: mathopt.SolveResult = mathopt.solve(compiled.model, self.solver_type, params=parameters)
         match result.termination.reason:
             case mathopt.TerminationReason.INFEASIBLE:
                 return Infeasible()

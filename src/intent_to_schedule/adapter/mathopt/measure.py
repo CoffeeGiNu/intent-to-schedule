@@ -38,7 +38,6 @@ class DependencyExpression:
     gap: mathopt.LinearExpression
     from_presence: mathopt.Variable
     to_presence: mathopt.Variable
-    from_duration: int
 
 
 @dataclass(frozen=True)
@@ -73,10 +72,14 @@ def compile_measure(
             return PointExpression(placements[measure.task_id])
         case IntervalMeasure():
             duration: int = tasks[measure.task_id].duration // slot
+            occupied: dict[int, list[mathopt.Variable]] = {}
+            start: int
+            variable: mathopt.Variable
+            for start, variable in placements[measure.task_id].items():
+                for k in range(start, start + duration):
+                    occupied.setdefault(k, []).append(variable)
             occupancy: dict[int, mathopt.LinearExpression] = {
-                k: mathopt.LinearSum(
-                    variable for start, variable in placements[measure.task_id].items() if start <= k < start + duration
-                )
+                k: mathopt.LinearSum(occupied.get(k, ()))
                 for k in range(n)
             }
             return IntervalExpression(occupancy)
@@ -86,9 +89,7 @@ def compile_measure(
                 starts[measure.to_task_id] - starts[measure.from_task_id]
                 - from_duration * presences[measure.from_task_id]
             )
-            return DependencyExpression(
-                gap, presences[measure.from_task_id], presences[measure.to_task_id], from_duration
-            )
+            return DependencyExpression(gap, presences[measure.from_task_id], presences[measure.to_task_id])
         case AggregateMeasure():
             dates: set[date] = {(horizon.start + k * slot).date() for k in range(n)}
             values: dict[date, mathopt.LinearExpression] = {

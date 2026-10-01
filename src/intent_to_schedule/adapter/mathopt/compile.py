@@ -8,6 +8,7 @@ from intent_to_schedule.adapter.mathopt.measure import MeasureExpression, compil
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.domain.calendar import Availability, BusyInterval, TimeGrid, TimeInterval
 from intent_to_schedule.domain.constraint import HardConstraint, SoftConstraint
+from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantity
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.strength import Strength
@@ -35,23 +36,26 @@ def _free_slots(person_id: PersonId, problem: SchedulingProblem, n: int) -> list
     period: TimeInterval
     for entry in availability:
         for period in entry.intervals:
-            first: int = max(0, (period.start - grid.horizon.start) // grid.slot)
-            last: int = min(n, (period.end - grid.horizon.start) // grid.slot)
-            free[first:last] = [True] * max(0, last - first)
+            first: int = min(n, max(0, (period.start - grid.horizon.start) // grid.slot))
+            last: int = min(n, max(0, (period.end - grid.horizon.start) // grid.slot))
+            if first < last:
+                free[first:last] = [True] * (last - first)
 
     busy: BusyInterval
     for busy in problem.calendar.busy_intervals:
         if busy.person_id != person_id:
             continue
-        first = max(0, (busy.interval.start - grid.horizon.start) // grid.slot)
-        last = min(n, -((grid.horizon.start - busy.interval.end) // grid.slot))
-        free[first:last] = [False] * max(0, last - first)
+        first = min(n, max(0, (busy.interval.start - grid.horizon.start) // grid.slot))
+        last = min(n, max(0, -((grid.horizon.start - busy.interval.end) // grid.slot)))
+        if first < last:
+            free[first:last] = [False] * (last - first)
     return free
 
 
 def compile_problem(problem: SchedulingProblem, policy: ObjectivePolicy) -> CompiledProblem:
     """Build a MathOpt model from a SchedulingProblem."""
     grid: TimeGrid = problem.calendar.grid
+    # TODO: decide whether to handle daylight saving time; slot arithmetic uses wall-clock time.
     n: int = (grid.horizon.end - grid.horizon.start) // grid.slot
     model: mathopt.Model = mathopt.Model()
     starts: dict[TaskId, mathopt.Variable] = {}
@@ -65,6 +69,9 @@ def compile_problem(problem: SchedulingProblem, policy: ObjectivePolicy) -> Comp
         person_id: _free_slots(person_id, problem, n) for person_id in participant_ids
     }
     objective_terms: list[mathopt.LinearExpression] = []
+    incidence: dict[PersonId, dict[int, list[mathopt.Variable]]] = {
+        person_id: {} for person_id in participant_ids
+    }
 
     task: Task
     for task in problem.tasks:
@@ -82,6 +89,12 @@ def compile_problem(problem: SchedulingProblem, policy: ObjectivePolicy) -> Comp
             for start in allowed_starts
         }
         placements[task.id] = choices
+        start: int
+        variable: mathopt.Variable
+        for start, variable in choices.items():
+            for person_id in task.participant_ids:
+                for slot in range(start, start + duration):
+                    incidence[person_id].setdefault(slot, []).append(variable)
         presence: mathopt.Variable = model.add_binary_variable(name=f"presence_{task.id.value}")
         start_variable: mathopt.Variable = model.add_variable(lb=0.0, ub=float(n), name=f"start_{task.id.value}")
         presences[task.id] = presence
@@ -94,17 +107,10 @@ def compile_problem(problem: SchedulingProblem, policy: ObjectivePolicy) -> Comp
             model.add_linear_constraint(presence == 1)
         objective_terms.append(policy.drop_cost(task.importance) * (1 - presence))
 
-    person_id: PersonId
-    slot: int
-    for person_id in participant_ids:
-        for slot in range(n):
-            competing: list[mathopt.Variable] = [
-                variable
-                for task in problem.tasks
-                if person_id in task.participant_ids
-                for start, variable in placements[task.id].items()
-                if start <= slot < start + durations[task.id]
-            ]
+    occupied: dict[int, list[mathopt.Variable]]
+    competing: list[mathopt.Variable]
+    for occupied in incidence.values():
+        for competing in occupied.values():
             if len(competing) >= 2:
                 model.add_linear_constraint(mathopt.LinearSum(competing) <= 1)
 
@@ -112,14 +118,18 @@ def compile_problem(problem: SchedulingProblem, policy: ObjectivePolicy) -> Comp
     strength: Strength
     for constraint in problem.constraints:
         expression: MeasureExpression = compile_measure(constraint.measure, problem, model, starts, presences, placements)
-        violation: mathopt.LinearExpression = compile_evaluation(
-            expression, constraint.evaluation, model, grid, policy
-        )
+        violation: mathopt.LinearExpression = compile_evaluation(expression, constraint.evaluation, model, grid)
         match constraint:
             case HardConstraint():
                 model.add_linear_constraint(violation <= 0)
             case SoftConstraint(strength=strength):
-                objective_terms.append(policy.weight(strength) * violation)
+                scale: float = (
+                    policy.per_count
+                    if isinstance(constraint.measure, AggregateMeasure)
+                    and constraint.measure.quantity is AggregateQuantity.COUNT
+                    else 1.0
+                )
+                objective_terms.append(policy.weight(strength) * scale * violation)
 
     model.minimize(mathopt.LinearSum(objective_terms))
     return CompiledProblem(model, starts, presences, placements)

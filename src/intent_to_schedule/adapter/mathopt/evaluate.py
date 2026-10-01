@@ -10,7 +10,6 @@ from intent_to_schedule.adapter.mathopt.measure import (
     MeasureExpression,
     PointExpression,
 )
-from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.evaluation import Distance, Evaluation, Excess, Intrusion, Shortfall
 from intent_to_schedule.domain.measure import AggregateQuantity
@@ -21,7 +20,6 @@ def compile_evaluation(
     evaluation: Evaluation,
     model: mathopt.Model,
     grid: TimeGrid,
-    policy: ObjectivePolicy,
 ) -> mathopt.LinearExpression:
     """Build an evaluation expression from a measure expression and Evaluation."""
     n: int = (grid.horizon.end - grid.horizon.start) // grid.slot
@@ -53,7 +51,7 @@ def compile_evaluation(
             return mathopt.LinearSum(occupancy[k] for k in region_slots) * hours_per_slot
         case DependencyExpression() as dependency, Distance(target=timedelta() as target):
             target_slots: float = target / grid.slot
-            bound: float = n + dependency.from_duration + abs(target_slots)
+            bound: float = n + abs(target_slots)
             inactive: mathopt.LinearExpression = bound * (
                 2 - dependency.from_presence - dependency.to_presence
             )
@@ -63,7 +61,7 @@ def compile_evaluation(
             return violation
         case DependencyExpression() as dependency, Shortfall(lower=timedelta() as lower):
             lower_slots: float = lower / grid.slot
-            bound: float = n + dependency.from_duration + abs(lower_slots)
+            bound: float = n + abs(lower_slots)
             inactive: mathopt.LinearExpression = bound * (
                 2 - dependency.from_presence - dependency.to_presence
             )
@@ -78,7 +76,7 @@ def compile_evaluation(
                 violation: mathopt.Variable = model.add_variable(lb=0.0)
                 model.add_linear_constraint(violation >= value - upper)
                 violations.append(violation)
-            return mathopt.LinearSum(violations) * policy.per_count
+            return mathopt.LinearSum(violations)
         case DailyVectorExpression(values=values, quantity=AggregateQuantity.TOTAL_DURATION), Excess(upper=timedelta() as upper):
             upper_hours: float = upper / timedelta(hours=1)
             violations: list[mathopt.Variable] = []
