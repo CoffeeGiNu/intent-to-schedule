@@ -64,30 +64,113 @@ class JsonParser(argparse.ArgumentParser):
         raise ValueError(message)
 
 
+COMMANDS: dict[str, tuple[str, str]] = {
+    "init": (
+        "Create the state from a calendar JSON",
+        "The calendar JSON holds horizon, slot, people, availabilities, and busy_intervals.",
+    ),
+    "show": (
+        "Print the state",
+        "The state holds the problem with IDs, the previous schedule, and the dialogue.",
+    ),
+    "schema": ("Print the JSON Schema of the apply input", ""),
+    "apply": (
+        "Apply a batch of commands",
+        "Reads commands JSON (see `schema`) from --file or stdin and prints the IDs it created. "
+        "Add Tasks first, then reference their IDs in constraints. Exits 1 if rejected; the state is left unchanged.",
+    ),
+    "solve": ("Solve the problem and store the schedule", "Exits 2 if infeasible."),
+    "chat": (
+        "Translate an utterance with the OpenAI API, then apply and solve",
+        "Reads OPENAI_API_KEY and OPENAI_BASE_URL from the environment.",
+    ),
+    "help": ("Print this message or the help of the given subcommand", ""),
+}
+
+
 def parser() -> JsonParser:
     """Create the command line argument parser."""
-    root: JsonParser = JsonParser(prog="intent-to-schedule")
-    root.add_argument("--state", type=Path, default=Path(".state/state.json"))
+    root: JsonParser = JsonParser(
+        prog="intent-to-schedule",
+        usage="%(prog)s [OPTIONS] <COMMAND>",
+        description="Apply scheduling commands to a stored problem and solve it. Every command prints one JSON document.",
+        add_help=False,
+    )
+    root._optionals.title = "Options"
+    root.add_argument(
+        "--state",
+        type=Path,
+        default=Path(".state/state.json"),
+        metavar="<PATH>",
+        help="State file [default: .state/state.json]",
+    )
+    root.add_argument("-h", "--help", action="help", help="Print help")
     subcommands: argparse._SubParsersAction[argparse.ArgumentParser] = (
-        root.add_subparsers(dest="command", required=True)
+        root.add_subparsers(
+            dest="command",
+            required=True,
+            title="Commands",
+            metavar="<COMMAND>",
+            prog="intent-to-schedule",
+        )
     )
     command: argparse.ArgumentParser
-    for name in ("init", "show", "schema", "apply", "solve", "chat"):
-        command = subcommands.add_parser(name)
-        command.add_argument("--state", type=Path, default=argparse.SUPPRESS)
+    for name, (summary, detail) in COMMANDS.items():
+        command = subcommands.add_parser(
+            name,
+            help=summary,
+            description=f"{summary}. {detail}".strip(),
+            add_help=False,
+        )
+        command._positionals.title = "Arguments"
+        command._optionals.title = "Options"
         match name:
             case "init":
-                command.add_argument("--calendar", type=Path, required=True)
+                command.add_argument(
+                    "--calendar",
+                    type=Path,
+                    required=True,
+                    metavar="<FILE>",
+                    help="Calendar JSON file",
+                )
             case "apply":
-                command.add_argument("--file", type=Path)
+                command.add_argument(
+                    "--file",
+                    type=Path,
+                    metavar="<FILE>",
+                    help="Commands JSON file [default: stdin]",
+                )
             case "chat":
-                command.add_argument("text")
-                command.add_argument("--model", required=True)
+                command.add_argument("text", metavar="<TEXT>", help="Utterance")
+                command.add_argument(
+                    "--model",
+                    required=True,
+                    metavar="<MODEL>",
+                    help="Model name, e.g. openai/gpt-5-mini",
+                )
                 command.add_argument(
                     "--now",
                     type=datetime.fromisoformat,
-                    help="current time (ISO 8601); default: the start of the planning horizon",
+                    metavar="<ISO_DATETIME>",
+                    help="Current time for words like tomorrow [default: start of the planning horizon]",
                 )
+            case "help":
+                command.add_argument(
+                    "topic",
+                    nargs="?",
+                    choices=[*COMMANDS],
+                    metavar="<COMMAND>",
+                    help="Subcommand",
+                )
+        if name not in ("help", "schema"):
+            command.add_argument(
+                "--state",
+                type=Path,
+                default=argparse.SUPPRESS,
+                metavar="<PATH>",
+                help="State file",
+            )
+        command.add_argument("-h", "--help", action="help", help="Print help")
     return root
 
 
@@ -277,7 +360,10 @@ def chat(
 def main(argv: list[str] | None = None) -> int:
     """Run one command and return its exit status."""
     try:
-        args: argparse.Namespace = parser().parse_args(argv)
+        root: JsonParser = parser()
+        args: argparse.Namespace = root.parse_args(argv)
+        if args.command == "help":
+            root.parse_args([args.topic, "--help"] if args.topic else ["--help"])
         if args.command == "schema":
             emit(CommandsData.model_json_schema())
             return 0
