@@ -1,7 +1,6 @@
 """Argparse entry point for JSON scheduling commands."""
 
 import argparse
-from collections.abc import Callable
 from datetime import datetime
 import json
 from pathlib import Path
@@ -82,7 +81,7 @@ def parser() -> JsonParser:
             case "chat":
                 command.add_argument("text")
                 command.add_argument("--model", required=True)
-                command.add_argument("--now", type=datetime.fromisoformat, help="current time (ISO 8601); default: the system clock")
+                command.add_argument("--now", type=datetime.fromisoformat, help="current time (ISO 8601); default: the start of the planning horizon")
     return root
 
 
@@ -192,9 +191,12 @@ def chat(path: Path, text: str, model: str, now: datetime | None, service: Sched
     """Translate an utterance, then apply and solve it."""
     state: State = load_state(path)
     dialogue: tuple[UtteranceState, ...] = (*state.dialogue, UtteranceState(speaker="user", text=text))
-    clock: Callable[[], datetime] = (lambda: now) if now is not None else (lambda: datetime.now().astimezone())
-    conversation: Conversation = Conversation(OpenAICommandTranslator(openai.OpenAI(), model, validator, clock), service)
-    response: Response = conversation.respond(to_dialogue(dialogue), to_problem(state.problem), to_schedule(state.previous))
+    problem: SchedulingProblem = to_problem(state.problem)
+    current: datetime = now if now is not None else problem.calendar.grid.horizon.start
+    conversation: Conversation = Conversation(
+        OpenAICommandTranslator(openai.OpenAI(), model, validator, lambda: current), service
+    )
+    response: Response = conversation.respond(to_dialogue(dialogue), problem, to_schedule(state.previous))
     match response.outcome:
         case Ambiguous(question=question):
             updated: State = state.model_copy(
