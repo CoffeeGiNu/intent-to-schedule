@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isfinite
 
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance
@@ -13,6 +14,17 @@ class ObjectivePolicy:
     weights: Mapping[Strength, float]
     per_count: float
     """Penalty of one Task counted, relative to one hour."""
+
+    def __post_init__(self) -> None:
+        if (
+            set(self.drop_costs) != set(Importance)
+            or set(self.weights) != set(Strength)
+            or any(not isfinite(value) or value <= 0 for value in self.drop_costs.values())
+            or any(not isfinite(value) or value <= 0 for value in self.weights.values())
+            or not isfinite(self.per_count)
+            or self.per_count <= 0
+        ):
+            raise ValueError("Objective policy coefficients must be finite and positive for every member")
 
     def drop_cost(self, importance: Importance) -> float:
         return self.drop_costs[importance]

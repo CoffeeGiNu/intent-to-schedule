@@ -14,7 +14,7 @@ from intent_to_schedule.application.command import (
     ReplaceTask,
 )
 from intent_to_schedule.application.converse import Conversation, stability_constraints
-from intent_to_schedule.application.policy import DEFAULT_POLICY
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.solve import Infeasible
 from intent_to_schedule.application.translate import Ambiguous, Translated
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
@@ -49,6 +49,23 @@ def problem(*tasks: Task, constraints: tuple[HardConstraint, ...] = ()) -> Sched
 def test_policy_uses_mappings() -> None:
     assert DEFAULT_POLICY.drop_cost(Importance.HIGH) == 100.0
     assert DEFAULT_POLICY.weight(Strength.WEAK) == 1.0
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, float("inf"), float("nan")])
+def test_policy_rejects_nonpositive_or_nonfinite_coefficients(value: float) -> None:
+    with pytest.raises(ValueError):
+        replace(DEFAULT_POLICY, per_count=value)
+    with pytest.raises(ValueError):
+        replace(DEFAULT_POLICY, drop_costs={**DEFAULT_POLICY.drop_costs, Importance.LOW: value})
+    with pytest.raises(ValueError):
+        replace(DEFAULT_POLICY, weights={**DEFAULT_POLICY.weights, Strength.WEAK: value})
+
+
+def test_policy_requires_every_importance_and_strength() -> None:
+    with pytest.raises(ValueError):
+        ObjectivePolicy({Importance.LOW: 1.0}, DEFAULT_POLICY.weights, 1.0)
+    with pytest.raises(ValueError):
+        ObjectivePolicy(DEFAULT_POLICY.drop_costs, {Strength.WEAK: 1.0}, 1.0)
 
 
 def test_task_commands_keep_input_and_order() -> None:
