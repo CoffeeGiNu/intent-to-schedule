@@ -10,6 +10,9 @@ dependencies = [
     "pydantic>=2.13.5",
 ]
 
+[project.scripts]
+intent-to-schedule = "intent_to_schedule.adapter.command_line_interface.main:main"
+
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]
 build-backend = "uv_build"

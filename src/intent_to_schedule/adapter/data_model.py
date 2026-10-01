@@ -275,3 +275,58 @@ def convert_quantity(output: QuantityOutput) -> datetime | timedelta | int:
         case InstantOutput(value=value) | DurationOutput(value=value) | CountOutput(value=value):
             return value
 
+
+def to_time_interval_output(interval: TimeInterval) -> TimeIntervalOutput:
+    """Convert a domain time interval to its data form."""
+    return TimeIntervalOutput(start=interval.start, end=interval.end)
+
+
+def to_task_output(task: Task) -> TaskOutput:
+    """Convert a domain task to its data form."""
+    return TaskOutput(
+        name=task.name,
+        duration=task.duration,
+        participant_ids=tuple(sorted(task.participant_ids, key=lambda item: item.value)),
+        importance=task.importance.value,
+        required=task.required,
+        stability=task.stability.value,
+    )
+
+
+def to_measure_output(measure: Measure) -> MeasureOutput:
+    """Convert a domain measure to its data form."""
+    match measure:
+        case PointMeasure(task_id=task_id):
+            return PointMeasureOutput(kind="point", task_id=task_id)
+        case IntervalMeasure(task_id=task_id):
+            return IntervalMeasureOutput(kind="interval", task_id=task_id)
+        case DependencyMeasure(from_task_id=from_task_id, to_task_id=to_task_id):
+            return DependencyMeasureOutput(kind="dependency", from_task_id=from_task_id, to_task_id=to_task_id)
+        case AggregateMeasure(task_ids=task_ids, quantity=quantity):
+            return AggregateMeasureOutput(
+                kind="aggregate", task_ids=tuple(sorted(task_ids, key=lambda item: item.value)), quantity=quantity.value
+            )
+
+
+def to_quantity_output(value: datetime | timedelta | int) -> QuantityOutput:
+    """Convert a domain quantity to its data form."""
+    match value:
+        case datetime():
+            return InstantOutput(kind="instant", value=value)
+        case timedelta():
+            return DurationOutput(kind="duration", value=value)
+        case int():
+            return CountOutput(kind="count", value=value)
+
+
+def to_evaluation_output(evaluation: Evaluation) -> EvaluationOutput:
+    """Convert a domain evaluation to its data form."""
+    match evaluation:
+        case Distance(target=target):
+            return DistanceOutput(kind="distance", target=to_quantity_output(target))
+        case Intrusion(region=region):
+            return IntrusionOutput(kind="intrusion", region=tuple(to_time_interval_output(item) for item in region))
+        case Shortfall(lower=lower):
+            return ShortfallOutput(kind="shortfall", lower=to_quantity_output(lower))
+        case Excess(upper=upper):
+            return ExcessOutput(kind="excess", upper=to_quantity_output(upper))
