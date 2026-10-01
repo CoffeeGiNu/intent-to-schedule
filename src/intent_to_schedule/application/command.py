@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from intent_to_schedule.domain.consistency import Violation, Violations
@@ -105,3 +106,15 @@ type ConstraintCommand = AddConstraint | RemoveConstraint
 
 type SchedulingCommand = ElementCommand | ConstraintCommand
 """Request to change a SchedulingProblem."""
+
+
+def execute_commands(problem: SchedulingProblem, commands: Sequence[SchedulingCommand]) -> ExecuteResult:
+    """Execute commands in order, stopping at the first rejection."""
+    updated: SchedulingProblem = problem
+    command: SchedulingCommand
+    for command in commands:
+        result: ExecuteResult = command.execute(updated)
+        if isinstance(result, Rejected):
+            return result
+        updated = result.problem
+    return Executed(updated)

@@ -4,10 +4,12 @@ from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.compatibility import is_supported
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
+    AllOf,
     AvailabilityForEveryone,
     ReferencesExist,
     SupportedCombinations,
     UniqueIds,
+    Violation,
     Violations,
 )
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
@@ -77,3 +79,15 @@ def test_availability_for_everyone_reports_person_without_availability() -> None
     violations: Violations = AvailabilityForEveryone().validate(problem)
     assert len(violations.items) == 1
     assert "p1" in violations.items[0].message
+
+
+def test_all_of_merges_violations_and_nests() -> None:
+    original: SchedulingProblem = make_problem()
+    problem: SchedulingProblem = SchedulingProblem(
+        original.calendar, original.people, (*original.tasks, original.tasks[0]), original.constraints
+    )
+    validator: AllOf = AllOf(ReferencesExist(), AllOf(AvailabilityForEveryone(), UniqueIds()))
+    assert validator.validate(problem) == Violations((
+        Violation("Person p1 has no availability."),
+        Violation("Duplicate Task id t1."),
+    ))

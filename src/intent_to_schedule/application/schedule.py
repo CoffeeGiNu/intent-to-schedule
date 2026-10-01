@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 
-from intent_to_schedule.application.command import ExecuteResult, Executed, Rejected, SchedulingCommand
+from intent_to_schedule.application.command import ExecuteResult, Rejected, SchedulingCommand, execute_commands
 from intent_to_schedule.application.solve import SchedulingSolver, SolveResult
 from intent_to_schedule.domain.consistency import Validator, Violations
 from intent_to_schedule.domain.constraint import ConstraintId, SoftConstraint
@@ -16,25 +16,19 @@ from intent_to_schedule.domain.task import TaskId
 class Scheduling:
     """Use case that applies commands and solves a SchedulingProblem."""
 
-    def __init__(self, solver: SchedulingSolver, validators: Sequence[Validator]) -> None:
+    def __init__(self, solver: SchedulingSolver, validator: Validator) -> None:
         self._solver: SchedulingSolver = solver
-        self._validators: Sequence[Validator] = validators
+        self._validator: Validator = validator
 
     def execute(self, problem: SchedulingProblem, commands: Sequence[SchedulingCommand]) -> ExecuteResult:
         """Apply commands in order and validate the result."""
-        updated: SchedulingProblem = problem
-        for command in commands:
-            result: ExecuteResult = command.execute(updated)
-            if isinstance(result, Rejected):
-                return result
-            updated = result.problem
-
-        violations: Violations = Violations(())
-        for validator in self._validators:
-            violations = violations.merge(validator.validate(updated))
+        result: ExecuteResult = execute_commands(problem, commands)
+        if isinstance(result, Rejected):
+            return result
+        violations: Violations = self._validator.validate(result.problem)
         if not violations.is_empty:
             return Rejected(violations)
-        return Executed(updated)
+        return result
 
     def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> SolveResult:
         """Solve a problem, keeping Tasks near their previous start."""

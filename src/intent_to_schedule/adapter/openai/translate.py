@@ -7,7 +7,7 @@ from typing import Callable, Literal
 
 import openai
 from intent_to_schedule.adapter.data_model import ConstraintCommandData, ElementCommandData, DataModel, convert_command
-from intent_to_schedule.application.command import ConstraintCommand, ElementCommand, Executed, Rejected, SchedulingCommand
+from intent_to_schedule.application.command import ConstraintCommand, ElementCommand, ExecuteResult, Rejected, SchedulingCommand, execute_commands
 from intent_to_schedule.application.translate import Ambiguous, CommandTranslator, Translated, TranslateResult, Utterance
 from intent_to_schedule.domain.consistency import ConsistencyError, Validator, Violations
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -122,11 +122,11 @@ class OpenAICommandTranslator(CommandTranslator):
         self,
         client: openai.OpenAI,
         model: str,
-        validators: Sequence[Validator],
+        validator: Validator,
     ) -> None:
         self._client: openai.OpenAI = client
         self._model: str = model
-        self._validators: Sequence[Validator] = validators
+        self._validator: Validator = validator
 
     def translate(
         self,
@@ -192,17 +192,10 @@ class OpenAICommandTranslator(CommandTranslator):
         self, commands: Sequence[SchedulingCommand], problem: SchedulingProblem
     ) -> SchedulingProblem:
         """Apply commands and validate the resulting problem."""
-        updated_problem: SchedulingProblem = problem
-        command: SchedulingCommand
-        for command in commands:
-            result: Executed | Rejected = command.execute(updated_problem)
-            if isinstance(result, Rejected):
-                raise ConsistencyError(result.violations)
-            updated_problem = result.problem
-        violations: Violations = Violations(())
-        validator: Validator
-        for validator in self._validators:
-            violations = violations.merge(validator.validate(updated_problem))
+        result: ExecuteResult = execute_commands(problem, commands)
+        if isinstance(result, Rejected):
+            raise ConsistencyError(result.violations)
+        violations: Violations = self._validator.validate(result.problem)
         if not violations.is_empty:
             raise ConsistencyError(violations)
-        return updated_problem
+        return result.problem

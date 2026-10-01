@@ -41,6 +41,7 @@ from intent_to_schedule.application.solve import Infeasible, Solved
 from intent_to_schedule.application.translate import Ambiguous
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
+    AllOf,
     AvailabilityForEveryone,
     ConsistencyError,
     ReferencesExist,
@@ -93,9 +94,9 @@ def reject(violations: Violations) -> int:
     return 1
 
 
-def scheduling(validators: tuple[Validator, ...]) -> Scheduling:
+def scheduling(validator: Validator) -> Scheduling:
     """Wire the scheduling use case."""
-    return Scheduling(MathOptSchedulingSolver(DEFAULT_POLICY), validators)
+    return Scheduling(MathOptSchedulingSolver(DEFAULT_POLICY), validator)
 
 
 def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
@@ -184,11 +185,11 @@ def solve(path: Path, service: Scheduling) -> int:
             return 0
 
 
-def converse(path: Path, text: str, model: str, service: Scheduling, validators: tuple[Validator, ...]) -> int:
+def converse(path: Path, text: str, model: str, service: Scheduling, validator: Validator) -> int:
     """Translate an utterance, then apply and solve it."""
     state: State = load_state(path)
     dialogue: tuple[UtteranceState, ...] = (*state.dialogue, UtteranceState(speaker="user", text=text))
-    conversation: Conversation = Conversation(OpenAICommandTranslator(openai.OpenAI(), model, validators), service)
+    conversation: Conversation = Conversation(OpenAICommandTranslator(openai.OpenAI(), model, validator), service)
     response: Response = conversation.respond(to_dialogue(dialogue), to_problem(state.problem), to_schedule(state.previous))
     match response.outcome:
         case Ambiguous(question=question):
@@ -228,10 +229,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             emit(load_state(path).model_dump(mode="json"))
             return 0
-        validators: tuple[Validator, ...] = (
+        validator: AllOf = AllOf(
             UniqueIds(), ReferencesExist(), AvailabilityForEveryone(), AlignedToSlots(), SupportedCombinations()
         )
-        service: Scheduling = scheduling(validators)
+        service: Scheduling = scheduling(validator)
         match args.command:
             case "init":
                 return init(path, args.calendar, service)
@@ -240,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
             case "solve":
                 return solve(path, service)
             case "converse":
-                return converse(path, args.text, args.model, service, validators)
+                return converse(path, args.text, args.model, service, validator)
     except ConsistencyError as error:
         return reject(error.violations)
     except (OSError, ValueError, ValidationError, RuntimeError) as error:

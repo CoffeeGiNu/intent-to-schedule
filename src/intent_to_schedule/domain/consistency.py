@@ -46,6 +46,20 @@ class Validator(Protocol):
     def validate(self, problem: SchedulingProblem) -> Violations: ...
 
 
+class AllOf:
+    """Validator that all of the given validators hold."""
+
+    def __init__(self, *validators: Validator) -> None:
+        self._validators: tuple[Validator, ...] = validators
+
+    def validate(self, problem: SchedulingProblem) -> Violations:
+        violations: Violations = Violations(())
+        validator: Validator
+        for validator in self._validators:
+            violations = violations.merge(validator.validate(problem))
+        return violations
+
+
 class UniqueIds:
     """Validator that IDs are not duplicated."""
 
