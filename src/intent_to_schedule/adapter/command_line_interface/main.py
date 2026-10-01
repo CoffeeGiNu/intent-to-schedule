@@ -69,7 +69,7 @@ def parser() -> JsonParser:
     root.add_argument("--state", type=Path, default=Path(".state/state.json"))
     subcommands: argparse._SubParsersAction[argparse.ArgumentParser] = root.add_subparsers(dest="command", required=True)
     command: argparse.ArgumentParser
-    for name in ("init", "show", "schema", "apply", "solve", "converse"):
+    for name in ("init", "show", "schema", "apply", "solve", "chat"):
         command = subcommands.add_parser(name)
         command.add_argument("--state", type=Path, default=argparse.SUPPRESS)
         match name:
@@ -77,7 +77,7 @@ def parser() -> JsonParser:
                 command.add_argument("--calendar", type=Path, required=True)
             case "apply":
                 command.add_argument("--file", type=Path)
-            case "converse":
+            case "chat":
                 command.add_argument("text")
                 command.add_argument("--model", required=True)
     return root
@@ -185,7 +185,7 @@ def solve(path: Path, service: Scheduling) -> int:
             return 0
 
 
-def converse(path: Path, text: str, model: str, service: Scheduling, validator: Validator) -> int:
+def chat(path: Path, text: str, model: str, service: Scheduling, validator: Validator) -> int:
     """Translate an utterance, then apply and solve it."""
     state: State = load_state(path)
     dialogue: tuple[UtteranceState, ...] = (*state.dialogue, UtteranceState(speaker="user", text=text))
@@ -240,8 +240,8 @@ def main(argv: list[str] | None = None) -> int:
                 return apply(path, args.file, service)
             case "solve":
                 return solve(path, service)
-            case "converse":
-                return converse(path, args.text, args.model, service, validator)
+            case "chat":
+                return chat(path, args.text, args.model, service, validator)
     except ConsistencyError as error:
         return reject(error.violations)
     except (OSError, ValueError, ValidationError, RuntimeError, openai.APIError) as error:
