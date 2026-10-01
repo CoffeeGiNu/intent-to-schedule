@@ -13,10 +13,11 @@ from intent_to_schedule.application.command import (
     RemoveTask,
     ReplaceTask,
 )
-from intent_to_schedule.application.converse import Conversation, stability_constraints
+from intent_to_schedule.application.converse import Conversation, Response
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
+from intent_to_schedule.application.schedule import Scheduling, stability_constraints
 from intent_to_schedule.application.solve import Infeasible
-from intent_to_schedule.application.translate import Ambiguous, Translated
+from intent_to_schedule.application.translate import Ambiguous, Translated, Utterance
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.consistency import ConsistencyError, Violation, Violations
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint, SoftConstraint
@@ -24,8 +25,6 @@ from intent_to_schedule.domain.evaluation import Distance
 from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantity, PointMeasure
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
-from intent_to_schedule.application.converse import Response
-from intent_to_schedule.application.translate import Utterance
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance, Task, TaskId
 
@@ -164,13 +163,43 @@ class Validator:
         return Violations((Violation(self.message),)) if self.message else Violations(())
 
 
+def test_scheduling_execute_returns_command_rejection() -> None:
+    original: SchedulingProblem = problem()
+    validator: Validator = Validator()
+    scheduling: Scheduling = Scheduling(Solver(), (validator,))
+
+    result: Executed | Rejected = scheduling.execute(
+        original, (RemoveTask(TaskId("missing")), AddTask(task("later")))
+    )
+
+    assert isinstance(result, Rejected)
+    assert result.violations == Violations((Violation("Task does not exist"),))
+    assert validator.problems == []
+    assert original.tasks == ()
+
+
+def test_scheduling_execute_returns_merged_validator_rejection() -> None:
+    original: SchedulingProblem = problem()
+    first: Validator = Validator("first")
+    second: Validator = Validator("second")
+    scheduling: Scheduling = Scheduling(Solver(), (first, second))
+
+    result: Executed | Rejected = scheduling.execute(original, (AddTask(task("a")),))
+
+    assert isinstance(result, Rejected)
+    assert result.violations == Violations((Violation("first"), Violation("second")))
+    assert first.problems == second.problems
+    assert first.problems[0].tasks == (task("a"),)
+    assert original.tasks == ()
+
+
 def test_conversation_applies_commands_and_solves_with_temporary_stability() -> None:
     first: Task = task("a")
     original: SchedulingProblem = problem()
     previous: Schedule = Schedule((ScheduledTask(first.id, START),), frozenset())
     solver: Solver = Solver()
     validator: Validator = Validator()
-    conversation: Conversation = Conversation(Translator(Translated((AddTask(first),))), solver, (validator,))
+    conversation: Conversation = Conversation(Translator(Translated((AddTask(first),))), Scheduling(solver, (validator,)))
     with patch.object(ConstraintId, "generate", return_value=ConstraintId("stability")):
         response: Response = conversation.respond((), original, previous)
     assert response.problem.tasks == (first,)
@@ -184,23 +213,23 @@ def test_conversation_ambiguous_and_failures() -> None:
     original: SchedulingProblem = problem()
     solver: Solver = Solver()
     ambiguous: Ambiguous = Ambiguous("Which task?")
-    response: Response = Conversation(Translator(ambiguous), solver, ()).respond((), original, None)
+    response: Response = Conversation(Translator(ambiguous), Scheduling(solver, ())).respond((), original, None)
     assert response.problem is original
     assert response.outcome is ambiguous
     assert solver.problem is None
 
-    rejected: Conversation = Conversation(Translator(Translated((RemoveTask(TaskId("a")),))), solver, ())
+    rejected: Conversation = Conversation(Translator(Translated((RemoveTask(TaskId("a")),))), Scheduling(solver, ()))
     with pytest.raises(ConsistencyError, match="Task does not exist"):
         rejected.respond((), original, None)
 
     first: Validator = Validator("first")
     second: Validator = Validator("second")
-    invalid: Conversation = Conversation(Translator(Translated(())), solver, (first, second))
+    invalid: Conversation = Conversation(Translator(Translated(())), Scheduling(solver, (first, second)))
     with pytest.raises(ConsistencyError, match="first; second"):
         invalid.respond((), original, None)
     assert len(first.problems) == len(second.problems) == 1
     assert solver.problem is None
 
-    valid: Conversation = Conversation(Translator(Translated(())), solver, ())
+    valid: Conversation = Conversation(Translator(Translated(())), Scheduling(solver, ()))
     assert valid.respond((), original, None).problem is original
     assert solver.problem is original
