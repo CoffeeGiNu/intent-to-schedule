@@ -1,6 +1,8 @@
 """Argparse entry point for JSON scheduling commands."""
 
 import argparse
+from collections.abc import Callable
+from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -80,6 +82,7 @@ def parser() -> JsonParser:
             case "chat":
                 command.add_argument("text")
                 command.add_argument("--model", required=True)
+                command.add_argument("--now", type=datetime.fromisoformat, help="current time (ISO 8601); default: the system clock")
     return root
 
 
@@ -185,11 +188,12 @@ def solve(path: Path, service: Scheduling) -> int:
             return 0
 
 
-def chat(path: Path, text: str, model: str, service: Scheduling, validator: Validator) -> int:
+def chat(path: Path, text: str, model: str, now: datetime | None, service: Scheduling, validator: Validator) -> int:
     """Translate an utterance, then apply and solve it."""
     state: State = load_state(path)
     dialogue: tuple[UtteranceState, ...] = (*state.dialogue, UtteranceState(speaker="user", text=text))
-    conversation: Conversation = Conversation(OpenAICommandTranslator(openai.OpenAI(), model, validator), service)
+    clock: Callable[[], datetime] = (lambda: now) if now is not None else (lambda: datetime.now().astimezone())
+    conversation: Conversation = Conversation(OpenAICommandTranslator(openai.OpenAI(), model, validator, clock), service)
     response: Response = conversation.respond(to_dialogue(dialogue), to_problem(state.problem), to_schedule(state.previous))
     match response.outcome:
         case Ambiguous(question=question):
@@ -241,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             case "solve":
                 return solve(path, service)
             case "chat":
-                return chat(path, args.text, args.model, service, validator)
+                return chat(path, args.text, args.model, args.now, service, validator)
     except ConsistencyError as error:
         return reject(error.violations)
     except (OSError, ValueError, ValidationError, RuntimeError, openai.APIError) as error:

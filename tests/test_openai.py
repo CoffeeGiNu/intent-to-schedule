@@ -138,7 +138,7 @@ def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
     previous: Schedule = Schedule((ScheduledTask(TaskId("t1"), START),), frozenset())
     dialogue: tuple[Utterance, ...] = (Utterance(Speaker.USER, "Plan a review"), Utterance(Speaker.ASSISTANT, "Okay"), Utterance(Speaker.USER, "Make it tomorrow"))
     with patch.object(TaskId, "generate", return_value=TaskId("new")), patch.object(ConstraintId, "generate", return_value=ConstraintId("c1")):
-        result: Translated | Ambiguous = OpenAICommandTranslator(client, "test-model", ReferencesExist()).translate(dialogue, _problem(), previous)
+        result: Translated | Ambiguous = OpenAICommandTranslator(client, "test-model", ReferencesExist(), lambda: datetime(2026, 10, 9, 9, tzinfo=timezone.utc)).translate(dialogue, _problem(), previous)
     assert isinstance(result, Translated)
     assert len(result.commands) == 2
     assert isinstance(result.commands[0], AddTask)
@@ -159,7 +159,7 @@ def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
 def test_translate_retries_validator_violations_then_raises() -> None:
     invalid: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskData(kind="add_task", task=_task_output((PersonId("missing"),))),)))
     client: _FakeClient = _FakeClient([invalid, invalid, invalid])
-    translator: OpenAICommandTranslator = OpenAICommandTranslator(client, "test-model", ReferencesExist())
+    translator: OpenAICommandTranslator = OpenAICommandTranslator(client, "test-model", ReferencesExist(), lambda: datetime(2026, 10, 9, 9, tzinfo=timezone.utc))
     with pytest.raises(ConsistencyError, match="missing person id"):
         translator.translate((Utterance(Speaker.USER, "Add a review"),), _problem(), None)
     assert len(client.responses.calls) == 3

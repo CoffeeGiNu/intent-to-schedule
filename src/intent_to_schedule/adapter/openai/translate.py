@@ -105,10 +105,10 @@ def _json_default(value: object) -> object:
             raise TypeError(f"Cannot serialize {type(value).__name__}")
 
 
-def _snapshot(problem: SchedulingProblem, previous: Schedule | None) -> str:
+def _snapshot(problem: SchedulingProblem, previous: Schedule | None, now: datetime) -> str:
     """Describe the current scheduling state."""
     snapshot: dict[str, object] = {
-        "current_time": datetime.now(problem.calendar.grid.horizon.start.tzinfo).isoformat(),
+        "current_time": now.isoformat(),
         "problem": asdict(problem),
         "previous_schedule": asdict(previous) if previous is not None else None,
     }
@@ -123,10 +123,12 @@ class OpenAICommandTranslator(CommandTranslator):
         client: openai.OpenAI,
         model: str,
         validator: Validator,
+        clock: Callable[[], datetime],
     ) -> None:
         self._client: openai.OpenAI = client
         self._model: str = model
         self._validator: Validator = validator
+        self._clock: Callable[[], datetime] = clock
 
     def translate(
         self,
@@ -162,7 +164,7 @@ class OpenAICommandTranslator(CommandTranslator):
     ) -> tuple[tuple[Command, ...], SchedulingProblem] | Ambiguous:
         """Request and validate one translation step."""
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": prompt + "\nSnapshot: " + _snapshot(problem, previous)},
+            {"role": "system", "content": prompt + "\nSnapshot: " + _snapshot(problem, previous, self._clock())},
             *({"role": utterance.speaker.value, "content": utterance.text} for utterance in dialogue),
         ]
         attempt: int
