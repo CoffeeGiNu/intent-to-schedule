@@ -21,7 +21,7 @@ from intent_to_schedule.adapter.command_line_interface.state import (
     to_schedule,
     to_schedule_state,
 )
-from intent_to_schedule.adapter.data_model import CommandsInput, convert_commands_input
+from intent_to_schedule.adapter.data_model import CommandsData, convert_commands_input
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.adapter.openai.translate import OpenAICommandTranslator
 from intent_to_schedule.application.command import (
@@ -138,7 +138,7 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
     """Apply a JSON command batch to the current problem."""
     state: State = load_state(path)
     source: str = input_path.read_text(encoding="utf-8") if input_path is not None else sys.stdin.read()
-    commands: tuple[SchedulingCommand, ...] = convert_commands_input(CommandsInput.model_validate_json(source))
+    commands: tuple[SchedulingCommand, ...] = convert_commands_input(CommandsData.model_validate_json(source))
     result: Executed | Rejected = service.execute(to_problem(state.problem), commands)
     match result:
         case Rejected(violations=violations):
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args: argparse.Namespace = parser().parse_args(argv)
         if args.command == "schema":
-            emit(CommandsInput.model_json_schema())
+            emit(CommandsData.model_json_schema())
             return 0
         path: Path = args.state
         if args.command == "show":

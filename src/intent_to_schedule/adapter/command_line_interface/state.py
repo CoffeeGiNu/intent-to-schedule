@@ -8,22 +8,22 @@ from pydantic import Field
 
 from intent_to_schedule.adapter.data_model import (
     ConstraintIdField,
-    EvaluationOutput,
-    HardConstraintOutput,
-    MeasureOutput,
-    OutputModel,
+    EvaluationData,
+    HardConstraintData,
+    MeasureData,
+    DataModel,
     PersonIdField,
-    SoftConstraintOutput,
+    SoftConstraintData,
     TaskIdField,
-    TaskOutput,
-    TimeIntervalOutput,
+    TaskData,
+    TimeIntervalData,
     convert_evaluation,
     convert_measure,
     convert_task,
-    to_evaluation_output,
-    to_measure_output,
-    to_task_output,
-    to_time_interval_output,
+    to_evaluation_data,
+    to_measure_data,
+    to_task_data,
+    to_time_interval_data,
 )
 from intent_to_schedule.application.translate import Speaker, Utterance
 from intent_to_schedule.domain.calendar import Availability, BusyInterval, Calendar, TimeGrid, TimeInterval
@@ -34,31 +34,31 @@ from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 
 
-class PersonState(OutputModel):
+class PersonState(DataModel):
     """A person with a stable external ID."""
 
     id: PersonIdField
     name: str
 
 
-class AvailabilityState(OutputModel):
+class AvailabilityState(DataModel):
     """Available intervals for one person."""
 
     person_id: PersonIdField
-    intervals: tuple[TimeIntervalOutput, ...]
+    intervals: tuple[TimeIntervalData, ...]
 
 
-class BusyIntervalState(OutputModel):
+class BusyIntervalState(DataModel):
     """A busy interval for one person."""
 
     person_id: PersonIdField
-    interval: TimeIntervalOutput
+    interval: TimeIntervalData
 
 
-class CalendarState(OutputModel):
+class CalendarState(DataModel):
     """A calendar and its time grid."""
 
-    horizon: TimeIntervalOutput
+    horizon: TimeIntervalData
     slot: timedelta
     availabilities: tuple[AvailabilityState, ...]
     busy_intervals: tuple[BusyIntervalState, ...]
@@ -70,19 +70,19 @@ class CalendarInput(CalendarState):
     people: tuple[PersonState, ...]
 
 
-class TaskState(TaskOutput):
+class TaskState(TaskData):
     """A task with its persisted ID."""
 
     id: TaskIdField
 
 
-class HardConstraintState(HardConstraintOutput):
+class HardConstraintState(HardConstraintData):
     """A persisted hard constraint with an ID."""
 
     id: ConstraintIdField
 
 
-class SoftConstraintState(SoftConstraintOutput):
+class SoftConstraintState(SoftConstraintData):
     """A persisted soft constraint with an ID."""
 
     id: ConstraintIdField
@@ -91,7 +91,7 @@ class SoftConstraintState(SoftConstraintOutput):
 type ConstraintState = Annotated[HardConstraintState | SoftConstraintState, Field(discriminator="kind")]
 
 
-class ProblemState(OutputModel):
+class ProblemState(DataModel):
     """Persisted scheduling problem."""
 
     calendar: CalendarState
@@ -100,28 +100,28 @@ class ProblemState(OutputModel):
     constraints: tuple[ConstraintState, ...]
 
 
-class ScheduledTaskState(OutputModel):
+class ScheduledTaskState(DataModel):
     """A persisted scheduled task."""
 
     task_id: TaskIdField
     start: datetime
 
 
-class ScheduleState(OutputModel):
+class ScheduleState(DataModel):
     """A persisted schedule."""
 
     scheduled: tuple[ScheduledTaskState, ...]
     dropped_task_ids: tuple[TaskIdField, ...]
 
 
-class UtteranceState(OutputModel):
+class UtteranceState(DataModel):
     """A persisted dialogue utterance."""
 
     speaker: Literal["user", "assistant"]
     text: str
 
 
-class State(OutputModel):
+class State(DataModel):
     """Persisted problem, previous schedule, and dialogue."""
 
     problem: ProblemState
@@ -129,7 +129,7 @@ class State(OutputModel):
     dialogue: tuple[UtteranceState, ...]
 
 
-def to_interval(output: TimeIntervalOutput) -> TimeInterval:
+def to_interval(output: TimeIntervalData) -> TimeInterval:
     """Convert an interval form to the domain."""
     return TimeInterval(output.start, output.end)
 
@@ -169,30 +169,30 @@ def to_problem_state(problem: SchedulingProblem) -> ProblemState:
     calendar: Calendar = problem.calendar
     return ProblemState(
         calendar=CalendarState(
-            horizon=to_time_interval_output(calendar.grid.horizon),
+            horizon=to_time_interval_data(calendar.grid.horizon),
             slot=calendar.grid.slot,
             availabilities=tuple(
                 AvailabilityState(
                     person_id=item.person_id,
-                    intervals=tuple(to_time_interval_output(interval) for interval in item.intervals),
+                    intervals=tuple(to_time_interval_data(interval) for interval in item.intervals),
                 )
                 for item in calendar.availabilities
             ),
             busy_intervals=tuple(
-                BusyIntervalState(person_id=item.person_id, interval=to_time_interval_output(item.interval))
+                BusyIntervalState(person_id=item.person_id, interval=to_time_interval_data(item.interval))
                 for item in calendar.busy_intervals
             ),
         ),
         people=tuple(PersonState(id=item.id, name=item.name) for item in problem.people),
-        tasks=tuple(TaskState.model_validate({"id": item.id.value, **to_task_output(item).model_dump()}) for item in problem.tasks),
+        tasks=tuple(TaskState.model_validate({"id": item.id.value, **to_task_data(item).model_dump()}) for item in problem.tasks),
         constraints=tuple(to_constraint_state(item) for item in problem.constraints),
     )
 
 
 def to_constraint_state(constraint: Constraint) -> HardConstraintState | SoftConstraintState:
     """Convert a domain constraint to its persisted form."""
-    measure: MeasureOutput = to_measure_output(constraint.measure)
-    evaluation: EvaluationOutput = to_evaluation_output(constraint.evaluation)
+    measure: MeasureData = to_measure_data(constraint.measure)
+    evaluation: EvaluationData = to_evaluation_data(constraint.evaluation)
     match constraint:
         case HardConstraint(id=identifier):
             return HardConstraintState(id=identifier, kind="hard", measure=measure, evaluation=evaluation)

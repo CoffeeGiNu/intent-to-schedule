@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from intent_to_schedule.adapter.data_model import CommandsInput, convert_commands_input
+from intent_to_schedule.adapter.data_model import CommandsData, convert_commands_input
 from intent_to_schedule.application.command import AddConstraint, AddTask, RemoveConstraint, RemoveTask, ReplaceTask
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
 from intent_to_schedule.domain.evaluation import Distance
@@ -21,7 +21,7 @@ def test_commands_input_converts_mixed_commands() -> None:
         "required": True,
         "stability": "weak",
     }
-    data: CommandsInput = CommandsInput.model_validate({"commands": [
+    data: CommandsData = CommandsData.model_validate({"commands": [
         {"kind": "add_task", "task": task_data},
         {"kind": "replace_task", "task_id": "old", "replacement": task_data},
         {"kind": "remove_task", "task_id": "old"},

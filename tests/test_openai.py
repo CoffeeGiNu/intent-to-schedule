@@ -5,27 +5,27 @@ from unittest.mock import patch
 import pytest
 
 from intent_to_schedule.adapter.data_model import (
-    AddConstraintOutput,
-    AddTaskOutput,
-    AggregateMeasureOutput,
-    CountOutput,
-    DependencyMeasureOutput,
-    DistanceOutput,
-    DurationOutput,
-    ExcessOutput,
-    HardConstraintOutput,
-    InstantOutput,
-    IntervalMeasureOutput,
-    IntrusionOutput,
-    OutputModel,
-    PointMeasureOutput,
-    RemoveConstraintOutput,
-    RemoveTaskOutput,
-    ReplaceTaskOutput,
-    ShortfallOutput,
-    SoftConstraintOutput,
-    TaskOutput,
-    TimeIntervalOutput,
+    AddConstraintData,
+    AddTaskData,
+    AggregateMeasureData,
+    CountData,
+    DependencyMeasureData,
+    DistanceData,
+    DurationData,
+    ExcessData,
+    HardConstraintData,
+    InstantData,
+    IntervalMeasureData,
+    IntrusionData,
+    DataModel,
+    PointMeasureData,
+    RemoveConstraintData,
+    RemoveTaskData,
+    ReplaceTaskData,
+    ShortfallData,
+    SoftConstraintData,
+    TaskData,
+    TimeIntervalData,
 )
 from intent_to_schedule.adapter.openai.translate import (
     AmbiguousOutput,
@@ -54,9 +54,9 @@ from intent_to_schedule.domain.task import Importance, Task, TaskId
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 
 
-def _task_output(participant_ids: tuple[PersonId, ...] = ()) -> TaskOutput:
+def _task_output(participant_ids: tuple[PersonId, ...] = ()) -> TaskData:
     """Create a structured Task for tests."""
-    return TaskOutput(name="Review", duration=timedelta(hours=1), participant_ids=participant_ids, importance="high", required=True, stability="weak")
+    return TaskData(name="Review", duration=timedelta(hours=1), participant_ids=participant_ids, importance="high", required=True, stability="weak")
 
 
 def _problem() -> SchedulingProblem:
@@ -70,14 +70,14 @@ def _problem() -> SchedulingProblem:
 class _FakeResponses:
     """Return canned parsed model outputs."""
 
-    def __init__(self, outputs: list[OutputModel]) -> None:
-        self.outputs: list[OutputModel] = outputs
-        self.calls: list[tuple[str, list[dict[str, str]], type[OutputModel]]] = []
+    def __init__(self, outputs: list[DataModel]) -> None:
+        self.outputs: list[DataModel] = outputs
+        self.calls: list[tuple[str, list[dict[str, str]], type[DataModel]]] = []
 
-    def parse(self, *, model: str, input: list[dict[str, str]], text_format: type[OutputModel]) -> SimpleNamespace:
+    def parse(self, *, model: str, input: list[dict[str, str]], text_format: type[DataModel]) -> SimpleNamespace:
         """Record the request and return the next output."""
         self.calls.append((model, [message.copy() for message in input], text_format))
-        output: OutputModel = self.outputs.pop(0)
+        output: DataModel = self.outputs.pop(0)
         assert isinstance(output, text_format)
         return SimpleNamespace(output_parsed=output)
 
@@ -85,7 +85,7 @@ class _FakeResponses:
 class _FakeClient:
     """Expose fake responses to the translator."""
 
-    def __init__(self, outputs: list[OutputModel]) -> None:
+    def __init__(self, outputs: list[DataModel]) -> None:
         self.responses: _FakeResponses = _FakeResponses(outputs)
 
 
@@ -93,9 +93,9 @@ def test_convert_element_output() -> None:
     original: TaskId = TaskId("t1")
     person: PersonId = PersonId("p1")
     output: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(
-        AddTaskOutput(kind="add_task", task=_task_output((person, person))),
-        ReplaceTaskOutput(kind="replace_task", task_id=original, replacement=_task_output((person,))),
-        RemoveTaskOutput(kind="remove_task", task_id=original),
+        AddTaskData(kind="add_task", task=_task_output((person, person))),
+        ReplaceTaskData(kind="replace_task", task_id=original, replacement=_task_output((person,))),
+        RemoveTaskData(kind="remove_task", task_id=original),
     )))
     with patch.object(TaskId, "generate", return_value=TaskId("new")):
         converted: tuple[AddTask | ReplaceTask | RemoveTask, ...] | Ambiguous = convert_element_output(output)
@@ -110,13 +110,13 @@ def test_convert_element_output() -> None:
 def test_convert_constraint_output() -> None:
     task_id: TaskId = TaskId("t1")
     other_id: TaskId = TaskId("t2")
-    region: TimeIntervalOutput = TimeIntervalOutput(start=START, end=START + timedelta(hours=1))
+    region: TimeIntervalData = TimeIntervalData(start=START, end=START + timedelta(hours=1))
     output: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=(
-        AddConstraintOutput(kind="add_constraint", constraint=HardConstraintOutput(kind="hard", measure=PointMeasureOutput(kind="point", task_id=task_id), evaluation=DistanceOutput(kind="distance", target=InstantOutput(kind="instant", value=START)))),
-        AddConstraintOutput(kind="add_constraint", constraint=SoftConstraintOutput(kind="soft", measure=IntervalMeasureOutput(kind="interval", task_id=task_id), evaluation=IntrusionOutput(kind="intrusion", region=(region,)), strength="weak")),
-        AddConstraintOutput(kind="add_constraint", constraint=SoftConstraintOutput(kind="soft", measure=DependencyMeasureOutput(kind="dependency", from_task_id=task_id, to_task_id=other_id), evaluation=ShortfallOutput(kind="shortfall", lower=DurationOutput(kind="duration", value=timedelta(hours=1))), strength="strong")),
-        AddConstraintOutput(kind="add_constraint", constraint=SoftConstraintOutput(kind="soft", measure=AggregateMeasureOutput(kind="aggregate", task_ids=(task_id, other_id, task_id), quantity="count"), evaluation=ExcessOutput(kind="excess", upper=CountOutput(kind="count", value=2)), strength="normal")),
-        RemoveConstraintOutput(kind="remove_constraint", constraint_id=ConstraintId("old")),
+        AddConstraintData(kind="add_constraint", constraint=HardConstraintData(kind="hard", measure=PointMeasureData(kind="point", task_id=task_id), evaluation=DistanceData(kind="distance", target=InstantData(kind="instant", value=START)))),
+        AddConstraintData(kind="add_constraint", constraint=SoftConstraintData(kind="soft", measure=IntervalMeasureData(kind="interval", task_id=task_id), evaluation=IntrusionData(kind="intrusion", region=(region,)), strength="weak")),
+        AddConstraintData(kind="add_constraint", constraint=SoftConstraintData(kind="soft", measure=DependencyMeasureData(kind="dependency", from_task_id=task_id, to_task_id=other_id), evaluation=ShortfallData(kind="shortfall", lower=DurationData(kind="duration", value=timedelta(hours=1))), strength="strong")),
+        AddConstraintData(kind="add_constraint", constraint=SoftConstraintData(kind="soft", measure=AggregateMeasureData(kind="aggregate", task_ids=(task_id, other_id, task_id), quantity="count"), evaluation=ExcessData(kind="excess", upper=CountData(kind="count", value=2)), strength="normal")),
+        RemoveConstraintData(kind="remove_constraint", constraint_id=ConstraintId("old")),
     )))
     with patch.object(ConstraintId, "generate", side_effect=[ConstraintId(str(index)) for index in range(4)]):
         converted: tuple[AddConstraint | RemoveConstraint, ...] | Ambiguous = convert_constraint_output(output)
@@ -131,9 +131,9 @@ def test_convert_constraint_output() -> None:
 
 
 def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
-    rejected: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(RemoveTaskOutput(kind="remove_task", task_id=TaskId("missing")),)))
-    accepted: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskOutput(kind="add_task", task=_task_output((PersonId("p1"),))),)))
-    constraint: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=(AddConstraintOutput(kind="add_constraint", constraint=HardConstraintOutput(kind="hard", measure=PointMeasureOutput(kind="point", task_id=TaskId("t1")), evaluation=DistanceOutput(kind="distance", target=InstantOutput(kind="instant", value=START))),),)))
+    rejected: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(RemoveTaskData(kind="remove_task", task_id=TaskId("missing")),)))
+    accepted: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskData(kind="add_task", task=_task_output((PersonId("p1"),))),)))
+    constraint: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=(AddConstraintData(kind="add_constraint", constraint=HardConstraintData(kind="hard", measure=PointMeasureData(kind="point", task_id=TaskId("t1")), evaluation=DistanceData(kind="distance", target=InstantData(kind="instant", value=START))),),)))
     client: _FakeClient = _FakeClient([rejected, accepted, constraint])
     previous: Schedule = Schedule((ScheduledTask(TaskId("t1"), START),), frozenset())
     dialogue: tuple[Utterance, ...] = (Utterance(Speaker.USER, "Plan a review"), Utterance(Speaker.ASSISTANT, "Okay"), Utterance(Speaker.USER, "Make it tomorrow"))
@@ -157,7 +157,7 @@ def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
 
 
 def test_translate_retries_validator_violations_then_raises() -> None:
-    invalid: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskOutput(kind="add_task", task=_task_output((PersonId("missing"),))),)))
+    invalid: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskData(kind="add_task", task=_task_output((PersonId("missing"),))),)))
     client: _FakeClient = _FakeClient([invalid, invalid, invalid])
     translator: OpenAICommandTranslator = OpenAICommandTranslator(client, "test-model", (ReferencesExist(),))
     with pytest.raises(ConsistencyError, match="missing person id"):

@@ -6,7 +6,7 @@ import json
 from typing import Callable, Literal
 
 import openai
-from intent_to_schedule.adapter.data_model import ConstraintCommandOutput, ElementCommandOutput, OutputModel, convert_command
+from intent_to_schedule.adapter.data_model import ConstraintCommandData, ElementCommandData, DataModel, convert_command
 from intent_to_schedule.application.command import ConstraintCommand, ElementCommand, Executed, Rejected, SchedulingCommand
 from intent_to_schedule.application.translate import Ambiguous, CommandTranslator, Translated, TranslateResult, Utterance
 from intent_to_schedule.domain.consistency import ConsistencyError, Validator, Violations
@@ -14,34 +14,34 @@ from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 
 
-class AmbiguousOutput(OutputModel):
-    """Structured output form of Ambiguous."""
+class AmbiguousOutput(DataModel):
+    """JSON form of Ambiguous."""
 
     kind: Literal["ambiguous"]
     question: str
 
 
-class ElementCommandsOutput(OutputModel):
+class ElementCommandsOutput(DataModel):
     """Element commands translated from an utterance."""
 
     kind: Literal["translated"]
-    commands: tuple[ElementCommandOutput, ...]
+    commands: tuple[ElementCommandData, ...]
 
 
-class ConstraintCommandsOutput(OutputModel):
+class ConstraintCommandsOutput(DataModel):
     """Constraint commands translated from an utterance."""
 
     kind: Literal["translated"]
-    commands: tuple[ConstraintCommandOutput, ...]
+    commands: tuple[ConstraintCommandData, ...]
 
 
-class ElementTranslationOutput(OutputModel):
+class ElementTranslationOutput(DataModel):
     """Root of the structured output for the element step: element commands or a clarifying question."""
 
     result: ElementCommandsOutput | AmbiguousOutput
 
 
-class ConstraintTranslationOutput(OutputModel):
+class ConstraintTranslationOutput(DataModel):
     """Root of the structured output for the constraint step: constraint commands or a clarifying question."""
 
     result: ConstraintCommandsOutput | AmbiguousOutput
@@ -50,7 +50,7 @@ class ConstraintTranslationOutput(OutputModel):
 def convert_element_output(output: ElementTranslationOutput) -> tuple[ElementCommand, ...] | Ambiguous:
     """Convert element step output to element commands, generating IDs for added Tasks."""
     question: str
-    commands: tuple[ElementCommandOutput, ...]
+    commands: tuple[ElementCommandData, ...]
     match output.result:
         case AmbiguousOutput(question=question):
             return Ambiguous(question)
@@ -61,7 +61,7 @@ def convert_element_output(output: ElementTranslationOutput) -> tuple[ElementCom
 def convert_constraint_output(output: ConstraintTranslationOutput) -> tuple[ConstraintCommand, ...] | Ambiguous:
     """Convert constraint step output to constraint commands, generating IDs for added constraints."""
     question: str
-    commands: tuple[ConstraintCommandOutput, ...]
+    commands: tuple[ConstraintCommandData, ...]
     match output.result:
         case AmbiguousOutput(question=question):
             return Ambiguous(question)
@@ -151,7 +151,7 @@ class OpenAICommandTranslator(CommandTranslator):
         constraint_commands: tuple[ConstraintCommand, ...] = constraints[0]
         return Translated((*element_commands, *constraint_commands))
 
-    def _translate_step[Output: OutputModel, Command: SchedulingCommand](
+    def _translate_step[Output: DataModel, Command: SchedulingCommand](
         self,
         dialogue: Sequence[Utterance],
         problem: SchedulingProblem,
