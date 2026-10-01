@@ -1,15 +1,38 @@
+import json
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from enum import Enum
-import json
 from typing import Callable, Literal
 
 import openai
-from intent_to_schedule.adapter.data_model import ConstraintCommandData, ElementCommandData, DataModel, convert_command
-from intent_to_schedule.application.command import ConstraintCommand, ElementCommand, ExecuteResult, Rejected, SchedulingCommand, execute_commands
-from intent_to_schedule.application.translate import Ambiguous, CommandTranslator, Translated, TranslateResult, Utterance
-from intent_to_schedule.domain.consistency import ConsistencyError, Validator, Violations
+
+from intent_to_schedule.adapter.data_model import (
+    ConstraintCommandData,
+    DataModel,
+    ElementCommandData,
+    convert_command,
+)
+from intent_to_schedule.application.command import (
+    ConstraintCommand,
+    ElementCommand,
+    ExecuteResult,
+    Rejected,
+    SchedulingCommand,
+    execute_commands,
+)
+from intent_to_schedule.application.translate import (
+    Ambiguous,
+    CommandTranslator,
+    Translated,
+    TranslateResult,
+    Utterance,
+)
+from intent_to_schedule.domain.consistency import (
+    ConsistencyError,
+    Validator,
+    Violations,
+)
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 
@@ -47,7 +70,9 @@ class ConstraintTranslationOutput(DataModel):
     result: ConstraintCommandsOutput | AmbiguousOutput
 
 
-def convert_element_output(output: ElementTranslationOutput) -> tuple[ElementCommand, ...] | Ambiguous:
+def convert_element_output(
+    output: ElementTranslationOutput,
+) -> tuple[ElementCommand, ...] | Ambiguous:
     """Convert element step output to element commands, generating IDs for added Tasks."""
     question: str
     commands: tuple[ElementCommandData, ...]
@@ -58,7 +83,9 @@ def convert_element_output(output: ElementTranslationOutput) -> tuple[ElementCom
             return tuple(convert_command(command) for command in commands)
 
 
-def convert_constraint_output(output: ConstraintTranslationOutput) -> tuple[ConstraintCommand, ...] | Ambiguous:
+def convert_constraint_output(
+    output: ConstraintTranslationOutput,
+) -> tuple[ConstraintCommand, ...] | Ambiguous:
     """Convert constraint step output to constraint commands, generating IDs for added constraints."""
     question: str
     commands: tuple[ConstraintCommandData, ...]
@@ -105,7 +132,9 @@ def _json_default(value: object) -> object:
             raise TypeError(f"Cannot serialize {type(value).__name__}")
 
 
-def _snapshot(problem: SchedulingProblem, previous: Schedule | None, now: datetime) -> str:
+def _snapshot(
+    problem: SchedulingProblem, previous: Schedule | None, now: datetime
+) -> str:
     """Describe the current scheduling state."""
     snapshot: dict[str, object] = {
         "current_time": now.isoformat(),
@@ -137,16 +166,30 @@ class OpenAICommandTranslator(CommandTranslator):
         previous: Schedule | None,
     ) -> TranslateResult:
         """Translate the latest utterance into element commands, then into constraint commands."""
-        elements: tuple[tuple[ElementCommand, ...], SchedulingProblem] | Ambiguous = self._translate_step(
-            dialogue, problem, previous, _ELEMENT_PROMPT, ElementTranslationOutput, convert_element_output
+        elements: tuple[tuple[ElementCommand, ...], SchedulingProblem] | Ambiguous = (
+            self._translate_step(
+                dialogue,
+                problem,
+                previous,
+                _ELEMENT_PROMPT,
+                ElementTranslationOutput,
+                convert_element_output,
+            )
         )
         if isinstance(elements, Ambiguous):
             return elements
         element_commands: tuple[ElementCommand, ...]
         updated_problem: SchedulingProblem
         element_commands, updated_problem = elements
-        constraints: tuple[tuple[ConstraintCommand, ...], SchedulingProblem] | Ambiguous = self._translate_step(
-            dialogue, updated_problem, previous, _CONSTRAINT_PROMPT, ConstraintTranslationOutput, convert_constraint_output
+        constraints: (
+            tuple[tuple[ConstraintCommand, ...], SchedulingProblem] | Ambiguous
+        ) = self._translate_step(
+            dialogue,
+            updated_problem,
+            previous,
+            _CONSTRAINT_PROMPT,
+            ConstraintTranslationOutput,
+            convert_constraint_output,
         )
         if isinstance(constraints, Ambiguous):
             return constraints
@@ -164,14 +207,24 @@ class OpenAICommandTranslator(CommandTranslator):
     ) -> tuple[tuple[Command, ...], SchedulingProblem] | Ambiguous:
         """Request and validate one translation step."""
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": prompt + "\nSnapshot: " + _snapshot(problem, previous, self._clock())},
-            *({"role": utterance.speaker.value, "content": utterance.text} for utterance in dialogue),
+            {
+                "role": "system",
+                "content": prompt
+                + "\nSnapshot: "
+                + _snapshot(problem, previous, self._clock()),
+            },
+            *(
+                {"role": utterance.speaker.value, "content": utterance.text}
+                for utterance in dialogue
+            ),
         ]
         attempt: int
         error: ConsistencyError
         for attempt in range(3):
-            response: openai.types.responses.ParsedResponse[Output] = self._client.responses.parse(
-                model=self._model, input=messages, text_format=output_type
+            response: openai.types.responses.ParsedResponse[Output] = (
+                self._client.responses.parse(
+                    model=self._model, input=messages, text_format=output_type
+                )
             )
             output: Output | None = response.output_parsed
             if output is None:
@@ -180,12 +233,22 @@ class OpenAICommandTranslator(CommandTranslator):
             if isinstance(converted, Ambiguous):
                 return converted
             try:
-                updated_problem: SchedulingProblem = self._apply_commands(converted, problem)
+                updated_problem: SchedulingProblem = self._apply_commands(
+                    converted, problem
+                )
             except ConsistencyError as error:
                 if attempt == 2:
                     raise
-                messages.append({"role": "assistant", "content": output.model_dump_json()})
-                messages.append({"role": "user", "content": "Correct these violations: " + "; ".join(item.message for item in error.violations.items)})
+                messages.append(
+                    {"role": "assistant", "content": output.model_dump_json()}
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Correct these violations: "
+                        + "; ".join(item.message for item in error.violations.items),
+                    }
+                )
                 continue
             return converted, updated_problem
         raise AssertionError("Translation retry loop ended unexpectedly")

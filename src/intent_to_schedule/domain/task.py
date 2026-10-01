@@ -1,8 +1,8 @@
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 from typing import Self
-import uuid
 
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.strength import Strength

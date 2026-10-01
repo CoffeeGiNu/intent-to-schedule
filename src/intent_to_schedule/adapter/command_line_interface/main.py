@@ -1,10 +1,10 @@
 """Argparse entry point for JSON scheduling commands."""
 
 import argparse
-from datetime import datetime
 import json
-from pathlib import Path
 import sys
+from datetime import datetime
+from pathlib import Path
 
 import openai
 from pydantic import ValidationError
@@ -68,7 +68,9 @@ def parser() -> JsonParser:
     """Create the command line argument parser."""
     root: JsonParser = JsonParser(prog="intent-to-schedule")
     root.add_argument("--state", type=Path, default=Path(".state/state.json"))
-    subcommands: argparse._SubParsersAction[argparse.ArgumentParser] = root.add_subparsers(dest="command", required=True)
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser] = (
+        root.add_subparsers(dest="command", required=True)
+    )
     command: argparse.ArgumentParser
     for name in ("init", "show", "schema", "apply", "solve", "chat"):
         command = subcommands.add_parser(name)
@@ -81,7 +83,11 @@ def parser() -> JsonParser:
             case "chat":
                 command.add_argument("text")
                 command.add_argument("--model", required=True)
-                command.add_argument("--now", type=datetime.fromisoformat, help="current time (ISO 8601); default: the start of the planning horizon")
+                command.add_argument(
+                    "--now",
+                    type=datetime.fromisoformat,
+                    help="current time (ISO 8601); default: the start of the planning horizon",
+                )
     return root
 
 
@@ -103,7 +109,9 @@ def scheduling(validator: Validator) -> Scheduling:
 
 def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
     """Create and validate an empty problem."""
-    calendar: CalendarInput = CalendarInput.model_validate_json(calendar_path.read_text(encoding="utf-8"))
+    calendar: CalendarInput = CalendarInput.model_validate_json(
+        calendar_path.read_text(encoding="utf-8")
+    )
     form: ProblemState = ProblemState(
         calendar=calendar,
         people=calendar.people,
@@ -116,7 +124,9 @@ def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
         case Rejected(violations=violations):
             return reject(violations)
         case Executed(problem=updated):
-            state: State = State(problem=to_problem_state(updated), previous=None, dialogue=())
+            state: State = State(
+                problem=to_problem_state(updated), previous=None, dialogue=()
+            )
             save_state(path, state)
             emit(state.model_dump(mode="json"))
             return 0
@@ -140,19 +150,29 @@ def command_record(command: SchedulingCommand) -> dict[str, str]:
 def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
     """Apply a JSON command batch to the current problem."""
     state: State = load_state(path)
-    source: str = input_path.read_text(encoding="utf-8") if input_path is not None else sys.stdin.read()
-    commands: tuple[SchedulingCommand, ...] = convert_commands_input(CommandsData.model_validate_json(source))
+    source: str = (
+        input_path.read_text(encoding="utf-8")
+        if input_path is not None
+        else sys.stdin.read()
+    )
+    commands: tuple[SchedulingCommand, ...] = convert_commands_input(
+        CommandsData.model_validate_json(source)
+    )
     result: Executed | Rejected = service.execute(to_problem(state.problem), commands)
     match result:
         case Rejected(violations=violations):
             return reject(violations)
         case Executed(problem=updated):
-            save_state(path, state.model_copy(update={"problem": to_problem_state(updated)}))
+            save_state(
+                path, state.model_copy(update={"problem": to_problem_state(updated)})
+            )
             emit({"executed": [command_record(command) for command in commands]})
             return 0
 
 
-def schedule_output(problem: SchedulingProblem, schedule: Schedule) -> dict[str, object]:
+def schedule_output(
+    problem: SchedulingProblem, schedule: Schedule
+) -> dict[str, object]:
     """Describe a solved schedule with task names and end times."""
     tasks: dict[TaskId, Task] = {task.id: task for task in problem.tasks}
     scheduled: list[dict[str, str]] = [
@@ -182,43 +202,73 @@ def solve(path: Path, service: Scheduling) -> int:
             emit({"infeasible": True})
             return 2
         case Solved(schedule=schedule):
-            save_state(path, state.model_copy(update={"previous": to_schedule_state(schedule)}))
+            save_state(
+                path, state.model_copy(update={"previous": to_schedule_state(schedule)})
+            )
             emit(schedule_output(problem, schedule))
             return 0
 
 
-def chat(path: Path, text: str, model: str, now: datetime | None, service: Scheduling, validator: Validator) -> int:
+def chat(
+    path: Path,
+    text: str,
+    model: str,
+    now: datetime | None,
+    service: Scheduling,
+    validator: Validator,
+) -> int:
     """Translate an utterance, then apply and solve it."""
     state: State = load_state(path)
-    dialogue: tuple[UtteranceState, ...] = (*state.dialogue, UtteranceState(speaker="user", text=text))
+    dialogue: tuple[UtteranceState, ...] = (
+        *state.dialogue,
+        UtteranceState(speaker="user", text=text),
+    )
     problem: SchedulingProblem = to_problem(state.problem)
     current: datetime = now if now is not None else problem.calendar.grid.horizon.start
     conversation: Conversation = Conversation(
-        OpenAICommandTranslator(openai.OpenAI(), model, validator, lambda: current), service
+        OpenAICommandTranslator(openai.OpenAI(), model, validator, lambda: current),
+        service,
     )
-    response: Response = conversation.respond(to_dialogue(dialogue), problem, to_schedule(state.previous))
+    response: Response = conversation.respond(
+        to_dialogue(dialogue), problem, to_schedule(state.previous)
+    )
     match response.outcome:
         case Ambiguous(question=question):
             updated: State = state.model_copy(
-                update={"dialogue": (*dialogue, UtteranceState(speaker="assistant", text=question))}
+                update={
+                    "dialogue": (
+                        *dialogue,
+                        UtteranceState(speaker="assistant", text=question),
+                    )
+                }
             )
             save_state(path, updated)
             emit({"question": question})
             return 0
         case Infeasible():
-            updated = state.model_copy(update={
-                "problem": to_problem_state(response.problem),
-                "dialogue": (*dialogue, UtteranceState(speaker="assistant", text="Infeasible.")),
-            })
+            updated = state.model_copy(
+                update={
+                    "problem": to_problem_state(response.problem),
+                    "dialogue": (
+                        *dialogue,
+                        UtteranceState(speaker="assistant", text="Infeasible."),
+                    ),
+                }
+            )
             save_state(path, updated)
             emit({"infeasible": True})
             return 2
         case Solved(schedule=schedule):
-            updated = state.model_copy(update={
-                "problem": to_problem_state(response.problem),
-                "previous": to_schedule_state(schedule),
-                "dialogue": (*dialogue, UtteranceState(speaker="assistant", text="Scheduled.")),
-            })
+            updated = state.model_copy(
+                update={
+                    "problem": to_problem_state(response.problem),
+                    "previous": to_schedule_state(schedule),
+                    "dialogue": (
+                        *dialogue,
+                        UtteranceState(speaker="assistant", text="Scheduled."),
+                    ),
+                }
+            )
             save_state(path, updated)
             emit(schedule_output(response.problem, schedule))
             return 0
@@ -236,7 +286,11 @@ def main(argv: list[str] | None = None) -> int:
             emit(load_state(path).model_dump(mode="json"))
             return 0
         validator: AllOf = AllOf(
-            UniqueIds(), ReferencesExist(), AvailabilityForEveryone(), AlignedToSlots(), SupportedCombinations()
+            UniqueIds(),
+            ReferencesExist(),
+            AvailabilityForEveryone(),
+            AlignedToSlots(),
+            SupportedCombinations(),
         )
         service: Scheduling = scheduling(validator)
         match args.command:
@@ -250,7 +304,13 @@ def main(argv: list[str] | None = None) -> int:
                 return chat(path, args.text, args.model, args.now, service, validator)
     except ConsistencyError as error:
         return reject(error.violations)
-    except (OSError, ValueError, ValidationError, RuntimeError, openai.APIError) as error:
+    except (
+        OSError,
+        ValueError,
+        ValidationError,
+        RuntimeError,
+        openai.APIError,
+    ) as error:
         emit({"error": str(error)})
         return 1
     return 1

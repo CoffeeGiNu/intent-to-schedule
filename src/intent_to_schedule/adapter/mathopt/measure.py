@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 from ortools.math_opt.python import mathopt
 
+from intent_to_schedule.domain.calendar import TimeInterval
 from intent_to_schedule.domain.measure import (
     AggregateMeasure,
     AggregateQuantity,
@@ -13,7 +14,6 @@ from intent_to_schedule.domain.measure import (
     PointMeasure,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.calendar import TimeInterval
 from intent_to_schedule.domain.task import Task, TaskId
 
 
@@ -48,7 +48,9 @@ class DailyVectorExpression:
     quantity: AggregateQuantity
 
 
-type MeasureExpression = PointExpression | IntervalExpression | DependencyExpression | DailyVectorExpression
+type MeasureExpression = (
+    PointExpression | IntervalExpression | DependencyExpression | DailyVectorExpression
+)
 """Measure built as MathOpt expressions."""
 
 
@@ -79,22 +81,29 @@ def compile_measure(
                 for k in range(start, start + duration):
                     occupied.setdefault(k, []).append(variable)
             occupancy: dict[int, mathopt.LinearExpression] = {
-                k: mathopt.LinearSum(occupied.get(k, ()))
-                for k in range(n)
+                k: mathopt.LinearSum(occupied.get(k, ())) for k in range(n)
             }
             return IntervalExpression(occupancy)
         case DependencyMeasure():
             from_duration: int = tasks[measure.from_task_id].duration // slot
             gap: mathopt.LinearExpression = (
-                starts[measure.to_task_id] - starts[measure.from_task_id]
+                starts[measure.to_task_id]
+                - starts[measure.from_task_id]
                 - from_duration * presences[measure.from_task_id]
             )
-            return DependencyExpression(gap, presences[measure.from_task_id], presences[measure.to_task_id])
+            return DependencyExpression(
+                gap, presences[measure.from_task_id], presences[measure.to_task_id]
+            )
         case AggregateMeasure():
             dates: set[date] = {(horizon.start + k * slot).date() for k in range(n)}
             values: dict[date, mathopt.LinearExpression] = {
                 day: mathopt.LinearSum(
-                    (1 if measure.quantity is AggregateQuantity.COUNT else tasks[task_id].duration // slot) * variable
+                    (
+                        1
+                        if measure.quantity is AggregateQuantity.COUNT
+                        else tasks[task_id].duration // slot
+                    )
+                    * variable
                     for task_id in measure.task_ids
                     for start, variable in placements[task_id].items()
                     if (horizon.start + start * slot).date() == day

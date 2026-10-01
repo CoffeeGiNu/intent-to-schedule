@@ -2,7 +2,12 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 
-from intent_to_schedule.application.command import ExecuteResult, Rejected, SchedulingCommand, execute_commands
+from intent_to_schedule.application.command import (
+    ExecuteResult,
+    Rejected,
+    SchedulingCommand,
+    execute_commands,
+)
 from intent_to_schedule.application.solve import SchedulingSolver, SolveResult
 from intent_to_schedule.domain.consistency import Validator, Violations
 from intent_to_schedule.domain.constraint import ConstraintId, SoftConstraint
@@ -20,7 +25,9 @@ class Scheduling:
         self._solver: SchedulingSolver = solver
         self._validator: Validator = validator
 
-    def execute(self, problem: SchedulingProblem, commands: Sequence[SchedulingCommand]) -> ExecuteResult:
+    def execute(
+        self, problem: SchedulingProblem, commands: Sequence[SchedulingCommand]
+    ) -> ExecuteResult:
         """Apply commands in order and validate the result."""
         result: ExecuteResult = execute_commands(problem, commands)
         if isinstance(result, Rejected):
@@ -30,20 +37,27 @@ class Scheduling:
             return Rejected(violations)
         return result
 
-    def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> SolveResult:
+    def solve(
+        self, problem: SchedulingProblem, previous: Schedule | None
+    ) -> SolveResult:
         """Solve a problem, keeping Tasks near their previous start."""
         solve_problem: SchedulingProblem = problem
         if previous is not None:
             solve_problem = replace(
                 problem,
-                constraints=problem.constraints + stability_constraints(problem, previous),
+                constraints=problem.constraints
+                + stability_constraints(problem, previous),
             )
         return self._solver.solve(solve_problem)
 
 
-def stability_constraints(problem: SchedulingProblem, previous: Schedule) -> tuple[SoftConstraint, ...]:
+def stability_constraints(
+    problem: SchedulingProblem, previous: Schedule
+) -> tuple[SoftConstraint, ...]:
     """Build constraints that keep Tasks near their previous start."""
-    starts: dict[TaskId, datetime] = {scheduled.task_id: scheduled.start for scheduled in previous.scheduled}
+    starts: dict[TaskId, datetime] = {
+        scheduled.task_id: scheduled.start for scheduled in previous.scheduled
+    }
     return tuple(
         SoftConstraint(
             ConstraintId.generate(),

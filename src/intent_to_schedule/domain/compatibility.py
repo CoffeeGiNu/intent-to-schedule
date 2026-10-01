@@ -1,7 +1,12 @@
-from intent_to_schedule.domain.evaluation import Evaluation
 from datetime import datetime, timedelta
 
-from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
+from intent_to_schedule.domain.evaluation import (
+    Distance,
+    Evaluation,
+    Excess,
+    Intrusion,
+    Shortfall,
+)
 from intent_to_schedule.domain.measure import (
     AggregateMeasure,
     AggregateQuantity,
@@ -23,9 +28,13 @@ def is_supported(measure: Measure, evaluation: Evaluation) -> bool:
             return True
         case DependencyMeasure(), Shortfall(lower=timedelta()):
             return True
-        case AggregateMeasure(quantity=AggregateQuantity.COUNT), Excess(upper=int() as upper):
+        case AggregateMeasure(quantity=AggregateQuantity.COUNT), Excess(
+            upper=int() as upper
+        ):
             return not isinstance(upper, bool)
-        case AggregateMeasure(quantity=AggregateQuantity.TOTAL_DURATION), Excess(upper=timedelta()):
+        case AggregateMeasure(quantity=AggregateQuantity.TOTAL_DURATION), Excess(
+            upper=timedelta()
+        ):
             return True
         case _:
             return False

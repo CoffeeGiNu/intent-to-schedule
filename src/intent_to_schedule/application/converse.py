@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from intent_to_schedule.application.command import ExecuteResult, Rejected
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import SolveResult
-from intent_to_schedule.application.translate import Ambiguous, CommandTranslator, TranslateResult, Utterance
+from intent_to_schedule.application.translate import (
+    Ambiguous,
+    CommandTranslator,
+    TranslateResult,
+    Utterance,
+)
 from intent_to_schedule.domain.consistency import ConsistencyError
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
@@ -31,7 +36,9 @@ class Conversation:
         problem: SchedulingProblem,
         previous: Schedule | None,
     ) -> Response:
-        translated: TranslateResult = self._translator.translate(dialogue, problem, previous)
+        translated: TranslateResult = self._translator.translate(
+            dialogue, problem, previous
+        )
         if isinstance(translated, Ambiguous):
             return Response(problem, translated)
 

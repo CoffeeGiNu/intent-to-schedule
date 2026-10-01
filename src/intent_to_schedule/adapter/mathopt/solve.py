@@ -4,7 +4,12 @@ from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
 from intent_to_schedule.application.policy import ObjectivePolicy
-from intent_to_schedule.application.solve import Infeasible, SchedulingSolver, SolveResult, Solved
+from intent_to_schedule.application.solve import (
+    Infeasible,
+    SchedulingSolver,
+    Solved,
+    SolveResult,
+)
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.task import Task, TaskId
@@ -26,8 +31,12 @@ class MathOptSchedulingSolver(SchedulingSolver):
     def solve(self, problem: SchedulingProblem) -> SolveResult:
         """Solve a SchedulingProblem."""
         compiled: CompiledProblem = compile_problem(problem, self.policy)
-        parameters: mathopt.SolveParameters = mathopt.SolveParameters(time_limit=self.time_limit)
-        result: mathopt.SolveResult = mathopt.solve(compiled.model, self.solver_type, params=parameters)
+        parameters: mathopt.SolveParameters = mathopt.SolveParameters(
+            time_limit=self.time_limit
+        )
+        result: mathopt.SolveResult = mathopt.solve(
+            compiled.model, self.solver_type, params=parameters
+        )
         match result.termination.reason:
             case mathopt.TerminationReason.INFEASIBLE:
                 return Infeasible()
@@ -44,7 +53,11 @@ class MathOptSchedulingSolver(SchedulingSolver):
                             if values[variable] > 0.5
                         )
                         scheduled.append(
-                            ScheduledTask(task.id, problem.calendar.grid.horizon.start + start * problem.calendar.grid.slot)
+                            ScheduledTask(
+                                task.id,
+                                problem.calendar.grid.horizon.start
+                                + start * problem.calendar.grid.slot,
+                            )
                         )
                     else:
                         dropped.add(task.id)

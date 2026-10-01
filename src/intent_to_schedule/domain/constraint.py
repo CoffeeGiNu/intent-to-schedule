@@ -1,6 +1,6 @@
+import uuid
 from dataclasses import dataclass
 from typing import Self
-import uuid
 
 from intent_to_schedule.domain.evaluation import Evaluation
 from intent_to_schedule.domain.measure import Measure

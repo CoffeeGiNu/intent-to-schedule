@@ -2,13 +2,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from intent_to_schedule.domain.compatibility import is_supported
 from intent_to_schedule.domain.calendar import TimeGrid
+from intent_to_schedule.domain.compatibility import is_supported
+from intent_to_schedule.domain.constraint import ConstraintId
 from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import TaskId
-from intent_to_schedule.domain.constraint import ConstraintId
 
 
 @dataclass(frozen=True)
@@ -89,16 +89,32 @@ class ReferencesExist:
         violations: list[Violation] = []
         for task in problem.tasks:
             for person_id in task.participant_ids - people:
-                violations.append(Violation(f"Task {task.id.value} references missing person id {person_id.value}."))
+                violations.append(
+                    Violation(
+                        f"Task {task.id.value} references missing person id {person_id.value}."
+                    )
+                )
         for constraint in problem.constraints:
             for task_id in constraint.measure.task_ids - tasks:
-                violations.append(Violation(f"Constraint {constraint.id.value} references missing task id {task_id.value}."))
+                violations.append(
+                    Violation(
+                        f"Constraint {constraint.id.value} references missing task id {task_id.value}."
+                    )
+                )
         for availability in problem.calendar.availabilities:
             if availability.person_id not in people:
-                violations.append(Violation(f"Availability references missing person id {availability.person_id.value}."))
+                violations.append(
+                    Violation(
+                        f"Availability references missing person id {availability.person_id.value}."
+                    )
+                )
         for busy in problem.calendar.busy_intervals:
             if busy.person_id not in people:
-                violations.append(Violation(f"Busy interval references missing person id {busy.person_id.value}."))
+                violations.append(
+                    Violation(
+                        f"Busy interval references missing person id {busy.person_id.value}."
+                    )
+                )
         return Violations(tuple(violations))
 
 
@@ -106,7 +122,9 @@ class AvailabilityForEveryone:
     """Validator that every person has an Availability."""
 
     def validate(self, problem: SchedulingProblem) -> Violations:
-        given: set[PersonId] = {availability.person_id for availability in problem.calendar.availabilities}
+        given: set[PersonId] = {
+            availability.person_id for availability in problem.calendar.availabilities
+        }
         return Violations(
             tuple(
                 Violation(f"Person {person.id.value} has no availability.")
@@ -125,21 +143,33 @@ class AlignedToSlots:
 
         def check_time(value: datetime, label: str) -> None:
             if (value - grid.horizon.start) % grid.slot != timedelta(0):
-                violations.append(Violation(f"{label} is not aligned to the time grid."))
+                violations.append(
+                    Violation(f"{label} is not aligned to the time grid.")
+                )
 
         def check_duration(value: timedelta, label: str) -> None:
             if value % grid.slot != timedelta(0):
-                violations.append(Violation(f"{label} is not aligned to the time grid."))
+                violations.append(
+                    Violation(f"{label} is not aligned to the time grid.")
+                )
 
         check_time(grid.horizon.end, "Calendar horizon end")
         for task in problem.tasks:
             if task.duration <= timedelta(0):
-                violations.append(Violation(f"Task {task.id.value} duration must be positive."))
+                violations.append(
+                    Violation(f"Task {task.id.value} duration must be positive.")
+                )
             check_duration(task.duration, f"Task {task.id.value} duration")
         for availability in problem.calendar.availabilities:
             for interval in availability.intervals:
-                check_time(interval.start, f"Availability for person {availability.person_id.value} start")
-                check_time(interval.end, f"Availability for person {availability.person_id.value} end")
+                check_time(
+                    interval.start,
+                    f"Availability for person {availability.person_id.value} start",
+                )
+                check_time(
+                    interval.end,
+                    f"Availability for person {availability.person_id.value} end",
+                )
         for constraint in problem.constraints:
             label = f"Constraint {constraint.id.value} evaluation"
             match constraint.evaluation:
@@ -147,7 +177,11 @@ class AlignedToSlots:
                     for interval in region:
                         check_time(interval.start, f"{label} region start")
                         check_time(interval.end, f"{label} region end")
-                case Distance(target=quantity) | Shortfall(lower=quantity) | Excess(upper=quantity):
+                case (
+                    Distance(target=quantity)
+                    | Shortfall(lower=quantity)
+                    | Excess(upper=quantity)
+                ):
                     if isinstance(quantity, datetime):
                         check_time(quantity, label)
                     elif isinstance(quantity, timedelta):
@@ -160,7 +194,9 @@ class SupportedCombinations:
 
     def validate(self, problem: SchedulingProblem) -> Violations:
         violations = tuple(
-            Violation(f"Constraint {constraint.id.value} has an unsupported measure and evaluation combination.")
+            Violation(
+                f"Constraint {constraint.id.value} has an unsupported measure and evaluation combination."
+            )
             for constraint in problem.constraints
             if not is_supported(constraint.measure, constraint.evaluation)
         )
