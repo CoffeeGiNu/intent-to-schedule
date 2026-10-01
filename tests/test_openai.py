@@ -4,25 +4,19 @@ from unittest.mock import patch
 
 import pytest
 
-from intent_to_schedule.adapter.openai.translate import (
+from intent_to_schedule.adapter.data_model import (
     AddConstraintOutput,
     AddTaskOutput,
     AggregateMeasureOutput,
-    AmbiguousOutput,
-    ConstraintCommandsOutput,
-    ConstraintTranslationOutput,
     CountOutput,
     DependencyMeasureOutput,
     DistanceOutput,
     DurationOutput,
-    ElementCommandsOutput,
-    ElementTranslationOutput,
     ExcessOutput,
     HardConstraintOutput,
     InstantOutput,
     IntervalMeasureOutput,
     IntrusionOutput,
-    OpenAICommandTranslator,
     OutputModel,
     PointMeasureOutput,
     RemoveConstraintOutput,
@@ -32,6 +26,14 @@ from intent_to_schedule.adapter.openai.translate import (
     SoftConstraintOutput,
     TaskOutput,
     TimeIntervalOutput,
+)
+from intent_to_schedule.adapter.openai.translate import (
+    AmbiguousOutput,
+    ConstraintCommandsOutput,
+    ConstraintTranslationOutput,
+    ElementCommandsOutput,
+    ElementTranslationOutput,
+    OpenAICommandTranslator,
     convert_constraint_output,
     convert_element_output,
 )
