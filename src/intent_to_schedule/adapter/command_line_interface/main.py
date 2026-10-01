@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                 return converse(path, args.text, args.model, service, validator)
     except ConsistencyError as error:
         return reject(error.violations)
-    except (OSError, ValueError, ValidationError, RuntimeError) as error:
+    except (OSError, ValueError, ValidationError, RuntimeError, openai.APIError) as error:
         emit({"error": str(error)})
         return 1
     return 1
