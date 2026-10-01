@@ -10,6 +10,7 @@ from intent_to_schedule.adapter.data_model import (
     ConstraintIdField,
     DataModel,
     EvaluationData,
+    FixedTaskData,
     HardConstraintData,
     MeasureData,
     PersonIdField,
@@ -18,9 +19,11 @@ from intent_to_schedule.adapter.data_model import (
     TaskIdField,
     TimeIntervalData,
     convert_evaluation,
+    convert_fixed_task,
     convert_measure,
     convert_task,
     to_evaluation_data,
+    to_fixed_task_data,
     to_measure_data,
     to_task_data,
     to_time_interval_data,
@@ -28,7 +31,6 @@ from intent_to_schedule.adapter.data_model import (
 from intent_to_schedule.application.translate import Speaker, Utterance
 from intent_to_schedule.domain.calendar import (
     Availability,
-    BusyInterval,
     Calendar,
     TimeGrid,
     TimeInterval,
@@ -58,30 +60,29 @@ class AvailabilityState(DataModel):
     intervals: tuple[TimeIntervalData, ...]
 
 
-class BusyIntervalState(DataModel):
-    """A busy interval for one person."""
-
-    person_id: PersonIdField
-    interval: TimeIntervalData
-
-
 class CalendarState(DataModel):
     """A calendar and its time grid."""
 
     horizon: TimeIntervalData
     slot: timedelta
     availabilities: tuple[AvailabilityState, ...]
-    busy_intervals: tuple[BusyIntervalState, ...]
 
 
 class CalendarInput(CalendarState):
     """Calendar file accepted by init."""
 
     people: tuple[PersonState, ...]
+    fixed_tasks: tuple[FixedTaskData, ...]
 
 
 class TaskState(TaskData):
     """A task with its persisted ID."""
+
+    id: TaskIdField
+
+
+class FixedTaskState(FixedTaskData):
+    """A fixed task with its persisted ID."""
 
     id: TaskIdField
 
@@ -109,6 +110,7 @@ class ProblemState(DataModel):
     calendar: CalendarState
     people: tuple[PersonState, ...]
     tasks: tuple[TaskState, ...]
+    fixed_tasks: tuple[FixedTaskState, ...]
     constraints: tuple[ConstraintState, ...]
 
 
@@ -157,10 +159,6 @@ def to_problem(form: ProblemState) -> SchedulingProblem:
             )
             for item in form.calendar.availabilities
         ),
-        tuple(
-            BusyInterval(item.person_id, to_interval(item.interval))
-            for item in form.calendar.busy_intervals
-        ),
     )
     constraints: tuple[Constraint, ...] = tuple(
         to_constraint(item) for item in form.constraints
@@ -169,6 +167,7 @@ def to_problem(form: ProblemState) -> SchedulingProblem:
         calendar,
         tuple(Person(item.id, item.name) for item in form.people),
         tuple(convert_task(item.id, item) for item in form.tasks),
+        tuple(convert_fixed_task(item, item.id) for item in form.fixed_tasks),
         constraints,
     )
 
@@ -207,13 +206,6 @@ def to_problem_state(problem: SchedulingProblem) -> ProblemState:
                 )
                 for item in calendar.availabilities
             ),
-            busy_intervals=tuple(
-                BusyIntervalState(
-                    person_id=item.person_id,
-                    interval=to_time_interval_data(item.interval),
-                )
-                for item in calendar.busy_intervals
-            ),
         ),
         people=tuple(
             PersonState(id=item.id, name=item.name) for item in problem.people
@@ -223,6 +215,10 @@ def to_problem_state(problem: SchedulingProblem) -> ProblemState:
                 {"id": item.id.value, **to_task_data(item).model_dump()}
             )
             for item in problem.tasks
+        ),
+        fixed_tasks=tuple(
+            FixedTaskState(id=item.id, **to_fixed_task_data(item).model_dump())
+            for item in problem.fixed_tasks
         ),
         constraints=tuple(to_constraint_state(item) for item in problem.constraints),
     )

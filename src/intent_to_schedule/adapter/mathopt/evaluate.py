@@ -67,7 +67,7 @@ def compile_evaluation(
             target=timedelta() as target
         ):
             target_slots: float = target / grid.slot
-            bound: float = n + abs(target_slots)
+            bound: float = dependency.bound + abs(target_slots)
             inactive: mathopt.LinearExpression = bound * (
                 2 - dependency.from_presence - dependency.to_presence
             )
@@ -83,7 +83,7 @@ def compile_evaluation(
             lower=timedelta() as lower
         ):
             lower_slots: float = lower / grid.slot
-            bound: float = n + abs(lower_slots)
+            bound: float = dependency.bound + abs(lower_slots)
             inactive: mathopt.LinearExpression = bound * (
                 2 - dependency.from_presence - dependency.to_presence
             )

@@ -2,13 +2,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from intent_to_schedule.domain.calendar import TimeGrid
+from intent_to_schedule.domain.calendar import Availability, TimeGrid, TimeInterval
 from intent_to_schedule.domain.compatibility import is_supported
-from intent_to_schedule.domain.constraint import ConstraintId
+from intent_to_schedule.domain.constraint import Constraint, ConstraintId
 from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import TaskId
+from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
 
 @dataclass(frozen=True)
@@ -65,9 +65,12 @@ class UniqueIds:
 
     def validate(self, problem: SchedulingProblem) -> Violations:
         violations: list[Violation] = []
+        label: str
+        values: list[PersonId] | list[TaskId] | list[ConstraintId]
+        value: PersonId | TaskId | ConstraintId
         for label, values in (
             ("Person", [person.id for person in problem.people]),
-            ("Task", [task.id for task in problem.tasks]),
+            ("Task", [task.id for task in (*problem.tasks, *problem.fixed_tasks)]),
             ("Constraint", [constraint.id for constraint in problem.constraints]),
         ):
             seen: set[PersonId | TaskId | ConstraintId] = set()
@@ -85,9 +88,16 @@ class ReferencesExist:
 
     def validate(self, problem: SchedulingProblem) -> Violations:
         people: set[PersonId] = {person.id for person in problem.people}
-        tasks: set[TaskId] = {task.id for task in problem.tasks}
+        tasks: set[TaskId] = {
+            task.id for task in (*problem.tasks, *problem.fixed_tasks)
+        }
         violations: list[Violation] = []
-        for task in problem.tasks:
+        task: Task | FixedTask
+        person_id: PersonId
+        constraint: Constraint
+        task_id: TaskId
+        availability: Availability
+        for task in (*problem.tasks, *problem.fixed_tasks):
             for person_id in task.participant_ids - people:
                 violations.append(
                     Violation(
@@ -106,13 +116,6 @@ class ReferencesExist:
                 violations.append(
                     Violation(
                         f"Availability references missing person id {availability.person_id.value}."
-                    )
-                )
-        for busy in problem.calendar.busy_intervals:
-            if busy.person_id not in people:
-                violations.append(
-                    Violation(
-                        f"Busy interval references missing person id {busy.person_id.value}."
                     )
                 )
         return Violations(tuple(violations))
@@ -154,6 +157,13 @@ class AlignedToSlots:
                 )
 
         check_time(grid.horizon.end, "Calendar horizon end")
+        task: Task
+        availability: Availability
+        interval: TimeInterval
+        constraint: Constraint
+        label: str
+        region: tuple[TimeInterval, ...]
+        quantity: datetime | timedelta | int
         for task in problem.tasks:
             if task.duration <= timedelta(0):
                 violations.append(
@@ -182,10 +192,11 @@ class AlignedToSlots:
                     | Shortfall(lower=quantity)
                     | Excess(upper=quantity)
                 ):
-                    if isinstance(quantity, datetime):
-                        check_time(quantity, label)
-                    elif isinstance(quantity, timedelta):
-                        check_duration(quantity, label)
+                    match quantity:
+                        case datetime():
+                            check_time(quantity, label)
+                        case timedelta():
+                            check_duration(quantity, label)
         return Violations(tuple(violations))
 
 

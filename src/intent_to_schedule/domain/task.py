@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Self
 
@@ -41,3 +41,14 @@ class Task:
     """Whether the Task must be scheduled."""
     stability: Strength = Strength.NORMAL
     """Strength of the preference to keep the Task at its previous start."""
+
+
+@dataclass(frozen=True)
+class FixedTask:
+    """Existing event whose start is fixed."""
+
+    id: TaskId
+    name: str
+    start: datetime
+    duration: timedelta
+    participant_ids: frozenset[PersonId]

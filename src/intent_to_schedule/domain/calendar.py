@@ -29,17 +29,8 @@ class Availability:
 
 
 @dataclass(frozen=True)
-class BusyInterval:
-    """Existing event of a person."""
-
-    person_id: PersonId
-    interval: TimeInterval
-
-
-@dataclass(frozen=True)
 class Calendar:
-    """Time grid, availabilities, and busy intervals."""
+    """Time grid and availabilities."""
 
     grid: TimeGrid
     availabilities: tuple[Availability, ...]
-    busy_intervals: tuple[BusyInterval, ...]

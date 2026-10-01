@@ -99,6 +99,7 @@ def convert_constraint_output(
 _ELEMENT_PROMPT: str = (
     "Translate the latest user utterance into commands that add, replace, or remove Tasks. "
     "Use only existing person, task, and constraint IDs from the snapshot. "
+    "fixed_tasks are existing events that cannot be moved, but constraints may reference their ids; to make one movable, replace it with a Task of the same id. "
     "Ask a clarifying question with ambiguous when the meaning is not determined, such as with same-named people; do not guess. "
     "Importance low, medium, or high means how much it matters to do the Task at all. "
     "Required means the Task must be scheduled, including expressions such as 絶対. "
@@ -108,6 +109,7 @@ _ELEMENT_PROMPT: str = (
 _CONSTRAINT_PROMPT: str = (
     "Translate the latest user utterance into commands that add or remove constraints. "
     "Use only existing IDs from the snapshot. A measure extracts a schedule value and an evaluation scores it. "
+    "fixed_tasks are existing events that cannot be moved, but constraints may reference their ids; to make one movable, replace it with a Task of the same id. "
     "Supported pairs: point with distance to an instant; interval with intrusion into a region; "
     "dependency with distance or shortfall of a duration, measuring the gap from the end of from_task to the start of to_task; "
     "aggregate with excess per day, using a count or total duration. "

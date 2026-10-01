@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from intent_to_schedule.adapter.command_line_interface.state import (
     CalendarInput,
+    FixedTaskState,
     ProblemState,
     State,
     UtteranceState,
@@ -67,7 +68,7 @@ class JsonParser(argparse.ArgumentParser):
 COMMANDS: dict[str, tuple[str, str]] = {
     "init": (
         "Create the state from a calendar JSON",
-        "The calendar JSON holds horizon, slot, people, availabilities, and busy_intervals.",
+        "The calendar JSON holds horizon, slot, people, availabilities, and fixed_tasks.",
     ),
     "show": (
         "Print the state",
@@ -191,7 +192,7 @@ def scheduling(validator: Validator) -> Scheduling:
 
 
 def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
-    """Create and validate an empty problem."""
+    """Create and validate a problem from calendar input."""
     calendar: CalendarInput = CalendarInput.model_validate_json(
         calendar_path.read_text(encoding="utf-8")
     )
@@ -199,6 +200,10 @@ def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
         calendar=calendar,
         people=calendar.people,
         tasks=(),
+        fixed_tasks=tuple(
+            FixedTaskState(id=TaskId.generate(), **item.model_dump())
+            for item in calendar.fixed_tasks
+        ),
         constraints=(),
     )
     problem: SchedulingProblem = to_problem(form)

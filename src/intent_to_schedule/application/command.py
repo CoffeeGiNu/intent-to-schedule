@@ -5,7 +5,7 @@ from intent_to_schedule.domain.consistency import Violation, Violations
 from intent_to_schedule.domain.constraint import Constraint, ConstraintId
 from intent_to_schedule.domain.measure import Measure
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,9 @@ class AddTask:
     task: Task
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
-        if any(task.id == self.task.id for task in problem.tasks):
+        if any(
+            task.id == self.task.id for task in (*problem.tasks, *problem.fixed_tasks)
+        ):
             return Rejected(
                 Violations((Violation(f"Task {self.task.id.value} already exists"),))
             )
@@ -47,6 +49,16 @@ class ReplaceTask:
     task: Task
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
+        if any(task.id == self.task.id for task in problem.fixed_tasks):
+            return Executed(
+                replace(
+                    problem,
+                    tasks=(*problem.tasks, self.task),
+                    fixed_tasks=tuple(
+                        task for task in problem.fixed_tasks if task.id != self.task.id
+                    ),
+                )
+            )
         if not any(task.id == self.task.id for task in problem.tasks):
             return Rejected(
                 Violations((Violation(f"Task {self.task.id.value} does not exist"),))
@@ -64,19 +76,32 @@ class RemoveTask:
     task_id: TaskId
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
-        if not any(task.id == self.task_id for task in problem.tasks):
+        if not any(
+            task.id == self.task_id for task in (*problem.tasks, *problem.fixed_tasks)
+        ):
             return Rejected(
                 Violations((Violation(f"Task {self.task_id.value} does not exist"),))
             )
         tasks: tuple[Task, ...] = tuple(
             task for task in problem.tasks if task.id != self.task_id
         )
+        fixed_tasks: tuple[FixedTask, ...] = tuple(
+            task for task in problem.fixed_tasks if task.id != self.task_id
+        )
         constraints: list[Constraint] = []
+        constraint: Constraint
         for constraint in problem.constraints:
             measure: Measure | None = constraint.measure.without_task(self.task_id)
             if measure is not None:
                 constraints.append(replace(constraint, measure=measure))
-        return Executed(replace(problem, tasks=tasks, constraints=tuple(constraints)))
+        return Executed(
+            replace(
+                problem,
+                tasks=tasks,
+                fixed_tasks=fixed_tasks,
+                constraints=tuple(constraints),
+            )
+        )
 
 
 @dataclass(frozen=True)

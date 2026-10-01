@@ -41,7 +41,7 @@ from intent_to_schedule.domain.measure import (
 )
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 
 def _parse_id(
@@ -102,6 +102,15 @@ class TaskData(DataModel):
     importance: Literal["low", "medium", "high"]
     required: bool
     stability: Literal["weak", "normal", "strong"]
+
+
+class FixedTaskData(DataModel):
+    """JSON form of FixedTask."""
+
+    name: str
+    start: datetime
+    duration: timedelta
+    participant_ids: tuple[PersonIdField, ...]
 
 
 class PointMeasureData(DataModel):
@@ -338,6 +347,17 @@ def convert_task(task_id: TaskId, data: TaskData) -> Task:
     )
 
 
+def convert_fixed_task(data: FixedTaskData, task_id: TaskId | None = None) -> FixedTask:
+    """Convert a fixed task, generating an ID when omitted."""
+    return FixedTask(
+        task_id if task_id is not None else TaskId.generate(),
+        data.name,
+        data.start,
+        data.duration,
+        frozenset(data.participant_ids),
+    )
+
+
 def convert_measure(data: MeasureData) -> Measure:
     """Convert a structured measure value."""
     task_id: TaskId
@@ -403,6 +423,16 @@ def to_task_data(task: Task) -> TaskData:
         importance=task.importance.value,
         required=task.required,
         stability=task.stability.value,
+    )
+
+
+def to_fixed_task_data(task: FixedTask) -> FixedTaskData:
+    """Convert a domain fixed task to its data form."""
+    return FixedTaskData(
+        name=task.name,
+        start=task.start,
+        duration=task.duration,
+        participant_ids=tuple(sorted(task.participant_ids, key=lambda item: item.value)),
     )
 
 

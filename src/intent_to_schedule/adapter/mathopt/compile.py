@@ -7,11 +7,11 @@ from intent_to_schedule.adapter.mathopt.evaluate import compile_evaluation
 from intent_to_schedule.adapter.mathopt.measure import (
     MeasureExpression,
     compile_measure,
+    fixed_task_slots,
 )
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.domain.calendar import (
     Availability,
-    BusyInterval,
     TimeGrid,
     TimeInterval,
 )
@@ -20,7 +20,7 @@ from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantit
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Task, TaskId
+from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
 
 @dataclass(frozen=True)
@@ -53,12 +53,15 @@ def _free_slots(person_id: PersonId, problem: SchedulingProblem, n: int) -> list
             if first < last:
                 free[first:last] = [True] * (last - first)
 
-    busy: BusyInterval
-    for busy in problem.calendar.busy_intervals:
-        if busy.person_id != person_id:
+    task: FixedTask
+    for task in problem.fixed_tasks:
+        if person_id not in task.participant_ids:
             continue
-        first = min(n, max(0, (busy.interval.start - grid.horizon.start) // grid.slot))
-        last = min(n, max(0, -((grid.horizon.start - busy.interval.end) // grid.slot)))
+        start: int
+        duration: int
+        start, duration = fixed_task_slots(task, grid)
+        first = min(n, max(0, start))
+        last = min(n, max(0, start + duration))
         if first < last:
             free[first:last] = [False] * (last - first)
     return free
@@ -90,6 +93,8 @@ def compile_problem(
     }
 
     task: Task
+    person_id: PersonId
+    slot: int
     for task in problem.tasks:
         duration: int = durations[task.id]
         allowed_starts: list[int] = [
@@ -132,6 +137,20 @@ def compile_problem(
         if task.required:
             model.add_linear_constraint(presence == 1)
         objective_terms.append(policy.drop_cost(task.importance) * (1 - presence))
+
+    fixed_task: FixedTask
+    for fixed_task in problem.fixed_tasks:
+        start, duration = fixed_task_slots(fixed_task, grid)
+        variable = model.add_variable(
+            lb=1.0, ub=1.0, is_integer=True, name=f"place_{fixed_task.id.value}_{start}"
+        )
+        placements[fixed_task.id] = {start: variable}
+        presences[fixed_task.id] = model.add_variable(
+            lb=1.0, ub=1.0, is_integer=True, name=f"presence_{fixed_task.id.value}"
+        )
+        starts[fixed_task.id] = model.add_variable(
+            lb=float(start), ub=float(start), name=f"start_{fixed_task.id.value}"
+        )
 
     occupied: dict[int, list[mathopt.Variable]]
     competing: list[mathopt.Variable]
