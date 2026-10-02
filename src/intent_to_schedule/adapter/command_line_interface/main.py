@@ -141,6 +141,12 @@ def parser() -> JsonParser:
                     metavar="<FILE>",
                     help="Commands JSON file [default: stdin]",
                 )
+            case "solve":
+                command.add_argument(
+                    "--no-stability",
+                    action="store_true",
+                    help="Ignore the previous schedule and solve from scratch",
+                )
             case "chat":
                 command.add_argument("text", metavar="<TEXT>", help="Utterance")
                 command.add_argument(
@@ -279,11 +285,11 @@ def schedule_output(
     return {"scheduled": scheduled, "dropped": dropped}
 
 
-def solve(path: Path, service: Scheduling) -> int:
+def solve(path: Path, service: Scheduling, stability: bool) -> int:
     """Solve the current problem and persist the result."""
     state: State = load_state(path)
     problem: SchedulingProblem = to_problem(state.problem)
-    previous: Schedule | None = to_schedule(state.previous)
+    previous: Schedule | None = to_schedule(state.previous) if stability else None
     result: Solved | Infeasible = service.solve(problem, previous)
     match result:
         case Infeasible():
@@ -390,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
             case "apply":
                 return apply(path, args.file, service)
             case "solve":
-                return solve(path, service)
+                return solve(path, service, not args.no_stability)
             case "chat":
                 return chat(path, args.text, args.model, args.now, service, validator)
     except ConsistencyError as error:

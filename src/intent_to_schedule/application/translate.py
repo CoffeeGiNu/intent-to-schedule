@@ -28,6 +28,7 @@ class Translated:
     """Commands translated from an utterance."""
 
     commands: tuple[SchedulingCommand, ...]
+    stability: bool
 
 
 @dataclass(frozen=True)

@@ -46,4 +46,7 @@ class Conversation:
         if isinstance(result, Rejected):
             raise ConsistencyError(result.violations)
         updated: SchedulingProblem = result.problem
-        return Response(updated, self._scheduling.solve(updated, previous))
+        return Response(
+            updated,
+            self._scheduling.solve(updated, previous if translated.stability else None),
+        )

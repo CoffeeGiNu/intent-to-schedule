@@ -56,6 +56,7 @@ class ConstraintCommandsOutput(DataModel):
 
     kind: Literal["translated"]
     commands: tuple[ConstraintCommandData, ...]
+    stability: bool
 
 
 class ElementTranslationOutput(DataModel):
@@ -106,8 +107,23 @@ _ELEMENT_PROMPT: str = (
     "Stability means how strongly to keep the Task at its previous time. "
 )
 
+_QUESTION_PROMPT: str = (
+    "\nClarifying questions are read by the user: ask in the user's language and never mention internal terms "
+    "(stability, hard, soft, strength, importance, required, drop, measure, evaluation, IDs). "
+    "When you want to ask about one of them, phrase it like these examples:\n"
+    "- stability false: 今の配置をいったん崩して、全体を組み直してもいいですか？\n"
+    "- stability true: 今の配置はなるべく動かさずに調整しますか？\n"
+    "- hard or soft: 絶対に守る条件ですか、それともできればの希望ですか？\n"
+    "- strength: どのくらい強い希望ですか？\n"
+    "- required: 必ず入れる必要がありますか？\n"
+    "- importance or drop: 入りきらない場合は見送ってもいいですか？\n"
+    "Do not ask about choices that lead to the same result."
+)
+
 _CONSTRAINT_PROMPT: str = (
     "Translate the latest user utterance into commands that add or remove constraints. "
+    'Set stability false only when the user clearly asks to rebuild the whole schedule, such as "redo everything" or "start over"; true for partial changes or new additions. '
+    "If it is unclear whether existing placements should be rebuilt, return ambiguous and ask whether it is fine to rearrange the whole schedule. "
     "Use only existing IDs from the snapshot. A measure extracts a schedule value and an evaluation scores it. "
     "fixed_tasks are existing events that cannot be moved, but constraints may reference their ids; to make one movable, replace it with a Task of the same id. "
     "Supported pairs: point with distance to an instant; interval with intrusion into a region; "
@@ -168,23 +184,31 @@ class OpenAICommandTranslator(CommandTranslator):
         previous: Schedule | None,
     ) -> TranslateResult:
         """Translate the latest utterance into element commands, then into constraint commands."""
-        elements: tuple[tuple[ElementCommand, ...], SchedulingProblem] | Ambiguous = (
-            self._translate_step(
-                dialogue,
-                problem,
-                previous,
-                _ELEMENT_PROMPT,
-                ElementTranslationOutput,
-                convert_element_output,
-            )
+        elements: (
+            tuple[
+                tuple[ElementCommand, ...], SchedulingProblem, ElementTranslationOutput
+            ]
+            | Ambiguous
+        ) = self._translate_step(
+            dialogue,
+            problem,
+            previous,
+            _ELEMENT_PROMPT,
+            ElementTranslationOutput,
+            convert_element_output,
         )
         if isinstance(elements, Ambiguous):
             return elements
         element_commands: tuple[ElementCommand, ...]
         updated_problem: SchedulingProblem
-        element_commands, updated_problem = elements
+        element_commands, updated_problem = elements[:2]
         constraints: (
-            tuple[tuple[ConstraintCommand, ...], SchedulingProblem] | Ambiguous
+            tuple[
+                tuple[ConstraintCommand, ...],
+                SchedulingProblem,
+                ConstraintTranslationOutput,
+            ]
+            | Ambiguous
         ) = self._translate_step(
             dialogue,
             updated_problem,
@@ -196,7 +220,11 @@ class OpenAICommandTranslator(CommandTranslator):
         if isinstance(constraints, Ambiguous):
             return constraints
         constraint_commands: tuple[ConstraintCommand, ...] = constraints[0]
-        return Translated((*element_commands, *constraint_commands))
+        output: ConstraintTranslationOutput = constraints[2]
+        assert isinstance(output.result, ConstraintCommandsOutput)
+        return Translated(
+            (*element_commands, *constraint_commands), output.result.stability
+        )
 
     def _translate_step[Output: DataModel, Command: SchedulingCommand](
         self,
@@ -206,12 +234,13 @@ class OpenAICommandTranslator(CommandTranslator):
         prompt: str,
         output_type: type[Output],
         convert: Callable[[Output], tuple[Command, ...] | Ambiguous],
-    ) -> tuple[tuple[Command, ...], SchedulingProblem] | Ambiguous:
+    ) -> tuple[tuple[Command, ...], SchedulingProblem, Output] | Ambiguous:
         """Request and validate one translation step."""
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": prompt
+                + _QUESTION_PROMPT
                 + "\nSnapshot: "
                 + _snapshot(problem, previous, self._clock()),
             },
@@ -252,7 +281,7 @@ class OpenAICommandTranslator(CommandTranslator):
                     }
                 )
                 continue
-            return converted, updated_problem
+            return converted, updated_problem, output
         raise AssertionError("Translation retry loop ended unexpectedly")
 
     def _apply_commands(
