@@ -113,7 +113,7 @@ def test_convert_constraint_output() -> None:
     task_id: TaskId = TaskId("t1")
     other_id: TaskId = TaskId("t2")
     region: TimeIntervalData = TimeIntervalData(start=START, end=START + timedelta(hours=1))
-    output: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=(
+    output: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", stability=True, commands=(
         AddConstraintData(kind="add_constraint", constraint=HardConstraintData(kind="hard", measure=PointMeasureData(kind="point", task_id=task_id), evaluation=DistanceData(kind="distance", target=InstantData(kind="instant", value=START)))),
         AddConstraintData(kind="add_constraint", constraint=SoftConstraintData(kind="soft", measure=IntervalMeasureData(kind="interval", task_id=task_id), evaluation=IntrusionData(kind="intrusion", region=(region,)), strength="weak")),
         AddConstraintData(kind="add_constraint", constraint=SoftConstraintData(kind="soft", measure=DependencyMeasureData(kind="dependency", from_task_id=task_id, to_task_id=other_id), evaluation=ShortfallData(kind="shortfall", lower=DurationData(kind="duration", value=timedelta(hours=1))), strength="strong")),
@@ -135,13 +135,14 @@ def test_convert_constraint_output() -> None:
 def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
     rejected: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(RemoveTaskData(kind="remove_task", task_id=TaskId("missing")),)))
     accepted: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskData(kind="add_task", task=_task_output((PersonId("p1"),))),)))
-    constraint: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=(AddConstraintData(kind="add_constraint", constraint=HardConstraintData(kind="hard", measure=PointMeasureData(kind="point", task_id=TaskId("t1")), evaluation=DistanceData(kind="distance", target=InstantData(kind="instant", value=START))),),)))
+    constraint: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", stability=True, commands=(AddConstraintData(kind="add_constraint", constraint=HardConstraintData(kind="hard", measure=PointMeasureData(kind="point", task_id=TaskId("t1")), evaluation=DistanceData(kind="distance", target=InstantData(kind="instant", value=START))),),)))
     client: _FakeClient = _FakeClient([rejected, accepted, constraint])
     previous: Schedule = Schedule((ScheduledTask(TaskId("t1"), START),), frozenset())
     dialogue: tuple[Utterance, ...] = (Utterance(Speaker.USER, "Plan a review"), Utterance(Speaker.ASSISTANT, "Okay"), Utterance(Speaker.USER, "Make it tomorrow"))
     with patch.object(TaskId, "generate", return_value=TaskId("new")), patch.object(ConstraintId, "generate", return_value=ConstraintId("c1")):
         result: Translated | Ambiguous = OpenAICommandTranslator(client, "test-model", ReferencesExist(), lambda: datetime(2026, 10, 9, 9, tzinfo=timezone.utc)).translate(dialogue, _problem(), previous)
     assert isinstance(result, Translated)
+    assert result.stability is True
     assert len(result.commands) == 2
     assert isinstance(result.commands[0], AddTask)
     assert isinstance(result.commands[1], AddConstraint)
@@ -158,6 +159,28 @@ def test_translate_retries_rejected_command_and_uses_updated_snapshot() -> None:
     assert '"new"' in client.responses.calls[2][1][0]["content"]
 
 
+@pytest.mark.parametrize("stability", [True, False])
+def test_translate_preserves_constraint_step_stability(stability: bool) -> None:
+    """Use the constraint step's stability decision for the translated turn."""
+    elements: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=()))
+    constraints: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=(), stability=stability))
+    client: _FakeClient = _FakeClient([elements, constraints])
+    previous: Schedule = Schedule((ScheduledTask(TaskId("t1"), START),), frozenset())
+    result: Translated | Ambiguous = OpenAICommandTranslator(client, "test", ReferencesExist(), lambda: START).translate((), _problem(), previous)
+    assert result == Translated((), stability)
+    snapshot: dict[str, object] = json.loads(client.responses.calls[1][1][0]["content"].split("\nSnapshot: ", 1)[1])
+    assert snapshot["previous_schedule"]["scheduled"][0]["task_id"] == {"value": "t1"}
+
+
+def test_translate_asks_when_constraint_step_is_ambiguous() -> None:
+    """Return a clarification without completing an ambiguous constraint step."""
+    elements: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=()))
+    constraints: ConstraintTranslationOutput = ConstraintTranslationOutput(result=AmbiguousOutput(kind="ambiguous", question="May I rearrange the whole schedule?"))
+    client: _FakeClient = _FakeClient([elements, constraints])
+    result: Translated | Ambiguous = OpenAICommandTranslator(client, "test", ReferencesExist(), lambda: START).translate((), _problem(), None)
+    assert result == Ambiguous("May I rearrange the whole schedule?")
+
+
 def test_translate_retries_validator_violations_then_raises() -> None:
     invalid: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=(AddTaskData(kind="add_task", task=_task_output((PersonId("missing"),))),)))
     client: _FakeClient = _FakeClient([invalid, invalid, invalid])
@@ -172,10 +195,10 @@ def test_translation_prompts_and_snapshots_include_fixed_tasks() -> None:
     fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing meeting", START + timedelta(minutes=15), timedelta(minutes=30), frozenset({PersonId("p1")}))
     problem: SchedulingProblem = replace(_problem(), fixed_tasks=(fixed,))
     elements: ElementTranslationOutput = ElementTranslationOutput(result=ElementCommandsOutput(kind="translated", commands=()))
-    constraints: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", commands=()))
+    constraints: ConstraintTranslationOutput = ConstraintTranslationOutput(result=ConstraintCommandsOutput(kind="translated", stability=True, commands=()))
     client: _FakeClient = _FakeClient([elements, constraints])
     result: Translated | Ambiguous = OpenAICommandTranslator(client, "test", ReferencesExist(), lambda: START).translate((), problem, None)
-    assert result == Translated(())
+    assert result == Translated((), True)
     call: tuple[str, list[dict[str, str]], type[DataModel]]
     for call in client.responses.calls:
         content: str = call[1][0]["content"]

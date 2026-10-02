@@ -184,11 +184,13 @@ def test_stability_constraints_use_previous_starts() -> None:
 
 class Translator:
     def __init__(self, result: Translated | Ambiguous) -> None:
-        self.result = result
+        self.result: Translated | Ambiguous = result
+        self.previous: Schedule | None = None
 
     def translate(
         self, dialogue: tuple[Utterance, ...], problem: SchedulingProblem, previous: Schedule | None
     ) -> Translated | Ambiguous:
+        self.previous = previous
         return self.result
 
 
@@ -247,7 +249,7 @@ def test_conversation_applies_commands_and_solves_with_temporary_stability() -> 
     previous: Schedule = Schedule((ScheduledTask(first.id, START),), frozenset())
     solver: Solver = Solver()
     validator: Validator = Validator()
-    conversation: Conversation = Conversation(Translator(Translated((AddTask(first),))), Scheduling(solver, validator))
+    conversation: Conversation = Conversation(Translator(Translated((AddTask(first),), True)), Scheduling(solver, validator))
     with patch.object(ConstraintId, "generate", return_value=ConstraintId("stability")):
         response: Response = conversation.respond((), original, previous)
     assert response.problem.tasks == (first,)
@@ -255,6 +257,23 @@ def test_conversation_applies_commands_and_solves_with_temporary_stability() -> 
     assert len(solver.problem.constraints) == 1
     assert validator.problems == [response.problem]
     assert original.tasks == ()
+
+
+def test_conversation_redo_omits_stability_constraints() -> None:
+    """Keep the previous schedule available to translation but omit stability when solving."""
+    first: Task = task("a")
+    constraint: HardConstraint = HardConstraint(ConstraintId("c"), PointMeasure(first.id), Distance(START))
+    original: SchedulingProblem = problem(first, constraints=(constraint,))
+    previous: Schedule = Schedule((ScheduledTask(first.id, START),), frozenset())
+    translator: Translator = Translator(Translated((), False))
+    solver: Solver = Solver()
+    conversation: Conversation = Conversation(translator, Scheduling(solver, AllOf()))
+    response: Response = conversation.respond((), original, previous)
+    assert translator.previous is previous
+    assert solver.problem is original
+    assert solver.problem.constraints == (constraint,)
+    assert response.problem is original
+    assert response.outcome == Infeasible()
 
 
 def test_conversation_ambiguous_and_failures() -> None:
@@ -266,18 +285,18 @@ def test_conversation_ambiguous_and_failures() -> None:
     assert response.outcome is ambiguous
     assert solver.problem is None
 
-    rejected: Conversation = Conversation(Translator(Translated((RemoveTask(TaskId("a")),))), Scheduling(solver, AllOf()))
+    rejected: Conversation = Conversation(Translator(Translated((RemoveTask(TaskId("a")),), True)), Scheduling(solver, AllOf()))
     with pytest.raises(ConsistencyError, match="Task a does not exist"):
         rejected.respond((), original, None)
 
     first: Validator = Validator("first")
     second: Validator = Validator("second")
-    invalid: Conversation = Conversation(Translator(Translated(())), Scheduling(solver, AllOf(first, second)))
+    invalid: Conversation = Conversation(Translator(Translated((), True)), Scheduling(solver, AllOf(first, second)))
     with pytest.raises(ConsistencyError, match="first; second"):
         invalid.respond((), original, None)
     assert len(first.problems) == len(second.problems) == 1
     assert solver.problem is None
 
-    valid: Conversation = Conversation(Translator(Translated(())), Scheduling(solver, AllOf()))
+    valid: Conversation = Conversation(Translator(Translated((), True)), Scheduling(solver, AllOf()))
     assert valid.respond((), original, None).problem is original
     assert solver.problem is original
