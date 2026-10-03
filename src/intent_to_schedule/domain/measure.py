@@ -22,17 +22,18 @@ class PointMeasure:
 
 @dataclass(frozen=True)
 class IntervalMeasure:
-    """Time span occupied by a Task."""
+    """Time spans occupied by a non-empty set of Tasks."""
 
-    task_id: TaskId
+    task_ids: frozenset[TaskId]
 
-    @property
-    def task_ids(self) -> frozenset[TaskId]:
-        return frozenset({self.task_id})
+    def __post_init__(self) -> None:
+        if not self.task_ids:
+            raise ValueError("IntervalMeasure must reference at least one Task.")
 
     def without_task(self, task_id: TaskId) -> Self | None:
-        """Measure left after removing a Task, or None if it no longer makes sense."""
-        return self if task_id not in self.task_ids else None
+        """Remove a Task and return the remaining measure."""
+        task_ids: frozenset[TaskId] = self.task_ids - {task_id}
+        return replace(self, task_ids=task_ids) if task_ids else None
 
 
 @dataclass(frozen=True)

@@ -43,9 +43,9 @@ type ExecuteResult = Executed | Rejected
 
 @dataclass(frozen=True)
 class AddTask:
-    """Command to add a Task."""
+    """Command to add a movable or fixed Task."""
 
-    task: Task
+    task: Task | FixedTask
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
         if any(
@@ -54,6 +54,10 @@ class AddTask:
             return Rejected(
                 Violations((Violation(f"Task {self.task.id.value} already exists"),))
             )
+        if isinstance(self.task, FixedTask):
+            return Executed(
+                replace(problem, fixed_tasks=(*problem.fixed_tasks, self.task))
+            )
         return Executed(replace(problem, tasks=(*problem.tasks, self.task)))
 
 
@@ -61,9 +65,27 @@ class AddTask:
 class ReplaceTask:
     """Command to replace the Task with the same ID."""
 
-    task: Task
+    task: Task | FixedTask
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
+        if not any(
+            task.id == self.task.id for task in (*problem.tasks, *problem.fixed_tasks)
+        ):
+            return Rejected(
+                Violations((Violation(f"Task {self.task.id.value} does not exist"),))
+            )
+        tasks: tuple[Task, ...]
+        if isinstance(self.task, FixedTask):
+            tasks = tuple(task for task in problem.tasks if task.id != self.task.id)
+            fixed_tasks: tuple[FixedTask, ...] = (
+                tuple(
+                    self.task if task.id == self.task.id else task
+                    for task in problem.fixed_tasks
+                )
+                if any(task.id == self.task.id for task in problem.fixed_tasks)
+                else (*problem.fixed_tasks, self.task)
+            )
+            return Executed(replace(problem, tasks=tasks, fixed_tasks=fixed_tasks))
         if any(task.id == self.task.id for task in problem.fixed_tasks):
             return Executed(
                 replace(
@@ -74,11 +96,7 @@ class ReplaceTask:
                     ),
                 )
             )
-        if not any(task.id == self.task.id for task in problem.tasks):
-            return Rejected(
-                Violations((Violation(f"Task {self.task.id.value} does not exist"),))
-            )
-        tasks: tuple[Task, ...] = tuple(
+        tasks = tuple(
             self.task if task.id == self.task.id else task for task in problem.tasks
         )
         return Executed(replace(problem, tasks=tasks))
@@ -145,24 +163,34 @@ class AddConstraint:
 
 @dataclass(frozen=True)
 class AddTimeConstraint:
-    """Command to add a constraint that keeps a Task within or away from time windows."""
+    """Command to constrain Tasks within or away from time windows."""
 
     constraint_id: ConstraintId
-    task_id: TaskId
+    task_ids: frozenset[TaskId]
     relation: TimeRelation
     windows: tuple[TimeWindow, ...]
     strength: Strength | None
     """Strength of a soft constraint, or None for a hard constraint."""
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
+        if not self.task_ids:
+            return Rejected(
+                Violations(
+                    (Violation("Time constraint must reference at least one Task."),)
+                )
+            )
         grid: TimeGrid = problem.calendar.grid
         expansion: Expansion = expand(self.windows, self.relation, grid)
         if not expansion.intervals:
             covered: str = (
                 "whole slot" if self.relation is TimeRelation.WITHIN else "time"
             )
+            task_label: str = "task" if len(self.task_ids) == 1 else "tasks"
+            task_names: str = ", ".join(
+                sorted(task_id.value for task_id in self.task_ids)
+            )
             message: str = (
-                f"Time constraint on task {self.task_id.value}: the {self.relation.value} windows "
+                f"Time constraint on {task_label} {task_names}: the {self.relation.value} windows "
                 f"cover no {covered} of the calendar horizon {grid.horizon.start.isoformat()} to "
                 f"{grid.horizon.end.isoformat()} (slot {grid.slot}); widen or move the windows."
             )
@@ -172,7 +200,7 @@ class AddTimeConstraint:
             if self.relation is TimeRelation.WITHIN
             else expansion.intervals
         )
-        measure: IntervalMeasure = IntervalMeasure(self.task_id)
+        measure: IntervalMeasure = IntervalMeasure(self.task_ids)
         evaluation: Intrusion = Intrusion(region)
         constraint: Constraint = (
             HardConstraint(self.constraint_id, measure, evaluation)
@@ -213,6 +241,7 @@ type ElementCommand = AddTask | ReplaceTask | RemoveTask
 """Request to change the elements of a SchedulingProblem."""
 
 
+# TODO: consider a precedence command (Task B starts at least a gap after Task A ends) built on DependencyMeasure and Shortfall, a common scheduling constraint.
 type ConstraintCommand = AddConstraint | AddTimeConstraint | RemoveConstraint
 """Request to change the constraints of a SchedulingProblem."""
 

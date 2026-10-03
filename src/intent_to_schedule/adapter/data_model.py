@@ -225,7 +225,7 @@ class IntervalMeasureData(DataModel):
     """JSON form of IntervalMeasure."""
 
     kind: Literal["interval"]
-    task_id: TaskIdField
+    task_ids: tuple[TaskIdField, ...] = Field(min_length=1)
 
 
 class DependencyMeasureData(DataModel):
@@ -343,14 +343,14 @@ class AddTaskData(DataModel):
     """JSON form of AddTask."""
 
     kind: Literal["add_task"]
-    task: NewTaskData
+    task: NewTaskData | NewFixedTaskData
 
 
 class ReplaceTaskData(DataModel):
     """JSON form of ReplaceTask."""
 
     kind: Literal["replace_task"]
-    task: TaskData
+    task: TaskData | FixedTaskData
 
 
 class RemoveTaskData(DataModel):
@@ -391,7 +391,7 @@ class AddTimeConstraintData(DataModel):
     """JSON form of AddTimeConstraint."""
 
     kind: Literal["add_time_constraint"]
-    task_id: TaskIdField
+    task_ids: tuple[TaskIdField, ...] = Field(min_length=1)
     relation: Literal["within", "avoid"]
     windows: tuple[TimeWindowData, ...]
     requirement: HardRequirementData | SoftRequirementData
@@ -596,7 +596,7 @@ def convert_time_window(data: TimeWindowData) -> TimeWindow:
 
 def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]:
     """Describe the ID created or touched by an applied command."""
-    task: Task
+    task: Task | FixedTask
     task_id: TaskId
     constraint: Constraint
     constraint_id: ConstraintId
@@ -722,9 +722,10 @@ def answer_record(answer: Answer) -> dict[str, object]:
 
 def convert_command(data: CommandData) -> SchedulingCommand:
     """Convert one structured command, generating an ID for an added object."""
-    new_task: NewTaskData
-    task: TaskData
+    new_task: NewTaskData | NewFixedTaskData
+    task: TaskData | FixedTaskData
     task_id: TaskId
+    task_ids: tuple[TaskId, ...]
     constraint: NewHardConstraintData | NewSoftConstraintData
     constraint_id: ConstraintId
     relation: Literal["within", "avoid"]
@@ -732,19 +733,28 @@ def convert_command(data: CommandData) -> SchedulingCommand:
     requirement: HardRequirementData | SoftRequirementData
     match data:
         case AddTaskData(task=new_task):
-            return AddTask(convert_task(TaskId.generate(), new_task))
+            task_id = TaskId.generate()
+            return AddTask(
+                convert_fixed_task(task_id, new_task)
+                if isinstance(new_task, NewFixedTaskData)
+                else convert_task(task_id, new_task)
+            )
         case ReplaceTaskData(task=task):
-            return ReplaceTask(convert_task(task.id, task))
+            return ReplaceTask(
+                convert_fixed_task(task.id, task)
+                if isinstance(task, FixedTaskData)
+                else convert_task(task.id, task)
+            )
         case RemoveTaskData(task_id=task_id):
             return RemoveTask(task_id)
         case AddConstraintData(constraint=constraint):
             return AddConstraint(convert_constraint(ConstraintId.generate(), constraint))
         case AddTimeConstraintData(
-            task_id=task_id, relation=relation, windows=windows, requirement=requirement
+            task_ids=task_ids, relation=relation, windows=windows, requirement=requirement
         ):
             return AddTimeConstraint(
                 ConstraintId.generate(),
-                task_id,
+                frozenset(task_ids),
                 TimeRelation(relation),
                 tuple(convert_time_window(window) for window in windows),
                 Strength(requirement.strength)
@@ -814,8 +824,8 @@ def convert_measure(data: MeasureData) -> Measure:
     match data:
         case PointMeasureData(task_id=task_id):
             return PointMeasure(task_id)
-        case IntervalMeasureData(task_id=task_id):
-            return IntervalMeasure(task_id)
+        case IntervalMeasureData(task_ids=task_ids):
+            return IntervalMeasure(frozenset(task_ids))
         case DependencyMeasureData(from_task_id=from_task_id, to_task_id=to_task_id):
             return DependencyMeasure(from_task_id, to_task_id)
         case AggregateMeasureData(task_ids=task_ids, quantity=quantity):
@@ -886,11 +896,19 @@ def to_fixed_task_data(task: FixedTask) -> FixedTaskData:
 
 def to_measure_data(measure: Measure) -> MeasureData:
     """Convert a domain measure to its data form."""
+    task_id: TaskId
+    task_ids: frozenset[TaskId]
+    from_task_id: TaskId
+    to_task_id: TaskId
+    quantity: AggregateQuantity
     match measure:
         case PointMeasure(task_id=task_id):
             return PointMeasureData(kind="point", task_id=task_id)
-        case IntervalMeasure(task_id=task_id):
-            return IntervalMeasureData(kind="interval", task_id=task_id)
+        case IntervalMeasure(task_ids=task_ids):
+            return IntervalMeasureData(
+                kind="interval",
+                task_ids=tuple(sorted(task_ids, key=lambda item: item.value)),
+            )
         case DependencyMeasure(from_task_id=from_task_id, to_task_id=to_task_id):
             return DependencyMeasureData(
                 kind="dependency", from_task_id=from_task_id, to_task_id=to_task_id

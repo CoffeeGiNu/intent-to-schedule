@@ -26,7 +26,7 @@ class PointExpression:
 
 @dataclass(frozen=True)
 class IntervalExpression:
-    """Task occupancy for each slot."""
+    """Summed Task occupancy for each slot."""
 
     occupancy: Mapping[int, mathopt.LinearBase]
 
@@ -79,14 +79,17 @@ def compile_measure(
         case PointMeasure():
             return PointExpression(placements[measure.task_id])
         case IntervalMeasure():
-            duration: int = durations[measure.task_id]
             occupied: dict[int, list[mathopt.Variable]] = {}
+            task_id: TaskId
+            duration: int
             start: int
             variable: mathopt.Variable
             slot_index: int
-            for start, variable in placements[measure.task_id].items():
-                for slot_index in range(start, start + duration):
-                    occupied.setdefault(slot_index, []).append(variable)
+            for task_id in sorted(measure.task_ids, key=lambda item: item.value):
+                duration = durations[task_id]
+                for start, variable in placements[task_id].items():
+                    for slot_index in range(start, start + duration):
+                        occupied.setdefault(slot_index, []).append(variable)
             occupancy: dict[int, mathopt.LinearBase] = {
                 slot_index: mathopt.LinearSum(occupied.get(slot_index, ()))
                 for slot_index in range(grid.slot_count)
