@@ -369,7 +369,7 @@ def test_constraints_filters_references_and_compression(
         ),
         HardConstraint(
             ConstraintId("constraint-a"),
-            IntervalMeasure(TaskId("task-one")),
+            IntervalMeasure(frozenset({TaskId("task-one")})),
             Intrusion(region),
         ),
         HardConstraint(
@@ -434,7 +434,7 @@ def test_short_intrusion_regions_are_not_truncated(
     )
     constraint: Constraint = HardConstraint(
         ConstraintId("constraint"),
-        IntervalMeasure(TaskId("task-one")),
+        IntervalMeasure(frozenset({TaskId("task-one")})),
         Intrusion(region),
     )
     record: dict[str, object] = answer_record(ConstraintsAnswer((constraint,), 1))
@@ -864,7 +864,7 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
     task: Task = replace(movable("blocking"), duration=timedelta(hours=4))
     constraint: Constraint = HardConstraint(
         ConstraintId("blocking"),
-        IntervalMeasure(task.id),
+        IntervalMeasure(frozenset({task.id})),
         Intrusion((problem.calendar.grid.horizon,)),
     )
     previous: Schedule = Schedule((ScheduledTask(task.id, at(9)),), frozenset())

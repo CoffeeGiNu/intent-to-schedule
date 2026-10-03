@@ -215,7 +215,7 @@ def test_add_time_constraint_conversion_generates_id_once(
     data: AddTimeConstraintData = AddTimeConstraintData.model_validate(
         {
             "kind": "add_time_constraint",
-            "task_id": "review",
+            "task_ids": ["review"],
             "relation": "within",
             "windows": [
                 {
@@ -241,7 +241,7 @@ def test_add_time_constraint_conversion_generates_id_once(
         command: SchedulingCommand = convert_command(data)
         assert isinstance(command, AddTimeConstraint)
         assert command.constraint_id == ConstraintId("created")
-        assert command.task_id == TaskId("review")
+        assert command.task_ids == frozenset({TaskId("review")})
         assert command.relation is TimeRelation.WITHIN
         assert command.strength == (
             Strength(expected_strength) if expected_strength else None
@@ -294,7 +294,7 @@ def test_add_time_constraint_input_rejects_nonincreasing_times(end: str) -> None
         AddTimeConstraintData.model_validate(
             {
                 "kind": "add_time_constraint",
-                "task_id": "review",
+                "task_ids": ["review"],
                 "relation": "within",
                 "windows": [{"time_range": {"start": "13:00", "end": end}}],
                 "requirement": {"kind": "hard"},
@@ -317,7 +317,7 @@ def test_add_time_constraint_input_rejects_zoned_times(
         AddTimeConstraintData.model_validate(
             {
                 "kind": "add_time_constraint",
-                "task_id": "review",
+                "task_ids": ["review"],
                 "relation": "avoid",
                 "windows": [{"time_range": {"start": start, "end": end}}],
                 "requirement": {"kind": "soft", "strength": "normal"},
@@ -352,7 +352,7 @@ def test_add_time_constraint_record_has_id_and_only_changed_rounding_note(
     )
     command: AddTimeConstraint = AddTimeConstraint(
         ConstraintId("created"),
-        TaskId("review"),
+        frozenset({TaskId("review")}),
         TimeRelation(relation_value),
         (TimeWindow(None, None, None),),
         None,
@@ -426,7 +426,7 @@ def test_apply_add_time_constraint_persists_region_and_reports_rounding(
                     "commands": [
                         {
                             "kind": "add_time_constraint",
-                            "task_id": task_id,
+                            "task_ids": [task_id],
                             "relation": relation_value,
                             "windows": [
                                 {"time_range": {"start": "09:10", "end": "11:10"}}
@@ -446,7 +446,7 @@ def test_apply_add_time_constraint_persists_region_and_reports_rounding(
     constraint: HardConstraintData | SoftConstraintData = state.problem.constraints[0]
     assert constraint.id.value == record["constraint_id"]
     assert constraint.kind == "soft" and constraint.strength == "strong"
-    assert constraint.measure.task_id.value == task_id
+    assert {value.value for value in constraint.measure.task_ids} == {task_id}
     assert not state.problem.tasks[0].required
     expected: list[dict[str, str]] = (
         [
@@ -477,7 +477,7 @@ def test_apply_add_time_constraint_rejects_empty_expansion_without_saving(
                     "commands": [
                         {
                             "kind": "add_time_constraint",
-                            "task_id": "review",
+                            "task_ids": ["review"],
                             "relation": "within",
                             "windows": [],
                             "requirement": {"kind": "hard"},

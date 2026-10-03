@@ -83,7 +83,7 @@ def test_soft_interval_intrusion_avoids_region() -> None:
     item: Task = task("interval", duration=timedelta(hours=1))
     preference: SoftConstraint = SoftConstraint(
         ConstraintId("intrusion"),
-        IntervalMeasure(item.id),
+        IntervalMeasure(frozenset({item.id})),
         Intrusion((TimeInterval(START, START + timedelta(hours=1)),)),
         Strength.STRONG,
     )
@@ -142,7 +142,7 @@ def test_hard_intrusion_excludes_region() -> None:
     item: Task = task("hard", duration=timedelta(hours=1))
     constraint: HardConstraint = HardConstraint(
         ConstraintId("hard"),
-        IntervalMeasure(item.id),
+        IntervalMeasure(frozenset({item.id})),
         Intrusion((TimeInterval(START, START + timedelta(hours=1)),)),
     )
     result: Schedule = schedule_for(problem(item, constraints=(constraint,)))
@@ -209,7 +209,7 @@ def test_fixed_task_point_and_interval_measures_use_rounded_slots() -> None:
     fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=10), SLOT, frozenset())
     point: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(fixed.id), Distance(START))
     assert schedule_for(problem(fixed_tasks=(fixed,), constraints=(point,))) == Schedule((), frozenset())
-    interval: HardConstraint = HardConstraint(ConstraintId("interval"), IntervalMeasure(fixed.id), Intrusion((TimeInterval(START + SLOT, START + 2 * SLOT),)))
+    interval: HardConstraint = HardConstraint(ConstraintId("interval"), IntervalMeasure(frozenset({fixed.id})), Intrusion((TimeInterval(START + SLOT, START + 2 * SLOT),)))
     assert isinstance(SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(interval,))), Infeasible)
 
 

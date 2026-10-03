@@ -259,7 +259,7 @@ def test_add_time_constraint_builds_one_intrusion_and_delegates(
     )
     command: AddTimeConstraint = AddTimeConstraint(
         ConstraintId("time"),
-        TaskId("a"),
+        frozenset({TaskId("a")}),
         TimeRelation(relation_value),
         windows,
         strength,
@@ -285,7 +285,7 @@ def test_add_time_constraint_builds_one_intrusion_and_delegates(
         if relation_value == "within"
         else (allowed,)
     )
-    assert added.constraint.measure == IntervalMeasure(TaskId("a"))
+    assert added.constraint.measure == IntervalMeasure(frozenset({TaskId("a")}))
     assert added.constraint.evaluation == Intrusion(region)
     assert added.constraint.id == command.constraint_id
     assert isinstance(
@@ -305,7 +305,7 @@ def test_add_time_constraint_rejects_empty_windows_with_actionable_message(
     from intent_to_schedule.application.time_windows import TimeRelation
 
     command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("time"), TaskId("a"), TimeRelation(relation_value), (), None
+        ConstraintId("time"), frozenset({TaskId("a")}), TimeRelation(relation_value), (), None
     )
     result: Executed | Rejected = command.execute(problem(task("a")))
     assert isinstance(result, Rejected)
@@ -327,7 +327,7 @@ def test_add_time_constraint_rejects_windows_removed_by_rounding() -> None:
 
     command: AddTimeConstraint = AddTimeConstraint(
         ConstraintId("time"),
-        TaskId("a"),
+        frozenset({TaskId("a")}),
         TimeRelation.WITHIN,
         (TimeWindow(None, None, TimeRange(time(9, 5), time(9, 10))),),
         None,
@@ -354,7 +354,7 @@ def test_add_time_constraint_delegates_duplicate_id_rejection() -> None:
     original: SchedulingProblem = problem(task("a"), constraints=(existing,))
     command: AddTimeConstraint = AddTimeConstraint(
         existing.id,
-        TaskId("a"),
+        frozenset({TaskId("a")}),
         TimeRelation.AVOID,
         (TimeWindow(None, None, None),),
         None,
@@ -380,7 +380,7 @@ def test_add_time_constraint_accepts_whole_horizon_with_empty_complement() -> No
     original: SchedulingProblem = problem(task("a"))
     command: AddTimeConstraint = AddTimeConstraint(
         ConstraintId("time"),
-        TaskId("a"),
+        frozenset({TaskId("a")}),
         TimeRelation.WITHIN,
         (TimeWindow(None, None, None),),
         None,
@@ -412,7 +412,7 @@ def test_add_time_constraint_real_grid_creates_expected_region(
     original: SchedulingProblem = problem(task("a"))
     command: AddTimeConstraint = AddTimeConstraint(
         ConstraintId("time"),
-        TaskId("a"),
+        frozenset({TaskId("a")}),
         TimeRelation(relation_value),
         (TimeWindow(None, None, TimeRange(time(9, 10), time(10, 10))),),
         None,
