@@ -5,42 +5,38 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated, NoReturn
 
 import openai
-from pydantic import ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from intent_to_schedule.adapter.command_line_interface.state import (
     CalendarInput,
-    FixedTaskState,
     ProblemState,
     State,
-    UtteranceState,
     load_state,
     save_state,
-    to_dialogue,
     to_problem,
     to_problem_state,
     to_schedule,
     to_schedule_state,
 )
-from intent_to_schedule.adapter.data_model import CommandsData, convert_commands_input
+from intent_to_schedule.adapter.data_model import (
+    CommandsData,
+    FixedTaskData,
+    QueryData,
+    command_record,
+    convert_commands_input,
+)
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
-from intent_to_schedule.adapter.openai.translate import OpenAICommandTranslator
 from intent_to_schedule.application.command import (
-    AddConstraint,
-    AddTask,
     Executed,
     Rejected,
-    RemoveConstraint,
-    RemoveTask,
-    ReplaceTask,
     SchedulingCommand,
 )
-from intent_to_schedule.application.converse import Conversation, Response
 from intent_to_schedule.application.policy import DEFAULT_POLICY
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import Infeasible, Solved
-from intent_to_schedule.application.translate import Ambiguous
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
     AllOf,
@@ -60,7 +56,7 @@ from intent_to_schedule.domain.task import Task, TaskId
 class JsonParser(argparse.ArgumentParser):
     """Argument parser whose errors can be returned as JSON."""
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         """Raise a parse error for the JSON error handler."""
         raise ValueError(message)
 
@@ -74,11 +70,16 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "Print the state",
         "The state holds the problem with IDs, the previous schedule, and the dialogue.",
     ),
-    "schema": ("Print the JSON Schema of the apply input", ""),
+    "schema": ("Print the JSON Schema of the apply or query input", ""),
     "apply": (
         "Apply a batch of commands",
         "Reads commands JSON (see `schema`) from --file or stdin and prints the IDs it created. "
         "Add Tasks first, then reference their IDs in constraints. Exits 1 if rejected; the state is left unchanged.",
+    ),
+    "query": (
+        "Query the current problem and previous schedule",
+        "Reads query JSON (see `schema query`) from --file or stdin and prints the answer. "
+        "Exits 1 if rejected.",
     ),
     "solve": ("Solve the problem and store the schedule", "Exits 2 if infeasible."),
     "chat": (
@@ -106,16 +107,17 @@ def parser() -> JsonParser:
         help="State file [default: .state/state.json]",
     )
     root.add_argument("-h", "--help", action="help", help="Print help")
-    subcommands: argparse._SubParsersAction[argparse.ArgumentParser] = (
-        root.add_subparsers(
-            dest="command",
-            required=True,
-            title="Commands",
-            metavar="<COMMAND>",
-            prog="intent-to-schedule",
-        )
+    subcommands: argparse._SubParsersAction[JsonParser] = root.add_subparsers(
+        dest="command",
+        required=True,
+        title="Commands",
+        metavar="<COMMAND>",
+        prog="intent-to-schedule",
     )
     command: argparse.ArgumentParser
+    name: str
+    summary: str
+    detail: str
     for name, (summary, detail) in COMMANDS.items():
         command = subcommands.add_parser(
             name,
@@ -140,6 +142,22 @@ def parser() -> JsonParser:
                     type=Path,
                     metavar="<FILE>",
                     help="Commands JSON file [default: stdin]",
+                )
+            case "schema":
+                command.add_argument(
+                    "schema_command",
+                    nargs="?",
+                    choices=("apply", "query"),
+                    default="apply",
+                    metavar="<COMMAND>",
+                    help="Input command [default: apply]",
+                )
+            case "query":
+                command.add_argument(
+                    "--file",
+                    type=Path,
+                    metavar="<FILE>",
+                    help="Query JSON file [default: stdin]",
                 )
             case "solve":
                 command.add_argument(
@@ -207,7 +225,7 @@ def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
         people=calendar.people,
         tasks=(),
         fixed_tasks=tuple(
-            FixedTaskState(id=TaskId.generate(), **item.model_dump())
+            FixedTaskData(id=TaskId.generate(), **item.model_dump())
             for item in calendar.fixed_tasks
         ),
         constraints=(),
@@ -226,21 +244,6 @@ def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
             return 0
 
 
-def command_record(command: SchedulingCommand) -> dict[str, str]:
-    """Describe the ID created or touched by an applied command."""
-    match command:
-        case AddTask(task=task):
-            return {"kind": "add_task", "task_id": task.id.value, "name": task.name}
-        case ReplaceTask(task=task):
-            return {"kind": "replace_task", "task_id": task.id.value}
-        case RemoveTask(task_id=task_id):
-            return {"kind": "remove_task", "task_id": task_id.value}
-        case AddConstraint(constraint=constraint):
-            return {"kind": "add_constraint", "constraint_id": constraint.id.value}
-        case RemoveConstraint(constraint_id=constraint_id):
-            return {"kind": "remove_constraint", "constraint_id": constraint_id.value}
-
-
 def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
     """Apply a JSON command batch to the current problem."""
     state: State = load_state(path)
@@ -252,7 +255,8 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
     commands: tuple[SchedulingCommand, ...] = convert_commands_input(
         CommandsData.model_validate_json(source)
     )
-    result: Executed | Rejected = service.execute(to_problem(state.problem), commands)
+    problem: SchedulingProblem = to_problem(state.problem)
+    result: Executed | Rejected = service.execute(problem, commands)
     match result:
         case Rejected(violations=violations):
             return reject(violations)
@@ -260,8 +264,20 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
             save_state(
                 path, state.model_copy(update={"problem": to_problem_state(updated)})
             )
-            emit({"executed": [command_record(command) for command in commands]})
+            emit(
+                {
+                    "executed": [
+                        command_record(command, problem.calendar.grid)
+                        for command in commands
+                    ]
+                }
+            )
             return 0
+
+
+def query(path: Path, input_path: Path | None) -> int:
+    """Answer a JSON query about the current problem and previous schedule."""
+    raise NotImplementedError
 
 
 def schedule_output(
@@ -309,63 +325,9 @@ def chat(
     model: str,
     now: datetime | None,
     service: Scheduling,
-    validator: Validator,
 ) -> int:
-    """Translate an utterance, then apply and solve it."""
-    state: State = load_state(path)
-    dialogue: tuple[UtteranceState, ...] = (
-        *state.dialogue,
-        UtteranceState(speaker="user", text=text),
-    )
-    problem: SchedulingProblem = to_problem(state.problem)
-    current: datetime = now if now is not None else problem.calendar.grid.horizon.start
-    conversation: Conversation = Conversation(
-        OpenAICommandTranslator(openai.OpenAI(), model, validator, lambda: current),
-        service,
-    )
-    response: Response = conversation.respond(
-        to_dialogue(dialogue), problem, to_schedule(state.previous)
-    )
-    match response.outcome:
-        case Ambiguous(question=question):
-            updated: State = state.model_copy(
-                update={
-                    "dialogue": (
-                        *dialogue,
-                        UtteranceState(speaker="assistant", text=question),
-                    )
-                }
-            )
-            save_state(path, updated)
-            emit({"question": question})
-            return 0
-        case Infeasible():
-            updated = state.model_copy(
-                update={
-                    "problem": to_problem_state(response.problem),
-                    "dialogue": (
-                        *dialogue,
-                        UtteranceState(speaker="assistant", text="Infeasible."),
-                    ),
-                }
-            )
-            save_state(path, updated)
-            emit({"infeasible": True})
-            return 2
-        case Solved(schedule=schedule):
-            updated = state.model_copy(
-                update={
-                    "problem": to_problem_state(response.problem),
-                    "previous": to_schedule_state(schedule),
-                    "dialogue": (
-                        *dialogue,
-                        UtteranceState(speaker="assistant", text="Scheduled."),
-                    ),
-                }
-            )
-            save_state(path, updated)
-            emit(schedule_output(response.problem, schedule))
-            return 0
+    """Handle an utterance with the OpenAI API."""
+    raise NotImplementedError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,7 +338,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "help":
             root.parse_args([args.topic, "--help"] if args.topic else ["--help"])
         if args.command == "schema":
-            emit(CommandsData.model_json_schema())
+            emit(
+                TypeAdapter(
+                    Annotated[QueryData, Field(discriminator="kind")]
+                ).json_schema()
+                if args.schema_command == "query"
+                else CommandsData.model_json_schema()
+            )
             return 0
         path: Path = args.state
         if args.command == "show":
@@ -395,10 +363,12 @@ def main(argv: list[str] | None = None) -> int:
                 return init(path, args.calendar, service)
             case "apply":
                 return apply(path, args.file, service)
+            case "query":
+                return query(path, args.file)
             case "solve":
                 return solve(path, service, not args.no_stability)
             case "chat":
-                return chat(path, args.text, args.model, args.now, service, validator)
+                return chat(path, args.text, args.model, args.now, service)
     except ConsistencyError as error:
         return reject(error.violations)
     except (

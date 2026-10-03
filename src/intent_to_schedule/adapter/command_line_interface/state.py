@@ -7,24 +7,21 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from intent_to_schedule.adapter.data_model import (
-    ConstraintIdField,
     DataModel,
-    EvaluationData,
     FixedTaskData,
     HardConstraintData,
-    MeasureData,
+    NewFixedTaskData,
+    PersonData,
     PersonIdField,
     SoftConstraintData,
     TaskData,
     TaskIdField,
     TimeIntervalData,
-    convert_evaluation,
+    convert_constraint,
     convert_fixed_task,
-    convert_measure,
     convert_task,
-    to_evaluation_data,
+    to_constraint_data,
     to_fixed_task_data,
-    to_measure_data,
     to_task_data,
     to_time_interval_data,
 )
@@ -35,22 +32,9 @@ from intent_to_schedule.domain.calendar import (
     TimeGrid,
     TimeInterval,
 )
-from intent_to_schedule.domain.constraint import (
-    Constraint,
-    HardConstraint,
-    SoftConstraint,
-)
 from intent_to_schedule.domain.person import Person
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
-from intent_to_schedule.domain.strength import Strength
-
-
-class PersonState(DataModel):
-    """A person with a stable external ID."""
-
-    id: PersonIdField
-    name: str
 
 
 class AvailabilityState(DataModel):
@@ -71,47 +55,21 @@ class CalendarState(DataModel):
 class CalendarInput(CalendarState):
     """Calendar file accepted by init."""
 
-    people: tuple[PersonState, ...]
-    fixed_tasks: tuple[FixedTaskData, ...]
-
-
-class TaskState(TaskData):
-    """A task with its persisted ID."""
-
-    id: TaskIdField
-
-
-class FixedTaskState(FixedTaskData):
-    """A fixed task with its persisted ID."""
-
-    id: TaskIdField
-
-
-class HardConstraintState(HardConstraintData):
-    """A persisted hard constraint with an ID."""
-
-    id: ConstraintIdField
-
-
-class SoftConstraintState(SoftConstraintData):
-    """A persisted soft constraint with an ID."""
-
-    id: ConstraintIdField
-
-
-type ConstraintState = Annotated[
-    HardConstraintState | SoftConstraintState, Field(discriminator="kind")
-]
+    people: tuple[PersonData, ...]
+    fixed_tasks: tuple[NewFixedTaskData, ...]
 
 
 class ProblemState(DataModel):
     """Persisted scheduling problem."""
 
     calendar: CalendarState
-    people: tuple[PersonState, ...]
-    tasks: tuple[TaskState, ...]
-    fixed_tasks: tuple[FixedTaskState, ...]
-    constraints: tuple[ConstraintState, ...]
+    people: tuple[PersonData, ...]
+    tasks: tuple[TaskData, ...]
+    fixed_tasks: tuple[FixedTaskData, ...]
+    constraints: tuple[
+        Annotated[HardConstraintData | SoftConstraintData, Field(discriminator="kind")],
+        ...,
+    ]
 
 
 class ScheduledTaskState(DataModel):
@@ -160,34 +118,13 @@ def to_problem(form: ProblemState) -> SchedulingProblem:
             for item in form.calendar.availabilities
         ),
     )
-    constraints: tuple[Constraint, ...] = tuple(
-        to_constraint(item) for item in form.constraints
-    )
     return SchedulingProblem(
         calendar,
         tuple(Person(item.id, item.name) for item in form.people),
         tuple(convert_task(item.id, item) for item in form.tasks),
-        tuple(convert_fixed_task(item, item.id) for item in form.fixed_tasks),
-        constraints,
+        tuple(convert_fixed_task(item.id, item) for item in form.fixed_tasks),
+        tuple(convert_constraint(item.id, item) for item in form.constraints),
     )
-
-
-def to_constraint(form: HardConstraintState | SoftConstraintState) -> Constraint:
-    """Convert a persisted constraint to the domain."""
-    match form:
-        case HardConstraintState(id=identifier, measure=measure, evaluation=evaluation):
-            return HardConstraint(
-                identifier, convert_measure(measure), convert_evaluation(evaluation)
-            )
-        case SoftConstraintState(
-            id=identifier, measure=measure, evaluation=evaluation, strength=strength
-        ):
-            return SoftConstraint(
-                identifier,
-                convert_measure(measure),
-                convert_evaluation(evaluation),
-                Strength(strength),
-            )
 
 
 def to_problem_state(problem: SchedulingProblem) -> ProblemState:
@@ -207,42 +144,11 @@ def to_problem_state(problem: SchedulingProblem) -> ProblemState:
                 for item in calendar.availabilities
             ),
         ),
-        people=tuple(
-            PersonState(id=item.id, name=item.name) for item in problem.people
-        ),
-        tasks=tuple(
-            TaskState.model_validate(
-                {"id": item.id.value, **to_task_data(item).model_dump()}
-            )
-            for item in problem.tasks
-        ),
-        fixed_tasks=tuple(
-            FixedTaskState(id=item.id, **to_fixed_task_data(item).model_dump())
-            for item in problem.fixed_tasks
-        ),
-        constraints=tuple(to_constraint_state(item) for item in problem.constraints),
+        people=tuple(PersonData(id=item.id, name=item.name) for item in problem.people),
+        tasks=tuple(to_task_data(item) for item in problem.tasks),
+        fixed_tasks=tuple(to_fixed_task_data(item) for item in problem.fixed_tasks),
+        constraints=tuple(to_constraint_data(item) for item in problem.constraints),
     )
-
-
-def to_constraint_state(
-    constraint: Constraint,
-) -> HardConstraintState | SoftConstraintState:
-    """Convert a domain constraint to its persisted form."""
-    measure: MeasureData = to_measure_data(constraint.measure)
-    evaluation: EvaluationData = to_evaluation_data(constraint.evaluation)
-    match constraint:
-        case HardConstraint(id=identifier):
-            return HardConstraintState(
-                id=identifier, kind="hard", measure=measure, evaluation=evaluation
-            )
-        case SoftConstraint(id=identifier, strength=strength):
-            return SoftConstraintState(
-                id=identifier,
-                kind="soft",
-                measure=measure,
-                evaluation=evaluation,
-                strength=strength.value,
-            )
 
 
 def to_schedule(form: ScheduleState | None) -> Schedule | None:

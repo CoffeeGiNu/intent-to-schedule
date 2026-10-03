@@ -1,18 +1,22 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from intent_to_schedule.application.command import ExecuteResult, Rejected
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import SolveResult
 from intent_to_schedule.application.translate import (
-    Ambiguous,
     CommandTranslator,
-    TranslateResult,
+    MessageStep,
     Utterance,
 )
-from intent_to_schedule.domain.consistency import ConsistencyError
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
+
+STEP_LIMIT: int = 12
+
+
+@dataclass(frozen=True)
+class Exhausted:
+    """Outcome of a turn that reached the step limit."""
 
 
 @dataclass(frozen=True)
@@ -20,7 +24,7 @@ class Response:
     """Updated problem and outcome of one conversation turn."""
 
     problem: SchedulingProblem
-    outcome: Ambiguous | SolveResult
+    outcome: MessageStep | SolveResult | Exhausted
 
 
 class Conversation:
@@ -36,17 +40,4 @@ class Conversation:
         problem: SchedulingProblem,
         previous: Schedule | None,
     ) -> Response:
-        translated: TranslateResult = self._translator.translate(
-            dialogue, problem, previous
-        )
-        if isinstance(translated, Ambiguous):
-            return Response(problem, translated)
-
-        result: ExecuteResult = self._scheduling.execute(problem, translated.commands)
-        if isinstance(result, Rejected):
-            raise ConsistencyError(result.violations)
-        updated: SchedulingProblem = result.problem
-        return Response(
-            updated,
-            self._scheduling.solve(updated, previous if translated.stability else None),
-        )
+        raise NotImplementedError

@@ -1,10 +1,12 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
+from intent_to_schedule.application.time_windows import TimeRelation, TimeWindow
 from intent_to_schedule.domain.consistency import Violation, Violations
 from intent_to_schedule.domain.constraint import Constraint, ConstraintId
 from intent_to_schedule.domain.measure import Measure
 from intent_to_schedule.domain.problem import SchedulingProblem
+from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
 
@@ -17,7 +19,7 @@ class Executed:
 
 @dataclass(frozen=True)
 class Rejected:
-    """Result of a command that could not be executed."""
+    """Result of a command or query that was rejected."""
 
     violations: Violations
 
@@ -129,6 +131,21 @@ class AddConstraint:
 
 
 @dataclass(frozen=True)
+class AddTimeConstraint:
+    """Command to add a constraint that keeps a Task within or away from time windows."""
+
+    constraint_id: ConstraintId
+    task_id: TaskId
+    relation: TimeRelation
+    windows: tuple[TimeWindow, ...]
+    strength: Strength | None
+    """Strength of a soft constraint, or None for a hard constraint."""
+
+    def execute(self, problem: SchedulingProblem) -> ExecuteResult:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
 class RemoveConstraint:
     """Command to remove a constraint."""
 
@@ -159,7 +176,7 @@ type ElementCommand = AddTask | ReplaceTask | RemoveTask
 """Request to change the elements of a SchedulingProblem."""
 
 
-type ConstraintCommand = AddConstraint | RemoveConstraint
+type ConstraintCommand = AddConstraint | AddTimeConstraint | RemoveConstraint
 """Request to change the constraints of a SchedulingProblem."""
 
 

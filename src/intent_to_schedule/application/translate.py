@@ -3,9 +3,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from intent_to_schedule.application.command import SchedulingCommand
-from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule
+from intent_to_schedule.application.command import ExecuteResult, SchedulingCommand
+from intent_to_schedule.application.query import (
+    AnswerResult,
+    SchedulingQuery,
+    Summary,
+)
 
 
 class Speaker(Enum):
@@ -24,32 +27,66 @@ class Utterance:
 
 
 @dataclass(frozen=True)
-class Translated:
-    """Commands translated from an utterance."""
+class QueryStep:
+    """Step that asks a query."""
 
-    commands: tuple[SchedulingCommand, ...]
-    stability: bool
+    query: SchedulingQuery
 
 
 @dataclass(frozen=True)
-class Ambiguous:
-    """Clarifying question for an utterance whose meaning is not determined."""
+class ApplyStep:
+    """Step that applies commands."""
 
-    question: str
+    commands: tuple[SchedulingCommand, ...]
 
 
-type TranslateResult = Translated | Ambiguous
-"""Result of translating an utterance."""
+@dataclass(frozen=True)
+class SolveStep:
+    """Step that solves the problem and ends the turn."""
+
+    stability: bool
+    """Whether to keep Tasks near their previous start."""
+
+
+@dataclass(frozen=True)
+class MessageStep:
+    """Step that replies to the user and ends the turn."""
+
+    text: str
+
+
+type TranslateResult = QueryStep | ApplyStep | SolveStep | MessageStep
+"""Next step chosen for an utterance."""
+
+
+@dataclass(frozen=True)
+class QueryRecord:
+    """Query step taken earlier in the turn and its result."""
+
+    step: QueryStep
+    result: AnswerResult
+
+
+@dataclass(frozen=True)
+class ApplyRecord:
+    """Apply step taken earlier in the turn and its result."""
+
+    step: ApplyStep
+    result: ExecuteResult
+
+
+type StepRecord = QueryRecord | ApplyRecord
+"""Step taken earlier in the turn and its result."""
 
 
 class CommandTranslator(Protocol):
-    """Port that translates utterances into commands."""
+    """Port that translates utterances into steps."""
 
     def translate(
         self,
         dialogue: Sequence[Utterance],
-        problem: SchedulingProblem,
-        previous: Schedule | None,
+        summary: Summary,
+        steps: Sequence[StepRecord],
     ) -> TranslateResult:
-        """Translate the latest utterance in a conversation."""
+        """Choose the next step for the latest utterance."""
         ...
