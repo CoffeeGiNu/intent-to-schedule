@@ -83,6 +83,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "Apply a batch of commands",
         "Reads JSON from --file or standard input; see `schema apply`. "
         "Prints created identifiers and any time window rounding note. "
+        "Register absences missing from the calendar as fixed tasks (add_task with start), not as avoid constraints. "
         "Exits 1 on rejection without saving changes.",
     ),
     "query": (

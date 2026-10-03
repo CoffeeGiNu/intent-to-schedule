@@ -104,6 +104,7 @@ _STEP_PROMPT: str = (
     "A task with start is fixed; without start it is movable. "
     "For absences or appointments missing from the calendar, such as a health check, half day off, external training, or dentist appointment, use add_task with name, start, duration, and participant_ids for that person. "
     "A fixed task occupies its participants for both existing and future tasks; use remove_task to undo it. "
+    "Do not express such absences as avoid constraints; use avoid only when the time is free but some tasks, such as meetings, must stay out of it. "
     "Use replace_task with start and the same identifier to fix an existing task at that time; its constraints remain. "
     "To make a fixed task movable, use replace_task without start and include importance, required, and stability. "
     "Fixed tasks omit importance, required, and stability; constraints can reference them. "
