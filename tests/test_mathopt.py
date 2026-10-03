@@ -5,12 +5,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from ortools.math_opt.python import mathopt
 
-from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, _free_slots, compile_problem
+from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
 from intent_to_schedule.adapter.mathopt.evaluate import compile_evaluation
 from intent_to_schedule.adapter.mathopt.measure import PointExpression
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.solve import Infeasible, Solved
+from intent_to_schedule.domain.availability import available_start_slots, free_slots
 from intent_to_schedule.domain.calendar import Availability, Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint, SoftConstraint
 from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
@@ -163,29 +164,6 @@ def test_fixed_task_rounds_outward() -> None:
     assert starts(schedule_for(value))[item.id] == START + 2 * SLOT
 
 
-def test_intervals_before_horizon_leave_free_slots_unchanged() -> None:
-    person_id: PersonId = PersonId("person")
-    item: Task = task("early", people=frozenset({person_id}))
-    in_horizon: TimeInterval = TimeInterval(START, START + timedelta(hours=1))
-    before_horizon: TimeInterval = TimeInterval(START - timedelta(hours=1), START - SLOT)
-    baseline: SchedulingProblem = problem(
-        item, end=in_horizon.end, availabilities=(Availability(person_id, (in_horizon,)),)
-    )
-    availability: SchedulingProblem = problem(
-        item, end=in_horizon.end,
-        availabilities=(Availability(person_id, (before_horizon, in_horizon)),),
-    )
-    fixed: SchedulingProblem = problem(
-        item, end=in_horizon.end,
-        availabilities=(Availability(person_id, (in_horizon,)),),
-        fixed_tasks=(FixedTask(TaskId("fixed"), "Before", before_horizon.start, before_horizon.end - before_horizon.start, frozenset({person_id})),),
-    )
-    expected: list[bool] = _free_slots(person_id, baseline, 2)
-    assert expected == [True, True]
-    assert _free_slots(person_id, availability, 2) == expected
-    assert _free_slots(person_id, fixed, 2) == expected
-
-
 def test_overlapping_fixed_tasks_still_solve() -> None:
     person_id: PersonId = PersonId("person")
     first: FixedTask = FixedTask(TaskId("first"), "First", START, timedelta(hours=1), frozenset({person_id}))
@@ -233,20 +211,6 @@ def test_fixed_task_point_and_interval_measures_use_rounded_slots() -> None:
     assert schedule_for(problem(fixed_tasks=(fixed,), constraints=(point,))) == Schedule((), frozenset())
     interval: HardConstraint = HardConstraint(ConstraintId("interval"), IntervalMeasure(fixed.id), Intrusion((TimeInterval(START + SLOT, START + 2 * SLOT),)))
     assert isinstance(SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(interval,))), Infeasible)
-
-
-@pytest.mark.parametrize("offset, duration, expected", [
-    (-60, 30, [True, True]),
-    (60, 30, [True, True]),
-    (-10, 20, [False, True]),
-    (50, 20, [True, False]),
-    (-10, 80, [False, False]),
-])
-def test_fixed_tasks_clip_blocked_slots_to_horizon(offset: int, duration: int, expected: list[bool]) -> None:
-    person_id: PersonId = PersonId("person")
-    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=offset), timedelta(minutes=duration), frozenset({person_id}))
-    value: SchedulingProblem = problem(fixed_tasks=(fixed,), end=START + timedelta(hours=1))
-    assert _free_slots(person_id, value, 2) == expected
 
 
 def test_dependency_to_fixed_task_outside_horizon_is_inactive_when_task_drops() -> None:
@@ -321,3 +285,28 @@ def test_unsupported_evaluation_raises_value_error() -> None:
     expression: PointExpression = PointExpression({0: model.add_binary_variable()})
     with pytest.raises(ValueError, match="Unsupported evaluation"):
         compile_evaluation(expression, Shortfall(SLOT), model, grid)
+
+
+@pytest.mark.parametrize("duration", [SLOT, 2 * SLOT, 7 * SLOT])
+@pytest.mark.parametrize("participant_count", [0, 1, 2])
+def test_solver_start_candidates_match_shared_availability(duration: timedelta, participant_count: int) -> None:
+    participants: frozenset[PersonId] = frozenset(PersonId(f"person_{index}") for index in range(participant_count))
+    item: Task = task("movable", duration=duration, people=participants, required=False)
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START + timedelta(minutes=40), timedelta(minutes=10), participants)
+    value: SchedulingProblem = problem(item, fixed_tasks=(fixed,))
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    participants_free: tuple[tuple[bool, ...], ...] = tuple(free_slots(value, person_id) for person_id in participants)
+    expected: tuple[int, ...] = available_start_slots(value.calendar.grid, participants_free, duration)
+    assert tuple(compiled.placements[item.id]) == expected
+
+
+def test_compile_computes_person_free_slots_once() -> None:
+    person_id: PersonId = PersonId("shared")
+    value: SchedulingProblem = problem(task("first", people=frozenset({person_id})), task("second", people=frozenset({person_id})))
+    free_slots_mock: MagicMock
+    starts_mock: MagicMock
+    with patch("intent_to_schedule.adapter.mathopt.compile.free_slots", wraps=free_slots) as free_slots_mock:
+        with patch("intent_to_schedule.adapter.mathopt.compile.available_start_slots", wraps=available_start_slots) as starts_mock:
+            compile_problem(value, DEFAULT_POLICY)
+    free_slots_mock.assert_called_once_with(value, person_id)
+    assert starts_mock.call_count == 2

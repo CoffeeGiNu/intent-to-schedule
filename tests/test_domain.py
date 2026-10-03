@@ -1,7 +1,7 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 
-from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
+from intent_to_schedule.domain.calendar import Availability, Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.compatibility import is_supported
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
@@ -116,4 +116,19 @@ def test_fixed_task_references_and_off_grid_times() -> None:
     missing: FixedTask = replace(fixed, participant_ids=frozenset({PersonId("missing")}))
     assert ReferencesExist().validate(replace(problem, fixed_tasks=(missing,))) == Violations((
         Violation("Task fixed references missing person id missing."),
+    ))
+
+
+def test_alignment_uses_grid_origin_for_availability_and_durations() -> None:
+    original: SchedulingProblem = make_problem()
+    origin: datetime = original.calendar.grid.horizon.start + timedelta(minutes=10)
+    grid: TimeGrid = TimeGrid(TimeInterval(origin, origin + timedelta(hours=4)), timedelta(minutes=30))
+    calendar: Calendar = Calendar(grid, (Availability(original.people[0].id, (grid.horizon,)),))
+    aligned: SchedulingProblem = replace(original, calendar=calendar)
+    assert AlignedToSlots().validate(aligned).is_empty
+    availability: Availability = Availability(original.people[0].id, (TimeInterval(origin + timedelta(minutes=1), grid.horizon.end),))
+    unaligned: SchedulingProblem = replace(aligned, calendar=replace(calendar, availabilities=(availability,)), tasks=(replace(original.tasks[0], duration=timedelta(minutes=15)),))
+    assert AlignedToSlots().validate(unaligned) == Violations((
+        Violation("Task t1 duration is not aligned to the time grid."),
+        Violation("Availability for person p1 start is not aligned to the time grid."),
     ))

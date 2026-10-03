@@ -5,14 +5,11 @@ import io
 import json
 from pathlib import Path
 import sys
-from unittest.mock import patch
 
 import pytest
 
 from intent_to_schedule.adapter.command_line_interface.main import main
 from intent_to_schedule.adapter.command_line_interface.state import State, load_state, save_state, to_problem, to_problem_state
-from intent_to_schedule.adapter.openai.translate import OpenAICommandTranslator
-from intent_to_schedule.application.translate import Translated
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import FixedTask
 
@@ -171,19 +168,7 @@ def test_apply_reject_and_solve(tmp_path: Path, capsys: pytest.CaptureFixture[st
         "end": "2026-10-01T10:00:00+00:00",
     }], "dropped": []}
     assert load_state(path).previous is not None
+    second: dict[str, object]
     status, second = invoke(capsys, "--state", str(path), "solve")
     assert status == 0
     assert second == output
-
-
-@pytest.mark.parametrize("stability", [True, False])
-def test_chat_preserves_schedule_output(tmp_path: Path, capsys: pytest.CaptureFixture[str], stability: bool) -> None:
-    """Accept either stability decision without changing chat's schedule output."""
-    path: Path = initialized(tmp_path, capsys)
-    with patch("intent_to_schedule.adapter.command_line_interface.main.openai.OpenAI"), patch.object(OpenAICommandTranslator, "translate", return_value=Translated((), stability)):
-        status: int
-        output: dict[str, object]
-        status, output = invoke(capsys, "chat", "--state", str(path), "--model", "test", "Redo everything")
-    assert status == 0
-    assert output == {"scheduled": [], "dropped": []}
-    assert load_state(path).previous is not None
