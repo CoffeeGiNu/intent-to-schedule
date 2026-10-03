@@ -227,3 +227,204 @@ def test_scheduling_execute_returns_merged_validator_rejection() -> None:
     assert first.problems == second.problems
     assert first.problems[0].tasks == (task("a"),)
     assert original.tasks == ()
+
+
+@pytest.mark.parametrize("relation_value", ["within", "avoid"])
+@pytest.mark.parametrize(
+    "strength", [None, Strength.WEAK, Strength.NORMAL, Strength.STRONG]
+)
+def test_add_time_constraint_builds_one_intrusion_and_delegates(
+    relation_value: str,
+    strength: Strength | None,
+) -> None:
+    from datetime import time
+    from unittest.mock import Mock
+
+    from intent_to_schedule.application.command import AddTimeConstraint
+    from intent_to_schedule.application.time_windows import (
+        Expansion,
+        TimeRange,
+        TimeRelation,
+        TimeWindow,
+    )
+    from intent_to_schedule.domain.evaluation import Intrusion
+    from intent_to_schedule.domain.measure import IntervalMeasure
+
+    original: SchedulingProblem = problem(replace(task("a"), required=False))
+    allowed: TimeInterval = TimeInterval(
+        START + timedelta(hours=1), START + timedelta(hours=2)
+    )
+    windows: tuple[TimeWindow, ...] = (
+        TimeWindow(None, None, TimeRange(time(10), time(11))),
+    )
+    command: AddTimeConstraint = AddTimeConstraint(
+        ConstraintId("time"),
+        TaskId("a"),
+        TimeRelation(relation_value),
+        windows,
+        strength,
+    )
+    expansion: Mock
+    delegation: Mock
+    with patch(
+        "intent_to_schedule.application.command.expand",
+        return_value=Expansion((allowed,), True),
+    ) as expansion:
+        with patch.object(
+            AddConstraint, "execute", autospec=True, return_value=Executed(original)
+        ) as delegation:
+            assert command.execute(original) == Executed(original)
+    expansion.assert_called_once_with(windows, command.relation, original.calendar.grid)
+    added: AddConstraint = delegation.call_args.args[0]
+    assert delegation.call_args.args[1] is original
+    region: tuple[TimeInterval, ...] = (
+        (
+            TimeInterval(START, allowed.start),
+            TimeInterval(allowed.end, original.calendar.grid.horizon.end),
+        )
+        if relation_value == "within"
+        else (allowed,)
+    )
+    assert added.constraint.measure == IntervalMeasure(TaskId("a"))
+    assert added.constraint.evaluation == Intrusion(region)
+    assert added.constraint.id == command.constraint_id
+    assert isinstance(
+        added.constraint, HardConstraint if strength is None else SoftConstraint
+    )
+    if isinstance(added.constraint, SoftConstraint):
+        assert added.constraint.strength is strength
+    assert original.constraints == ()
+    assert not original.tasks[0].required
+
+
+@pytest.mark.parametrize("relation_value", ["within", "avoid"])
+def test_add_time_constraint_rejects_empty_windows_with_actionable_message(
+    relation_value: str,
+) -> None:
+    from intent_to_schedule.application.command import AddTimeConstraint
+    from intent_to_schedule.application.time_windows import TimeRelation
+
+    command: AddTimeConstraint = AddTimeConstraint(
+        ConstraintId("time"), TaskId("a"), TimeRelation(relation_value), (), None
+    )
+    result: Executed | Rejected = command.execute(problem(task("a")))
+    assert isinstance(result, Rejected)
+    message: str = result.violations.items[0].message
+    assert "task a" in message
+    assert relation_value in message
+    assert "horizon" in message
+
+
+def test_add_time_constraint_rejects_windows_removed_by_rounding() -> None:
+    from datetime import time
+
+    from intent_to_schedule.application.command import AddTimeConstraint
+    from intent_to_schedule.application.time_windows import (
+        TimeRange,
+        TimeRelation,
+        TimeWindow,
+    )
+
+    command: AddTimeConstraint = AddTimeConstraint(
+        ConstraintId("time"),
+        TaskId("a"),
+        TimeRelation.WITHIN,
+        (TimeWindow(None, None, TimeRange(time(9, 5), time(9, 10))),),
+        None,
+    )
+    with patch.object(TimeGrid, "round_inward", return_value=None):
+        result: Executed | Rejected = command.execute(problem(task("a")))
+    assert isinstance(result, Rejected)
+    message: str = result.violations.items[0].message
+    assert "task a" in message
+    assert "slot" in message and "within" in message
+
+
+def test_add_time_constraint_delegates_duplicate_id_rejection() -> None:
+    from intent_to_schedule.application.command import AddTimeConstraint
+    from intent_to_schedule.application.time_windows import (
+        Expansion,
+        TimeRelation,
+        TimeWindow,
+    )
+
+    existing: HardConstraint = HardConstraint(
+        ConstraintId("time"), PointMeasure(TaskId("a")), Distance(START)
+    )
+    original: SchedulingProblem = problem(task("a"), constraints=(existing,))
+    command: AddTimeConstraint = AddTimeConstraint(
+        existing.id,
+        TaskId("a"),
+        TimeRelation.AVOID,
+        (TimeWindow(None, None, None),),
+        None,
+    )
+    with patch(
+        "intent_to_schedule.application.command.expand",
+        return_value=Expansion((original.calendar.grid.horizon,), False),
+    ):
+        result: Executed | Rejected = command.execute(original)
+    assert result == AddConstraint(existing).execute(original)
+    assert original.constraints == (existing,)
+
+
+def test_add_time_constraint_accepts_whole_horizon_with_empty_complement() -> None:
+    from intent_to_schedule.application.command import AddTimeConstraint
+    from intent_to_schedule.application.time_windows import (
+        Expansion,
+        TimeRelation,
+        TimeWindow,
+    )
+    from intent_to_schedule.domain.evaluation import Intrusion
+
+    original: SchedulingProblem = problem(task("a"))
+    command: AddTimeConstraint = AddTimeConstraint(
+        ConstraintId("time"),
+        TaskId("a"),
+        TimeRelation.WITHIN,
+        (TimeWindow(None, None, None),),
+        None,
+    )
+    with patch(
+        "intent_to_schedule.application.command.expand",
+        return_value=Expansion((original.calendar.grid.horizon,), False),
+    ):
+        result: Executed | Rejected = command.execute(original)
+    assert isinstance(result, Executed)
+    assert len(result.problem.constraints) == 1
+    assert result.problem.constraints[0].evaluation == Intrusion(())
+
+
+@pytest.mark.parametrize("relation_value", ["within", "avoid"])
+def test_add_time_constraint_real_grid_creates_expected_region(
+    relation_value: str,
+) -> None:
+    from datetime import time
+
+    from intent_to_schedule.application.command import AddTimeConstraint
+    from intent_to_schedule.application.time_windows import (
+        TimeRange,
+        TimeRelation,
+        TimeWindow,
+    )
+    from intent_to_schedule.domain.evaluation import Intrusion
+
+    original: SchedulingProblem = problem(task("a"))
+    command: AddTimeConstraint = AddTimeConstraint(
+        ConstraintId("time"),
+        TaskId("a"),
+        TimeRelation(relation_value),
+        (TimeWindow(None, None, TimeRange(time(9, 10), time(10, 10))),),
+        None,
+    )
+    result: Executed | Rejected = command.execute(original)
+    assert isinstance(result, Executed)
+    region: tuple[TimeInterval, ...] = (
+        (
+            TimeInterval(START, START + timedelta(minutes=30)),
+            TimeInterval(START + timedelta(hours=1), START + timedelta(days=1)),
+        )
+        if relation_value == "within"
+        else (TimeInterval(START, START + timedelta(minutes=90)),)
+    )
+    assert result.problem.constraints[0].evaluation == Intrusion(region)
