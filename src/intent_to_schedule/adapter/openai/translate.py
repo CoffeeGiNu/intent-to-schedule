@@ -7,9 +7,9 @@ import openai
 from intent_to_schedule.adapter.data_model import CommandData, DataModel, QueryData
 from intent_to_schedule.application.query import Summary
 from intent_to_schedule.application.translate import (
-    CommandTranslator,
+    Step,
     StepRecord,
-    TranslateResult,
+    StepTranslator,
     Utterance,
 )
 
@@ -49,7 +49,7 @@ class StepOutput(DataModel):
     result: QueryOutput | ApplyOutput | SolveOutput | MessageOutput
 
 
-def convert_step_output(output: StepOutput) -> TranslateResult:
+def convert_step_output(output: StepOutput) -> Step:
     """Convert structured output to a translation step."""
     raise NotImplementedError
 
@@ -92,8 +92,8 @@ _CONSTRAINT_PROMPT: str = (
 )
 
 
-class OpenAICommandTranslator(CommandTranslator):
-    """CommandTranslator backed by the OpenAI API."""
+class OpenAIStepTranslator(StepTranslator):
+    """StepTranslator backed by the OpenAI API."""
 
     def __init__(
         self,
@@ -110,6 +110,6 @@ class OpenAICommandTranslator(CommandTranslator):
         dialogue: Sequence[Utterance],
         summary: Summary,
         steps: Sequence[StepRecord],
-    ) -> TranslateResult:
+    ) -> Step:
         """Choose the next step for the latest utterance."""
         raise NotImplementedError

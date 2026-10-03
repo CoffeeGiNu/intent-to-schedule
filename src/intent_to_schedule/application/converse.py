@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import SolveResult
 from intent_to_schedule.application.translate import (
-    CommandTranslator,
+    StepTranslator,
     MessageStep,
     Utterance,
 )
@@ -30,8 +30,8 @@ class Response:
 class Conversation:
     """Use case that handles one turn of a conversation."""
 
-    def __init__(self, translator: CommandTranslator, scheduling: Scheduling) -> None:
-        self._translator: CommandTranslator = translator
+    def __init__(self, translator: StepTranslator, scheduling: Scheduling) -> None:
+        self._translator: StepTranslator = translator
         self._scheduling: Scheduling = scheduling
 
     def respond(

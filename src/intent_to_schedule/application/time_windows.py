@@ -27,7 +27,18 @@ class TimeRange:
     """Times of day from start up to but not including end."""
 
     start: time
-    end: time
+    end: time | None
+    """End time, or None for the end of the day."""
+
+    def __post_init__(self) -> None:
+        if self.start.tzinfo is not None or (
+            self.end is not None and self.end.tzinfo is not None
+        ):
+            raise ValueError("Time range times must not have a time zone.")
+        if self.end is not None and self.end <= self.start:
+            raise ValueError(
+                "Time range end must be after start; use null for the end of the day."
+            )
 
 
 @dataclass(frozen=True)

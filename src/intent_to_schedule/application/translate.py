@@ -55,7 +55,7 @@ class MessageStep:
     text: str
 
 
-type TranslateResult = QueryStep | ApplyStep | SolveStep | MessageStep
+type Step = QueryStep | ApplyStep | SolveStep | MessageStep
 """Next step chosen for an utterance."""
 
 
@@ -79,7 +79,7 @@ type StepRecord = QueryRecord | ApplyRecord
 """Step taken earlier in the turn and its result."""
 
 
-class CommandTranslator(Protocol):
+class StepTranslator(Protocol):
     """Port that translates utterances into steps."""
 
     def translate(
@@ -87,6 +87,6 @@ class CommandTranslator(Protocol):
         dialogue: Sequence[Utterance],
         summary: Summary,
         steps: Sequence[StepRecord],
-    ) -> TranslateResult:
+    ) -> Step:
         """Choose the next step for the latest utterance."""
         ...

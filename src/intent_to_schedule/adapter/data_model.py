@@ -108,7 +108,7 @@ class TimeRangeData(DataModel):
     """JSON form of TimeRange."""
 
     start: time
-    end: time
+    end: time | None
 
 
 class TimeWindowData(DataModel):
