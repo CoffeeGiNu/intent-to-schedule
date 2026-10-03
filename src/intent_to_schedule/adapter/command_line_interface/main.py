@@ -71,27 +71,30 @@ class JsonParser(argparse.ArgumentParser):
 
 COMMANDS: dict[str, tuple[str, str]] = {
     "init": (
-        "Create the state from a calendar JSON",
-        "The calendar JSON holds horizon, slot, people, availabilities, and fixed_tasks.",
+        "Create state from a calendar JSON file",
+        "Initializes the problem and clears the previous schedule and dialogue.",
     ),
     "show": (
-        "Print the state",
-        "The state holds the problem with IDs, the previous schedule, and the dialogue.",
+        "Print the complete state",
+        "Includes the problem, previous schedule, and dialogue.",
     ),
     "schema": ("Print the JSON Schema of the apply or query input", ""),
     "apply": (
         "Apply a batch of commands",
-        "Reads commands JSON (see `schema`) from --file or stdin and prints the IDs it created. "
-        "Add Tasks first, then reference their IDs in constraints. Exits 1 if rejected; the state is left unchanged.",
+        "Reads JSON from --file or standard input; see `schema apply`. "
+        "Prints created identifiers and any time window rounding note. "
+        "Exits 1 on rejection without saving changes.",
     ),
     "query": (
-        "Query the current problem and previous schedule",
-        "Reads query JSON (see `schema query`) from --file or stdin and prints the answer. "
-        "Exits 1 if rejected.",
+        "Read a summary, records, or available start times",
+        "Reads JSON from --file or standard input; see `schema query`. "
+        "Listing limit defaults to 20, with a maximum of 100. Exits 1 on rejection.",
     ),
     "solve": ("Solve the problem and store the schedule", "Exits 2 if infeasible."),
     "chat": (
-        "Translate an utterance with the OpenAI API, then apply and solve",
+        "Run a demonstration conversation turn with OpenAI",
+        "Uses query, apply, solve, or message steps, with a limit of 12. "
+        "Saves problem changes only on solve. "
         "Reads OPENAI_API_KEY and OPENAI_BASE_URL from the environment.",
     ),
     "help": ("Print this message or the help of the given subcommand", ""),
@@ -103,7 +106,7 @@ def parser() -> JsonParser:
     root: JsonParser = JsonParser(
         prog="intent-to-schedule",
         usage="%(prog)s [OPTIONS] <COMMAND>",
-        description="Apply scheduling commands to a stored problem and solve it. Every command prints one JSON document.",
+        description="Query a stored scheduling problem, apply commands, and solve it. Results are JSON; help is text.",
         add_help=False,
     )
     root._optionals.title = "Options"
@@ -149,7 +152,7 @@ def parser() -> JsonParser:
                     "--file",
                     type=Path,
                     metavar="<FILE>",
-                    help="Commands JSON file [default: stdin]",
+                    help="Read commands from this JSON file [default: standard input]",
                 )
             case "schema":
                 command.add_argument(
@@ -158,14 +161,14 @@ def parser() -> JsonParser:
                     choices=("apply", "query"),
                     default="apply",
                     metavar="<COMMAND>",
-                    help="Input command [default: apply]",
+                    help="Print the input schema for this command [default: apply]",
                 )
             case "query":
                 command.add_argument(
                     "--file",
                     type=Path,
                     metavar="<FILE>",
-                    help="Query JSON file [default: stdin]",
+                    help="Read a query from this JSON file [default: standard input]",
                 )
             case "solve":
                 command.add_argument(
@@ -174,12 +177,14 @@ def parser() -> JsonParser:
                     help="Ignore the previous schedule and solve from scratch",
                 )
             case "chat":
-                command.add_argument("text", metavar="<TEXT>", help="Utterance")
+                command.add_argument(
+                    "text", metavar="<TEXT>", help="Scheduling request or question"
+                )
                 command.add_argument(
                     "--model",
                     required=True,
                     metavar="<MODEL>",
-                    help="Model name, e.g. openai/gpt-5-mini",
+                    help="Model name accepted by the configured OpenAI service",
                 )
                 command.add_argument(
                     "--now",
