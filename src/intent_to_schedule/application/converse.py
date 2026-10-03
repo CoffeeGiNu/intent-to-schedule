@@ -1,11 +1,20 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from intent_to_schedule.application.command import Executed, ExecuteResult
+from intent_to_schedule.application.query import AnswerResult, Summary, summarize
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import SolveResult
 from intent_to_schedule.application.translate import (
-    StepTranslator,
+    ApplyRecord,
+    ApplyStep,
     MessageStep,
+    QueryRecord,
+    QueryStep,
+    SolveStep,
+    Step,
+    StepRecord,
+    StepTranslator,
     Utterance,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -40,4 +49,27 @@ class Conversation:
         problem: SchedulingProblem,
         previous: Schedule | None,
     ) -> Response:
-        raise NotImplementedError
+        """Run translation steps until a reply, solve, or step limit."""
+        working: SchedulingProblem = problem
+        steps: list[StepRecord] = []
+        for _ in range(STEP_LIMIT):
+            summary: Summary = summarize(working, previous)
+            step: Step = self._translator.translate(dialogue, summary, tuple(steps))
+            if isinstance(step, QueryStep):
+                answer: AnswerResult = step.query.answer(working, previous)
+                steps.append(QueryRecord(step, answer))
+            elif isinstance(step, ApplyStep):
+                result: ExecuteResult = self._scheduling.execute(working, step.commands)
+                steps.append(ApplyRecord(step, result))
+                if isinstance(result, Executed):
+                    working = result.problem
+            elif isinstance(step, SolveStep):
+                return Response(
+                    working,
+                    self._scheduling.solve(
+                        working, previous if step.stability else None
+                    ),
+                )
+            else:
+                return Response(problem, step)
+        return Response(problem, Exhausted())

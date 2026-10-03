@@ -1,7 +1,7 @@
 from calendar import Day
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
@@ -34,10 +34,15 @@ class TimeRange:
         if self.start.tzinfo is not None or (
             self.end is not None and self.end.tzinfo is not None
         ):
-            raise ValueError("Time range times must not have a time zone.")
+            raise ValueError(
+                f"Time range start {self.start.isoformat()} and end "
+                f"{self.end.isoformat() if self.end is not None else 'null'} "
+                "must be times without a time zone."
+            )
         if self.end is not None and self.end <= self.start:
             raise ValueError(
-                "Time range end must be after start; use null for the end of the day."
+                f"Time range end {self.end.isoformat()} must be after start "
+                f"{self.start.isoformat()}; use null for the end of the day."
             )
 
 
@@ -66,18 +71,98 @@ def window_times(
     windows: Sequence[TimeWindow], horizon: TimeInterval
 ) -> tuple[TimeInterval, ...]:
     """Times in the horizon covered by any window, merged into disjoint intervals."""
-    raise NotImplementedError
+    offset: timedelta | None = horizon.start.utcoffset()
+    calendar_timezone: timezone | None = (
+        timezone(offset) if offset is not None else None
+    )
+    horizon_start: datetime = (
+        horizon.start.astimezone(calendar_timezone)
+        if calendar_timezone is not None
+        else horizon.start
+    )
+    horizon_end: datetime = (
+        horizon.end.astimezone(calendar_timezone)
+        if calendar_timezone is not None
+        else horizon.end
+    )
+    intervals: list[TimeInterval] = []
+    window: TimeWindow
+    for window in windows:
+        current: date = horizon_start.date()
+        if window.date_range is not None:
+            current = max(current, window.date_range.start)
+        while current <= horizon_end.date():
+            if window.date_range is not None and current >= window.date_range.end:
+                break
+            following: date = current + timedelta(days=1)
+            if window.weekdays is None or Day(current.weekday()) in window.weekdays:
+                start: datetime = datetime.combine(
+                    current,
+                    window.time_range.start
+                    if window.time_range is not None
+                    else time.min,
+                    calendar_timezone,
+                )
+                end: datetime = (
+                    datetime.combine(current, window.time_range.end, calendar_timezone)
+                    if window.time_range is not None
+                    and window.time_range.end is not None
+                    else datetime.combine(following, time.min, calendar_timezone)
+                )
+                intervals.append(TimeInterval(start, end))
+            current = following
+    return _merge(intervals, horizon)
 
 
 def expand(
     windows: Sequence[TimeWindow], relation: TimeRelation, grid: TimeGrid
 ) -> Expansion:
     """Merge windows and round them to slots in the direction the relation needs."""
-    raise NotImplementedError
+    times: tuple[TimeInterval, ...] = window_times(windows, grid.horizon)
+    intervals: list[TimeInterval] = []
+    interval: TimeInterval
+    for interval in times:
+        aligned: TimeInterval | None = (
+            grid.round_inward(interval)
+            if relation is TimeRelation.WITHIN
+            else grid.round_outward(interval)
+        )
+        if aligned is not None:
+            intervals.append(aligned)
+    merged: tuple[TimeInterval, ...] = _merge(intervals, grid.horizon)
+    return Expansion(merged, merged != times)
 
 
 def complement(
     intervals: Sequence[TimeInterval], horizon: TimeInterval
 ) -> tuple[TimeInterval, ...]:
     """Times in the horizon outside the intervals."""
-    raise NotImplementedError
+    merged: tuple[TimeInterval, ...] = _merge(intervals, horizon)
+    gaps: list[TimeInterval] = []
+    start: datetime = horizon.start
+    interval: TimeInterval
+    for interval in merged:
+        if start < interval.start:
+            gaps.append(TimeInterval(start, interval.start))
+        start = interval.end
+    if start < horizon.end:
+        gaps.append(TimeInterval(start, horizon.end))
+    return tuple(gaps)
+
+
+def _merge(
+    intervals: Sequence[TimeInterval], horizon: TimeInterval
+) -> tuple[TimeInterval, ...]:
+    """Clip intervals to the horizon and merge overlapping or adjacent times."""
+    merged: list[TimeInterval] = []
+    interval: TimeInterval
+    for interval in sorted(intervals, key=lambda item: item.start):
+        start: datetime = max(interval.start, horizon.start)
+        end: datetime = min(interval.end, horizon.end)
+        if start >= end:
+            continue
+        if merged and start <= merged[-1].end:
+            merged[-1] = TimeInterval(merged[-1].start, max(merged[-1].end, end))
+        else:
+            merged.append(TimeInterval(start, end))
+    return tuple(merged)

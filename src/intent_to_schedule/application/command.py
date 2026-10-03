@@ -1,10 +1,23 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from intent_to_schedule.application.time_windows import TimeRelation, TimeWindow
+from intent_to_schedule.application.time_windows import (
+    Expansion,
+    TimeRelation,
+    TimeWindow,
+    complement,
+    expand,
+)
+from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.consistency import Violation, Violations
-from intent_to_schedule.domain.constraint import Constraint, ConstraintId
-from intent_to_schedule.domain.measure import Measure
+from intent_to_schedule.domain.constraint import (
+    Constraint,
+    ConstraintId,
+    HardConstraint,
+    SoftConstraint,
+)
+from intent_to_schedule.domain.evaluation import Intrusion
+from intent_to_schedule.domain.measure import IntervalMeasure, Measure
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Task, TaskId
@@ -142,7 +155,31 @@ class AddTimeConstraint:
     """Strength of a soft constraint, or None for a hard constraint."""
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
-        raise NotImplementedError
+        grid: TimeGrid = problem.calendar.grid
+        expansion: Expansion = expand(self.windows, self.relation, grid)
+        if not expansion.intervals:
+            covered: str = (
+                "whole slot" if self.relation is TimeRelation.WITHIN else "time"
+            )
+            message: str = (
+                f"Time constraint on task {self.task_id.value}: the {self.relation.value} windows "
+                f"cover no {covered} of the calendar horizon {grid.horizon.start.isoformat()} to "
+                f"{grid.horizon.end.isoformat()} (slot {grid.slot}); widen or move the windows."
+            )
+            return Rejected(Violations((Violation(message),)))
+        region: tuple[TimeInterval, ...] = (
+            complement(expansion.intervals, grid.horizon)
+            if self.relation is TimeRelation.WITHIN
+            else expansion.intervals
+        )
+        measure: IntervalMeasure = IntervalMeasure(self.task_id)
+        evaluation: Intrusion = Intrusion(region)
+        constraint: Constraint = (
+            HardConstraint(self.constraint_id, measure, evaluation)
+            if self.strength is None
+            else SoftConstraint(self.constraint_id, measure, evaluation, self.strength)
+        )
+        return AddConstraint(constraint).execute(problem)
 
 
 @dataclass(frozen=True)

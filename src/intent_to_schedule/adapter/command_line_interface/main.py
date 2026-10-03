@@ -14,8 +14,10 @@ from intent_to_schedule.adapter.command_line_interface.state import (
     CalendarInput,
     ProblemState,
     State,
+    UtteranceState,
     load_state,
     save_state,
+    to_dialogue,
     to_problem,
     to_problem_state,
     to_schedule,
@@ -25,18 +27,24 @@ from intent_to_schedule.adapter.data_model import (
     CommandsData,
     FixedTaskData,
     QueryData,
+    answer_record,
     command_record,
     convert_commands_input,
+    convert_query,
 )
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
+from intent_to_schedule.adapter.openai.translate import OpenAIStepTranslator
 from intent_to_schedule.application.command import (
     Executed,
     Rejected,
     SchedulingCommand,
 )
+from intent_to_schedule.application.converse import Conversation, Exhausted, Response
 from intent_to_schedule.application.policy import DEFAULT_POLICY
+from intent_to_schedule.application.query import AnswerResult, SchedulingQuery
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import Infeasible, Solved
+from intent_to_schedule.application.translate import MessageStep
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
     AllOf,
@@ -277,7 +285,23 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
 
 def query(path: Path, input_path: Path | None) -> int:
     """Answer a JSON query about the current problem and previous schedule."""
-    raise NotImplementedError
+    state: State = load_state(path)
+    source: str = (
+        input_path.read_text(encoding="utf-8")
+        if input_path is not None
+        else sys.stdin.read()
+    )
+    adapter: TypeAdapter[QueryData] = TypeAdapter(
+        Annotated[QueryData, Field(discriminator="kind")]
+    )
+    request: SchedulingQuery = convert_query(adapter.validate_json(source))
+    problem: SchedulingProblem = to_problem(state.problem)
+    previous: Schedule | None = to_schedule(state.previous)
+    result: AnswerResult = request.answer(problem, previous)
+    if isinstance(result, Rejected):
+        return reject(result.violations)
+    emit(answer_record(result.answer))
+    return 0
 
 
 def schedule_output(
@@ -327,7 +351,52 @@ def chat(
     service: Scheduling,
 ) -> int:
     """Handle an utterance with the OpenAI API."""
-    raise NotImplementedError
+    state: State = load_state(path)
+    dialogue: tuple[UtteranceState, ...] = (
+        *state.dialogue,
+        UtteranceState(speaker="user", text=text),
+    )
+    problem: SchedulingProblem = to_problem(state.problem)
+    current: datetime = now if now is not None else problem.calendar.grid.horizon.start
+    conversation: Conversation = Conversation(
+        OpenAIStepTranslator(openai.OpenAI(), model, lambda: current), service
+    )
+    response: Response = conversation.respond(
+        to_dialogue(dialogue), problem, to_schedule(state.previous)
+    )
+    updates: dict[str, object] = {}
+    assistant_text: str
+    output: dict[str, object]
+    status: int
+    message: str
+    schedule: Schedule
+    match response.outcome:
+        case MessageStep(text=message):
+            assistant_text = message
+            output = {"message": message}
+            status = 0
+        case Exhausted():
+            assistant_text = "Step limit reached."
+            output = {"exhausted": True}
+            status = 1
+        case Infeasible():
+            updates["problem"] = to_problem_state(response.problem)
+            assistant_text = "Infeasible."
+            output = {"infeasible": True}
+            status = 2
+        case Solved(schedule=schedule):
+            updates["problem"] = to_problem_state(response.problem)
+            updates["previous"] = to_schedule_state(schedule)
+            assistant_text = "Scheduled."
+            output = schedule_output(response.problem, schedule)
+            status = 0
+    updates["dialogue"] = (
+        *dialogue,
+        UtteranceState(speaker="assistant", text=assistant_text),
+    )
+    save_state(path, state.model_copy(update=updates))
+    emit(output)
+    return status
 
 
 def main(argv: list[str] | None = None) -> int:

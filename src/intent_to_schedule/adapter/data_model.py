@@ -1,3 +1,5 @@
+from calendar import Day
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from typing import Annotated, Literal
 
@@ -7,7 +9,9 @@ from pydantic import (
     Field,
     PlainSerializer,
     PlainValidator,
+    TypeAdapter,
     WithJsonSchema,
+    model_validator,
 )
 
 from intent_to_schedule.application.command import (
@@ -19,8 +23,31 @@ from intent_to_schedule.application.command import (
     ReplaceTask,
     SchedulingCommand,
 )
-from intent_to_schedule.application.query import Answer, SchedulingQuery
-from intent_to_schedule.application.time_windows import TimeRelation, TimeWindow
+from intent_to_schedule.application.query import (
+    Answer,
+    AvailableStartsAnswer,
+    AvailableStartsQuery,
+    ConstraintsAnswer,
+    ConstraintsQuery,
+    PeopleAnswer,
+    PeopleQuery,
+    PreviousScheduleAnswer,
+    PreviousScheduleQuery,
+    SchedulingQuery,
+    Summary,
+    SummaryQuery,
+    TasksAnswer,
+    TasksQuery,
+    TaskType,
+)
+from intent_to_schedule.application.time_windows import (
+    DateRange,
+    Expansion,
+    TimeRange,
+    TimeRelation,
+    TimeWindow,
+    expand,
+)
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.constraint import (
     Constraint,
@@ -44,6 +71,7 @@ from intent_to_schedule.domain.measure import (
     PointMeasure,
 )
 from intent_to_schedule.domain.person import PersonId
+from intent_to_schedule.domain.schedule import ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
@@ -83,6 +111,14 @@ type ConstraintIdField = Annotated[
 ]
 """Constraint ID encoded as a JSON string."""
 
+type TimeOfDayField = Annotated[
+    time,
+    WithJsonSchema(
+        {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$"}
+    ),
+]
+"""Time of day without a UTC offset, encoded as HH:MM or HH:MM:SS."""
+
 
 class DataModel(BaseModel):
     """Base of the JSON data models."""
@@ -107,8 +143,14 @@ class DateRangeData(DataModel):
 class TimeRangeData(DataModel):
     """JSON form of TimeRange."""
 
-    start: time
-    end: time | None
+    start: TimeOfDayField
+    end: TimeOfDayField | None
+
+    @model_validator(mode="after")
+    def validate_times(self) -> "TimeRangeData":
+        """Validate the times of day."""
+        TimeRange(self.start, self.end)
+        return self
 
 
 class TimeWindowData(DataModel):
@@ -413,34 +455,44 @@ class PeopleQueryData(DataModel):
     """JSON form of PeopleQuery."""
 
     kind: Literal["people"]
-    filter: PeopleFilterData
+    filter: PeopleFilterData = Field(default_factory=PeopleFilterData)
     select: Literal["all", "one"] = "all"
-    limit: int = Field(20, ge=1, le=100)
+    limit: int = Field(
+        20, description="Limit from 1 to 100; out-of-range values are rejected."
+    )
 
 
 class TasksQueryData(DataModel):
     """JSON form of TasksQuery."""
 
     kind: Literal["tasks"]
-    filter: TasksFilterData
+    filter: TasksFilterData = Field(default_factory=TasksFilterData)
     select: Literal["all", "one"] = "all"
-    limit: int = Field(20, ge=1, le=100)
+    limit: int = Field(
+        20, description="Limit from 1 to 100; out-of-range values are rejected."
+    )
 
 
 class ConstraintsQueryData(DataModel):
     """JSON form of ConstraintsQuery."""
 
     kind: Literal["constraints"]
-    filter: ConstraintsFilterData
-    limit: int = Field(20, ge=1, le=100)
+    filter: ConstraintsFilterData = Field(default_factory=ConstraintsFilterData)
+    limit: int = Field(
+        20, description="Limit from 1 to 100; out-of-range values are rejected."
+    )
 
 
 class PreviousScheduleQueryData(DataModel):
     """JSON form of PreviousScheduleQuery."""
 
     kind: Literal["previous_schedule"]
-    filter: PreviousScheduleFilterData
-    limit: int = Field(20, ge=1, le=100)
+    filter: PreviousScheduleFilterData = Field(
+        default_factory=PreviousScheduleFilterData
+    )
+    limit: int = Field(
+        20, description="Limit from 1 to 100; out-of-range values are rejected."
+    )
 
 
 class AvailableStartsQueryData(DataModel):
@@ -450,7 +502,9 @@ class AvailableStartsQueryData(DataModel):
     participant_ids: tuple[PersonIdField, ...]
     duration: timedelta
     windows: tuple[TimeWindowData, ...] | None = None
-    limit: int = Field(20, ge=1, le=100)
+    limit: int = Field(
+        20, description="Limit from 1 to 100; out-of-range values are rejected."
+    )
 
 
 type QueryData = (
@@ -466,12 +520,78 @@ type QueryData = (
 
 def convert_query(data: QueryData) -> SchedulingQuery:
     """Convert a structured scheduling query."""
-    raise NotImplementedError
+    match data:
+        case SummaryQueryData():
+            return SummaryQuery()
+        case PeopleQueryData():
+            return PeopleQuery(
+                frozenset(data.filter.person_ids)
+                if data.filter.person_ids is not None
+                else None,
+                data.filter.name_equals,
+                data.select == "one",
+                data.limit,
+            )
+        case TasksQueryData():
+            return TasksQuery(
+                frozenset(data.filter.task_ids)
+                if data.filter.task_ids is not None
+                else None,
+                TaskType(data.filter.type) if data.filter.type is not None else None,
+                data.filter.name_equals,
+                frozenset(data.filter.participant_ids_all)
+                if data.filter.participant_ids_all is not None
+                else None,
+                TimeInterval(data.filter.start_range.start, data.filter.start_range.end)
+                if data.filter.start_range is not None
+                else None,
+                data.select == "one",
+                data.limit,
+            )
+        case ConstraintsQueryData():
+            return ConstraintsQuery(
+                frozenset(data.filter.constraint_ids)
+                if data.filter.constraint_ids is not None
+                else None,
+                frozenset(data.filter.task_ids)
+                if data.filter.task_ids is not None
+                else None,
+                data.limit,
+            )
+        case PreviousScheduleQueryData():
+            return PreviousScheduleQuery(
+                frozenset(data.filter.task_ids)
+                if data.filter.task_ids is not None
+                else None,
+                TimeInterval(data.filter.start_range.start, data.filter.start_range.end)
+                if data.filter.start_range is not None
+                else None,
+                data.limit,
+            )
+        case AvailableStartsQueryData():
+            return AvailableStartsQuery(
+                frozenset(data.participant_ids),
+                data.duration,
+                tuple(convert_time_window(window) for window in data.windows)
+                if data.windows is not None
+                else None,
+                data.limit,
+            )
 
 
 def convert_time_window(data: TimeWindowData) -> TimeWindow:
     """Convert a structured time window."""
-    raise NotImplementedError
+    return TimeWindow(
+        DateRange(data.date_range.start, data.date_range.end)
+        if data.date_range is not None
+        else None,
+        frozenset(Day[weekday.upper()] for weekday in data.weekdays)
+        if data.weekdays is not None
+        else None,
+        TimeRange(data.time_range.start, data.time_range.end)
+        if data.time_range is not None
+        else None,
+    )
 
 
 def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]:
@@ -490,15 +610,114 @@ def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]
         case AddConstraint(constraint=constraint):
             return {"kind": "add_constraint", "constraint_id": constraint.id.value}
         case AddTimeConstraint():
-            # Record the constraint ID and a slot-rounding note from expand(...).rounded.
-            raise NotImplementedError
+            expansion: Expansion = expand(command.windows, command.relation, grid)
+            record: dict[str, str] = {
+                "kind": "add_time_constraint",
+                "constraint_id": command.constraint_id.value,
+            }
+            if expansion.rounded:
+                direction: str = (
+                    "inward" if command.relation is TimeRelation.WITHIN else "outward"
+                )
+                record["note"] = (
+                    f"Window times were rounded {direction} to calendar slots."
+                )
+            return record
         case RemoveConstraint(constraint_id=constraint_id):
             return {"kind": "remove_constraint", "constraint_id": constraint_id.value}
 
 
 def answer_record(answer: Answer) -> dict[str, object]:
     """Convert a query answer to its JSON record."""
-    raise NotImplementedError
+    if isinstance(answer, Summary):
+        return {
+            "kind": "summary",
+            "grid": {
+                "horizon": to_time_interval_data(answer.grid.horizon).model_dump(
+                    mode="json"
+                ),
+                "slot": TypeAdapter(timedelta).dump_python(
+                    answer.grid.slot, mode="json"
+                ),
+            },
+            "counts": {
+                "people": answer.people,
+                "tasks": answer.tasks,
+                "fixed_tasks": answer.fixed_tasks,
+                "constraints": answer.constraints,
+            },
+            "has_previous": answer.has_previous,
+        }
+    record: dict[str, object] = {"total": answer.total, "truncated": answer.truncated}
+    match answer:
+        case PeopleAnswer():
+            record.update(
+                kind="people",
+                items=[
+                    PersonData(id=person.id, name=person.name).model_dump(mode="json")
+                    for person in answer.items
+                ],
+            )
+        case TasksAnswer():
+            record.update(
+                kind="tasks",
+                items=[
+                    (
+                        to_task_data(task)
+                        if isinstance(task, Task)
+                        else to_fixed_task_data(task)
+                    ).model_dump(mode="json")
+                    for task in answer.items
+                ],
+            )
+        case ConstraintsAnswer():
+            items: list[dict[str, object]] = []
+            constraint: Constraint
+            for constraint in answer.items:
+                item: dict[str, object]
+                if isinstance(constraint.evaluation, Intrusion):
+                    region: tuple[TimeInterval, ...] = constraint.evaluation.region
+                    shortened: Constraint = replace(
+                        constraint, evaluation=Intrusion(region[:3])
+                    )
+                    item = to_constraint_data(shortened).model_dump(mode="json")
+                    item["evaluation"] = {
+                        "kind": "intrusion",
+                        "region": {
+                            "items": [
+                                to_time_interval_data(interval).model_dump(mode="json")
+                                for interval in region[:3]
+                            ],
+                            "total": len(region),
+                            "truncated": len(region) > 3,
+                        },
+                    }
+                else:
+                    item = to_constraint_data(constraint).model_dump(mode="json")
+                items.append(item)
+            record.update(kind="constraints", items=items)
+        case PreviousScheduleAnswer():
+            record.update(
+                kind="previous_schedule",
+                has_previous=answer.has_previous,
+                items=[
+                    {
+                        "status": "scheduled",
+                        "task_id": item.task_id.value,
+                        "start": item.start.isoformat(),
+                    }
+                    if isinstance(item, ScheduledTask)
+                    else {"status": "dropped", "task_id": item.value}
+                    for item in answer.items
+                ],
+            )
+        case AvailableStartsAnswer():
+            record.update(
+                kind="available_starts",
+                items=[start.isoformat() for start in answer.items],
+                note="Movable Tasks and constraints are not considered; use solve for the final schedule.",
+            )
+    return {"kind": record["kind"], **record}
 
 
 def convert_command(data: CommandData) -> SchedulingCommand:
