@@ -101,7 +101,12 @@ _STEP_PROMPT: str = (
     "available_starts gives free candidates without movable tasks or constraints; solve makes the final decision. "
     "After adding a task, read its generated identifier from the executed result before referencing it in another apply. "
     "Rejected steps leave the working problem unchanged; use their explanations to correct the next step or ask the user. "
-    "Fixed tasks are existing events that cannot move, but constraints can reference them; make one movable by replacing it with a task of the same identifier. "
+    "A task with start is fixed; without start it is movable. "
+    "For absences or appointments missing from the calendar, such as a health check, half day off, external training, or dentist appointment, use add_task with name, start, duration, and participant_ids for that person. "
+    "A fixed task occupies its participants for both existing and future tasks; use remove_task to undo it. "
+    "Use replace_task with start and the same identifier to fix an existing task at that time; its constraints remain. "
+    "To make a fixed task movable, use replace_task without start and include importance, required, and stability. "
+    "Fixed tasks omit importance, required, and stability; constraints can reference them. "
     "Importance low, medium, or high means how much it matters to do the Task at all. "
     "Required means the Task must be scheduled, including expressions such as 絶対; this does not make its placement preferences hard. "
     "Stability means how strongly to keep the Task at its previous time. "
@@ -110,6 +115,8 @@ _STEP_PROMPT: str = (
     "Use hard for conditions that must hold if the task is scheduled; hard does not require scheduling the task. "
     "For soft preferences choose weak, normal, or strong strength. "
     "For time-of-day or weekday wishes use add_time_constraint with windows, rather than enumerating intervals or computing complements. "
+    "Pass a non-empty task_ids list and group Tasks sharing a condition in one add_time_constraint. "
+    "A multi-task interval intrusion sums each Task's overlap with the region; a hard condition excludes every Task from it. "
     "within keeps the whole task inside the windows; avoid prohibits or penalizes overlap. "
     "A window combines date_range, weekdays, and time_range; multiple windows are alternatives. "
     "Date ranges exclude the end date; null date_range means the whole horizon, null weekdays means all days, and null time_range means the whole day. "
@@ -120,7 +127,8 @@ _STEP_PROMPT: str = (
     "Other supported pairs: point with distance to an instant; interval with intrusion into a region; "
     "dependency with distance or shortfall of a duration from the end of from_task to the start of to_task; "
     "aggregate with excess per day using count or total_duration. "
-    "Task durations and explicit constraint times must align to the slot grid; ask instead of guessing. "
+    "Movable task durations and explicit constraint times must align to the slot grid; ask instead of guessing. "
+    "Fixed task starts and durations may fall between slot boundaries and occupy every slot they touch. "
 )
 
 _QUESTION_PROMPT: str = (

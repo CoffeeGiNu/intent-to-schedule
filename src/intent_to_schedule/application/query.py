@@ -368,6 +368,7 @@ class AvailableStartsQuery:
         return Answered(AvailableStartsAnswer(tuple(items[: self.limit]), len(items)))
 
 
+# TODO: consider a query for the requests as given (e.g. time windows before expansion), separate from ConstraintsQuery which returns expanded constraints; the requests are not stored yet.
 type SchedulingQuery = (
     SummaryQuery
     | PeopleQuery
