@@ -26,25 +26,24 @@ def compile_evaluation(
     evaluation: Evaluation,
     model: mathopt.Model,
     grid: TimeGrid,
-) -> mathopt.LinearExpression:
+) -> mathopt.LinearBase:
     """Build an evaluation expression from a measure expression and Evaluation."""
-    n: int = (grid.horizon.end - grid.horizon.start) // grid.slot
     hours_per_slot: float = grid.slot / timedelta(hours=1)
     placements: Mapping[int, mathopt.Variable]
     target: datetime | timedelta
-    occupancy: Mapping[int, mathopt.LinearExpression]
+    occupancy: Mapping[int, mathopt.LinearBase]
     region: tuple[TimeInterval, ...]
     dependency: DependencyExpression
     lower: timedelta
-    values: Mapping[date, mathopt.LinearExpression]
-    value: mathopt.LinearExpression
+    values: Mapping[date, mathopt.LinearBase]
+    value: mathopt.LinearBase
     upper: int | timedelta
 
     match expression, evaluation:
         case PointExpression(placements=placements), Distance(
             target=datetime() as target
         ):
-            target_slot: float = (target - grid.horizon.start) / grid.slot
+            target_slot: float = float(grid.index_of(target))
             return (
                 mathopt.LinearSum(
                     abs(start - target_slot) * variable
@@ -54,21 +53,21 @@ def compile_evaluation(
             )
         case IntervalExpression(occupancy=occupancy), Intrusion(region=region):
             region_slots: set[int] = {
-                k
+                slot_index
                 for interval in region
-                for k in range(n)
-                if interval.start <= grid.horizon.start + k * grid.slot
-                and grid.horizon.start + (k + 1) * grid.slot <= interval.end
+                for slot_index in range(grid.slot_count)
+                if interval.start <= grid.time_at(slot_index)
+                and grid.time_at(slot_index + 1) <= interval.end
             }
             return (
-                mathopt.LinearSum(occupancy[k] for k in region_slots) * hours_per_slot
+                mathopt.LinearSum(occupancy[slot_index] for slot_index in region_slots) * hours_per_slot
             )
         case DependencyExpression() as dependency, Distance(
             target=timedelta() as target
         ):
             target_slots: float = target / grid.slot
             bound: float = dependency.bound + abs(target_slots)
-            inactive: mathopt.LinearExpression = bound * (
+            inactive: mathopt.LinearBase = bound * (
                 2 - dependency.from_presence - dependency.to_presence
             )
             violation: mathopt.Variable = model.add_variable(lb=0.0)
@@ -84,7 +83,7 @@ def compile_evaluation(
         ):
             lower_slots: float = lower / grid.slot
             bound: float = dependency.bound + abs(lower_slots)
-            inactive: mathopt.LinearExpression = bound * (
+            inactive: mathopt.LinearBase = bound * (
                 2 - dependency.from_presence - dependency.to_presence
             )
             violation: mathopt.Variable = model.add_variable(lb=0.0)

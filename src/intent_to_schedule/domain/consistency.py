@@ -145,13 +145,13 @@ class AlignedToSlots:
         violations: list[Violation] = []
 
         def check_time(value: datetime, label: str) -> None:
-            if (value - grid.horizon.start) % grid.slot != timedelta(0):
+            if not grid.is_aligned(value):
                 violations.append(
                     Violation(f"{label} is not aligned to the time grid.")
                 )
 
         def check_duration(value: timedelta, label: str) -> None:
-            if value % grid.slot != timedelta(0):
+            if not grid.is_aligned(grid.horizon.start + value):
                 violations.append(
                     Violation(f"{label} is not aligned to the time grid.")
                 )

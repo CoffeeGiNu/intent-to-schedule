@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 
 from ortools.math_opt.python import mathopt
 
@@ -28,14 +28,14 @@ class PointExpression:
 class IntervalExpression:
     """Task occupancy for each slot."""
 
-    occupancy: Mapping[int, mathopt.LinearExpression]
+    occupancy: Mapping[int, mathopt.LinearBase]
 
 
 @dataclass(frozen=True)
 class DependencyExpression:
     """Task gap and the presences that activate it."""
 
-    gap: mathopt.LinearExpression
+    gap: mathopt.LinearBase
     from_presence: mathopt.Variable
     to_presence: mathopt.Variable
     bound: float
@@ -45,7 +45,7 @@ class DependencyExpression:
 class DailyVectorExpression:
     """Measured value for each calendar date."""
 
-    values: Mapping[date, mathopt.LinearExpression]
+    values: Mapping[date, mathopt.LinearBase]
     quantity: AggregateQuantity
 
 
@@ -53,13 +53,6 @@ type MeasureExpression = (
     PointExpression | IntervalExpression | DependencyExpression | DailyVectorExpression
 )
 """Measure built as MathOpt expressions."""
-
-
-def fixed_task_slots(task: FixedTask, grid: TimeGrid) -> tuple[int, int]:
-    """Round a fixed task outward to its start slot and duration."""
-    start: int = (task.start - grid.horizon.start) // grid.slot
-    end: int = -((grid.horizon.start - task.start - task.duration) // grid.slot)
-    return start, end - start
 
 
 def compile_measure(
@@ -72,16 +65,15 @@ def compile_measure(
 ) -> MeasureExpression:
     """Build a measure expression from a Measure."""
     del model
-    slot: timedelta = problem.calendar.grid.slot
-    horizon: TimeInterval = problem.calendar.grid.horizon
-    n: int = (horizon.end - horizon.start) // slot
+    grid: TimeGrid = problem.calendar.grid
     durations: dict[TaskId, int] = {
-        task.id: task.duration // slot for task in problem.tasks
+        task.id: grid.index_of(grid.horizon.start + task.duration) for task in problem.tasks
     }
-    durations.update(
-        (task.id, fixed_task_slots(task, problem.calendar.grid)[1])
-        for task in problem.fixed_tasks
-    )
+    task: FixedTask
+    rounded: TimeInterval
+    for task in problem.fixed_tasks:
+        rounded = grid.round_outward(TimeInterval(task.start, task.start + task.duration))
+        durations[task.id] = grid.index_of(rounded.end) - grid.index_of(rounded.start)
 
     match measure:
         case PointMeasure():
@@ -91,17 +83,18 @@ def compile_measure(
             occupied: dict[int, list[mathopt.Variable]] = {}
             start: int
             variable: mathopt.Variable
-            k: int
+            slot_index: int
             for start, variable in placements[measure.task_id].items():
-                for k in range(start, start + duration):
-                    occupied.setdefault(k, []).append(variable)
-            occupancy: dict[int, mathopt.LinearExpression] = {
-                k: mathopt.LinearSum(occupied.get(k, ())) for k in range(n)
+                for slot_index in range(start, start + duration):
+                    occupied.setdefault(slot_index, []).append(variable)
+            occupancy: dict[int, mathopt.LinearBase] = {
+                slot_index: mathopt.LinearSum(occupied.get(slot_index, ()))
+                for slot_index in range(grid.slot_count)
             }
             return IntervalExpression(occupancy)
         case DependencyMeasure():
             from_duration: int = durations[measure.from_task_id]
-            gap: mathopt.LinearExpression = (
+            gap: mathopt.LinearBase = (
                 starts[measure.to_task_id]
                 - starts[measure.from_task_id]
                 - from_duration * presences[measure.from_task_id]
@@ -125,8 +118,8 @@ def compile_measure(
                 gap, from_presence, presences[measure.to_task_id], bound
             )
         case AggregateMeasure():
-            dates: set[date] = {(horizon.start + k * slot).date() for k in range(n)}
-            values: dict[date, mathopt.LinearExpression] = {
+            dates: set[date] = {grid.time_at(slot_index).date() for slot_index in range(grid.slot_count)}
+            values: dict[date, mathopt.LinearBase] = {
                 day: mathopt.LinearSum(
                     (
                         1
@@ -136,7 +129,7 @@ def compile_measure(
                     * variable
                     for task_id in measure.task_ids
                     for start, variable in placements[task_id].items()
-                    if (horizon.start + start * slot).date() == day
+                    if grid.time_at(start).date() == day
                 )
                 for day in dates
             }

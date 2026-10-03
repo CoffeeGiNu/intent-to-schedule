@@ -55,8 +55,7 @@ class MathOptSchedulingSolver(SchedulingSolver):
                         scheduled.append(
                             ScheduledTask(
                                 task.id,
-                                problem.calendar.grid.horizon.start
-                                + start * problem.calendar.grid.slot,
+                                problem.calendar.grid.time_at(start),
                             )
                         )
                     else:
