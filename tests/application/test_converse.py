@@ -76,7 +76,9 @@ class FakeSolver:
         self.result: SolveResult = result
         self.problems: list[SchedulingProblem] = []
 
-    def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> SolveResult:
+    def solve(
+        self, problem: SchedulingProblem, previous: Schedule | None
+    ) -> SolveResult:
         self.problems.append(problem)
         return self.result
 
@@ -154,7 +156,9 @@ def test_message_ends_without_solving(
         (MessageStep("When works for you?"), SolveStep(True))
     )
     solver: FakeSolver = FakeSolver(Infeasible())
-    dialogue: tuple[Utterance, ...] = (Utterance(Speaker.USER, "Can we talk about the schedule?"),)
+    dialogue: tuple[Utterance, ...] = (
+        Utterance(Speaker.USER, "Can we talk about the schedule?"),
+    )
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
         dialogue, problem, None
     )

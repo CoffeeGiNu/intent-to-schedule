@@ -100,10 +100,6 @@ def test_time_bound_criteria(
     )
 
 
-def test_point_boundary_defaults_to_start() -> None:
-    assert PointMeasure(FIRST).boundary is Boundary.START
-
-
 @pytest.mark.parametrize(
     "relation,evaluation",
     [

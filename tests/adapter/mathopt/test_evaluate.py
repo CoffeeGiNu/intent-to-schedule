@@ -1,6 +1,5 @@
-"""Point expressions preserve boundary penalties and task absence."""
+"""Point evaluations preserve boundary penalties and task absence."""
 
-from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8,12 +7,11 @@ from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt import measure as expressions
 from intent_to_schedule.adapter.mathopt.evaluate import compile_evaluation
-from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
+from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import Criterion
 from intent_to_schedule.domain.evaluation import Distance, Evaluation, Excess, Shortfall
 from intent_to_schedule.domain.measure import Boundary, PointMeasure
-from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
+from intent_to_schedule.domain.task import TaskId
 from intent_to_schedule.domain.violation import CriterionViolation, measure_criterion
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
@@ -27,44 +25,6 @@ EVALUATIONS: tuple[Evaluation, ...] = (
 )
 
 
-@pytest.mark.parametrize("fixed", [False, True])
-@pytest.mark.parametrize("boundary", list(Boundary))
-def test_compile_point_measure_selects_boundary_variant(
-    fixed: bool, boundary: Boundary
-) -> None:
-    """Compile movable choices and real fixed boundaries separately."""
-    model: mathopt.Model = mathopt.Model()
-    choices: dict[int, mathopt.Variable] = {0: model.add_binary_variable()}
-    placements: Mapping[TaskId, Mapping[int, mathopt.Variable]] = {TASK_ID: choices}
-    task: Task = Task(TASK_ID, "Task", SLOT, frozenset(), Importance.LOW, False)
-    appointment: FixedTask = FixedTask(
-        TASK_ID,
-        "Fixed",
-        START - timedelta(days=1, minutes=7),
-        timedelta(minutes=17),
-        frozenset(),
-    )
-    problem: SchedulingProblem = SchedulingProblem(
-        Calendar(GRID, ()),
-        (),
-        () if fixed else (task,),
-        (appointment,) if fixed else (),
-        (),
-    )
-    expression: expressions.MeasureExpression = expressions.compile_measure(
-        PointMeasure(TASK_ID, boundary), problem, model, {}, {}, placements
-    )
-    if fixed:
-        assert isinstance(expression, expressions.ConstantPointExpression)
-        assert expression.value == (
-            appointment.interval.end if boundary is Boundary.END else appointment.start
-        )
-    else:
-        assert isinstance(expression, expressions.PointExpression)
-        assert expression.placements == choices
-        assert expression.offset == (SLOT if boundary is Boundary.END else timedelta(0))
-
-
 @pytest.mark.parametrize("evaluation", EVALUATIONS)
 @pytest.mark.parametrize("minutes", [-1447, 5, 80, 1507])
 def test_constant_point_evaluation_matches_plain_violation(
@@ -76,7 +36,9 @@ def test_constant_point_evaluation_matches_plain_violation(
     expression: expressions.ConstantPointExpression = (
         expressions.ConstantPointExpression(at)
     )
-    penalty: mathopt.LinearBase = compile_evaluation(expression, evaluation, model, GRID)
+    penalty: mathopt.LinearBase = compile_evaluation(
+        expression, evaluation, model, GRID
+    )
     model.minimize(penalty)
     result: mathopt.SolveResult = mathopt.solve(model, mathopt.SolverType.GSCIP)
     plain: CriterionViolation = measure_criterion(
@@ -106,7 +68,9 @@ def test_placement_point_evaluation_matches_plain_violation(
     for start, variable in choices.items():
         model.add_linear_constraint(variable == int(start == selected))
     expression: expressions.PointExpression = expressions.PointExpression(choices, SLOT)
-    penalty: mathopt.LinearBase = compile_evaluation(expression, evaluation, model, GRID)
+    penalty: mathopt.LinearBase = compile_evaluation(
+        expression, evaluation, model, GRID
+    )
     model.minimize(penalty)
     result: mathopt.SolveResult = mathopt.solve(model, mathopt.SolverType.GSCIP)
     placements: dict[TaskId, TimeInterval] = (

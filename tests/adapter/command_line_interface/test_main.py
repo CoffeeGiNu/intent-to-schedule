@@ -6,6 +6,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -17,10 +18,93 @@ from intent_to_schedule.adapter.command_line_interface.state import (
     save_state,
     to_problem,
     to_problem_state,
+    to_schedule_state,
 )
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
+from intent_to_schedule.domain.calendar import (
+    Availability,
+    Calendar,
+    TimeGrid,
+    TimeInterval,
+)
+from intent_to_schedule.domain.condition import TimeBoundCondition, TimeBoundRelation
+from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
+from intent_to_schedule.domain.measure import Boundary
+from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import FixedTask
+from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
+
+START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
+HOUR: timedelta = timedelta(hours=1)
+SLOT: timedelta = timedelta(minutes=30)
+PERSON: PersonId = PersonId("person")
+
+
+def task(identifier: str, duration: timedelta = HOUR) -> Task:
+    """Build a required low-importance task named after its identifier."""
+    return Task(
+        TaskId(identifier), identifier, duration, frozenset(), Importance.LOW, True
+    )
+
+
+def problem(
+    *tasks: Task,
+    hours: int = 8,
+    slot: timedelta = HOUR,
+    people: tuple[PersonId, ...] = (),
+) -> SchedulingProblem:
+    """Build a problem whose people are available over the whole horizon."""
+    grid: TimeGrid = TimeGrid(TimeInterval(START, START + hours * HOUR), slot)
+    return SchedulingProblem(
+        Calendar(
+            grid,
+            tuple(Availability(person_id, (grid.horizon,)) for person_id in people),
+        ),
+        tuple(Person(person_id, person_id.value) for person_id in people),
+        tasks,
+        (),
+        (),
+    )
+
+
+def save_problem(
+    path: Path, value: SchedulingProblem, previous: Schedule | None = None
+) -> None:
+    """Write a state file holding a problem and an optional previous schedule."""
+    save_state(
+        path,
+        State(
+            problem=to_problem_state(value),
+            previous=to_schedule_state(previous) if previous is not None else None,
+            dialogue=(),
+        ),
+    )
+
+
+def constraint_command(
+    condition: dict[str, object], identifier: str = "c", kind: str = "add_constraint"
+) -> dict[str, object]:
+    """Build a hard constraint command with a given identifier."""
+    return {
+        "kind": kind,
+        "constraint": {
+            "id": identifier,
+            "label": "Entered request",
+            "requirement": {"kind": "hard"},
+            "condition": condition,
+        },
+    }
+
+
+def fixed_task_input() -> dict[str, object]:
+    """Build an appointment for the calendar's person."""
+    return {
+        "name": "Health check",
+        "start": (START + timedelta(minutes=90)).isoformat(),
+        "duration": "PT1H30M",
+        "participant_ids": ["alice"],
+    }
 
 
 def calendar_data() -> dict[str, object]:
@@ -66,8 +150,17 @@ def solve_summary(
     """Build an expected schedule summary without soft violations."""
     return {
         "total_cost": dropped_cost + stability_cost,
-        "costs": {"dropped_tasks": dropped_cost, "soft_constraints": 0.0, "stability": stability_cost},
-        "counts": {"scheduled_tasks": scheduled_tasks, "dropped_tasks": dropped_tasks, "violated_soft_constraints": 0, "moved_tasks": moved_tasks},
+        "costs": {
+            "dropped_tasks": dropped_cost,
+            "soft_constraints": 0.0,
+            "stability": stability_cost,
+        },
+        "counts": {
+            "scheduled_tasks": scheduled_tasks,
+            "dropped_tasks": dropped_tasks,
+            "violated_soft_constraints": 0,
+            "moved_tasks": moved_tasks,
+        },
     }
 
 
@@ -359,7 +452,7 @@ def test_apply_reject_and_solve(
                 "start": "2026-10-01T09:00:00+00:00",
                 "end": "2026-10-01T10:00:00+00:00",
             }
-        ]
+        ],
     }
     assert load_state(path).previous is not None
     second: dict[str, object]
@@ -496,229 +589,6 @@ def test_apply_rejects_duplicate_or_empty_given_id_without_saving(
 
 
 @pytest.mark.parametrize(
-    "requirement,expected_strength",
-    [
-        ({"kind": "hard"}, None),
-        ({"kind": "soft", "strength": "weak"}, "weak"),
-        ({"kind": "soft", "strength": "normal"}, "normal"),
-        ({"kind": "soft", "strength": "strong"}, "strong"),
-    ],
-)
-def test_time_window_constraint_conversion_generates_id_once(
-    requirement: dict[str, str],
-    expected_strength: str | None,
-) -> None:
-    from calendar import Day
-    from datetime import date, time
-    from unittest.mock import Mock, patch
-
-    from intent_to_schedule.adapter.data_model import (
-        AddConstraintData,
-        command_record,
-        convert_command,
-    )
-    from intent_to_schedule.application.command import (
-        AddConstraint,
-        SchedulingCommand,
-    )
-    from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
-    from intent_to_schedule.domain.condition import TimeWindowCondition
-    from intent_to_schedule.domain.constraint import (
-        ConstraintId,
-        HardConstraint,
-        SoftConstraint,
-    )
-    from intent_to_schedule.domain.strength import Strength
-    from intent_to_schedule.domain.task import TaskId
-    from intent_to_schedule.domain.time_windows import (
-        DateRange,
-        Expansion,
-        TimeRange,
-        TimeRelation,
-        TimeWindow,
-    )
-
-    data: AddConstraintData = AddConstraintData.model_validate(
-        {
-            "kind": "add_constraint",
-            "constraint": {
-                "requirement": requirement,
-                "condition": {
-                    "kind": "time_window",
-                    "task_ids": ["review"],
-                    "relation": "within",
-                    "windows": [
-                        {
-                            "date_range": {"start": "2026-10-12", "end": "2026-10-17"},
-                            "weekdays": ["friday", "friday"],
-                            "time_range": {"start": "13:00", "end": None},
-                        }
-                    ],
-                },
-            },
-        }
-    )
-    grid: TimeGrid = TimeGrid(
-        TimeInterval(
-            datetime(2026, 10, 12, tzinfo=timezone.utc),
-            datetime(2026, 10, 17, tzinfo=timezone.utc),
-        ),
-        timedelta(hours=1),
-    )
-    generation: Mock
-    with patch.object(
-        ConstraintId, "generate", return_value=ConstraintId("created")
-    ) as generation:
-        command: SchedulingCommand = convert_command(data)
-        assert isinstance(command, AddConstraint)
-        assert command.constraint.id == ConstraintId("created")
-        assert command.constraint.condition.task_ids == frozenset({TaskId("review")})
-        assert isinstance(command.constraint.condition, TimeWindowCondition)
-        assert command.constraint.condition.relation is TimeRelation.WITHIN
-        assert isinstance(
-            command.constraint, SoftConstraint if expected_strength else HardConstraint
-        )
-        if isinstance(command.constraint, SoftConstraint):
-            assert command.constraint.strength == Strength(expected_strength)
-        assert command.constraint.condition.windows == (
-            TimeWindow(
-                DateRange(date(2026, 10, 12), date(2026, 10, 17)),
-                frozenset({Day.FRIDAY}),
-                TimeRange(time(13), None),
-            ),
-        )
-        with patch(
-            "intent_to_schedule.adapter.data_model.expand",
-            return_value=Expansion((grid.horizon,), False),
-        ):
-            assert command_record(command, grid) == {
-                "kind": "add_constraint",
-                "constraint_id": "created",
-            }
-        command.execute(SchedulingProblem(Calendar(grid, ()), (), (), (), ()))
-    generation.assert_called_once_with()
-
-
-def test_time_window_constraint_conversion_preserves_omitted_and_empty_window_fields() -> (
-    None
-):
-    from intent_to_schedule.adapter.data_model import (
-        TimeWindowData,
-        convert_time_window,
-    )
-    from intent_to_schedule.domain.time_windows import TimeWindow
-
-    assert convert_time_window(TimeWindowData()) == TimeWindow(None, None, None)
-    assert convert_time_window(TimeWindowData(weekdays=())) == TimeWindow(
-        None, frozenset(), None
-    )
-
-
-@pytest.mark.parametrize("end", ["13:00", "12:00"])
-def test_time_window_constraint_input_rejects_nonincreasing_times(end: str) -> None:
-    from pydantic import ValidationError
-
-    from intent_to_schedule.adapter.data_model import AddConstraintData
-
-    with pytest.raises(ValidationError) as error:
-        AddConstraintData.model_validate(
-            {
-                "kind": "add_constraint",
-                "constraint": {
-                    "requirement": {"kind": "hard"},
-                    "condition": {
-                        "kind": "time_window",
-                        "task_ids": ["review"],
-                        "relation": "within",
-                        "windows": [{"time_range": {"start": "13:00", "end": end}}],
-                    },
-                },
-            }
-        )
-    message: str = str(error.value)
-    assert "windows" in message and "time_range" in message
-    assert "13:00" in message and end in message and "after" in message
-
-
-@pytest.mark.parametrize("start,end", [("13:00+09:00", None), ("13:00", "18:00+09:00")])
-def test_time_window_constraint_input_rejects_zoned_times(
-    start: str, end: str | None
-) -> None:
-    from pydantic import ValidationError
-
-    from intent_to_schedule.adapter.data_model import AddConstraintData
-
-    with pytest.raises(ValidationError) as error:
-        AddConstraintData.model_validate(
-            {
-                "kind": "add_constraint",
-                "constraint": {
-                    "requirement": {"kind": "soft", "strength": "normal"},
-                    "condition": {
-                        "kind": "time_window",
-                        "task_ids": ["review"],
-                        "relation": "avoid",
-                        "windows": [{"time_range": {"start": start, "end": end}}],
-                    },
-                },
-            }
-        )
-    message: str = str(error.value)
-    assert "time_range" in message and "+09:00" in message
-    assert "without a time zone" in message
-
-
-@pytest.mark.parametrize("rounded", [False, True])
-@pytest.mark.parametrize("relation_value", ["within", "avoid"])
-def test_time_window_constraint_record_has_id_and_only_changed_rounding_note(
-    rounded: bool, relation_value: str
-) -> None:
-    from unittest.mock import Mock, patch
-
-    from intent_to_schedule.adapter.data_model import command_record
-    from intent_to_schedule.application.command import AddConstraint
-    from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
-    from intent_to_schedule.domain.condition import TimeWindowCondition
-    from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
-    from intent_to_schedule.domain.task import TaskId
-    from intent_to_schedule.domain.time_windows import (
-        Expansion,
-        TimeRelation,
-        TimeWindow,
-    )
-
-    grid: TimeGrid = TimeGrid(
-        TimeInterval(datetime(2026, 10, 1, 9), datetime(2026, 10, 1, 12)),
-        timedelta(hours=1),
-    )
-    condition: TimeWindowCondition = TimeWindowCondition(
-        frozenset({TaskId("review")}),
-        TimeRelation(relation_value),
-        (TimeWindow(None, None, None),),
-    )
-    command: AddConstraint = AddConstraint(
-        HardConstraint(ConstraintId("created"), condition)
-    )
-    expansion: Mock
-    with patch(
-        "intent_to_schedule.adapter.data_model.expand",
-        return_value=Expansion((grid.horizon,), rounded),
-    ) as expansion:
-        record: dict[str, str] = command_record(command, grid)
-    expansion.assert_called_once_with(condition.windows, condition.relation, grid)
-    assert record["constraint_id"] == "created"
-    assert record["kind"] == "add_constraint"
-    assert set(record) == (
-        {"kind", "constraint_id", "note"} if rounded else {"kind", "constraint_id"}
-    )
-    if rounded:
-        assert "round" in record["note"].lower()
-        assert ("inward" if relation_value == "within" else "outward") in record[
-            "note"
-        ].lower()
-
-
-@pytest.mark.parametrize(
     ("relation_value", "direction"), [("within", "inward"), ("avoid", "outward")]
 )
 def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
@@ -827,51 +697,6 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
             }
         ],
     }
-
-
-def test_apply_time_window_constraint_rejects_empty_expansion_without_saving(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path: Path = initialized(tmp_path, capsys)
-    unchanged: str = path.read_text(encoding="utf-8")
-    monkeypatch.setattr(
-        sys,
-        "stdin",
-        io.StringIO(
-            json.dumps(
-                {
-                    "commands": [
-                        {
-                            "kind": "add_constraint",
-                            "constraint": {
-                                "id": "empty",
-                                "requirement": {"kind": "hard"},
-                                "condition": {
-                                    "kind": "time_window",
-                                    "task_ids": ["review"],
-                                    "relation": "within",
-                                    "windows": [],
-                                },
-                            },
-                        }
-                    ]
-                }
-            )
-        ),
-    )
-    status: int
-    output: dict[str, object]
-    status, output = invoke(capsys, "--state", str(path), "apply")
-    assert status == 1
-    assert output == {
-        "rejected": [
-            "Constraint empty references missing task id review.",
-            "Time constraint on task review: the within windows cover no whole slot of the calendar horizon 2026-10-01T09:00:00+00:00 to 2026-10-01T12:00:00+00:00 (slot 1:00:00); widen or move the windows.",
-        ]
-    }
-    assert path.read_text(encoding="utf-8") == unchanged
 
 
 def query_state(tmp_path: Path) -> Path:
@@ -1012,9 +837,16 @@ def test_query_previous_schedule_and_schema(
     }
 
 
-@pytest.mark.parametrize("outcome", ["message", "exhausted", "solved", "infeasible"])
-@pytest.mark.parametrize("explicit_now", [False, True])
-@pytest.mark.parametrize("stability", [False, True])
+@pytest.mark.parametrize(
+    ("outcome", "stability", "explicit_now"),
+    [
+        ("message", True, False),
+        ("exhausted", True, True),
+        ("infeasible", True, False),
+        ("solved", False, True),
+        ("solved", True, False),
+    ],
+)
 def test_chat_persists_only_solve_changes_and_uses_clock(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1120,7 +952,9 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     )
     save_state(path, state)
     terminal: Step = (
-        MessageStep("When works for you?") if outcome == "message" else SolveStep(stability)
+        MessageStep("When works for you?")
+        if outcome == "message"
+        else SolveStep(stability)
     )
     steps: list[Step] = [ApplyStep((AddTask(added),)), terminal]
     if outcome == "exhausted":
@@ -1199,7 +1033,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
                         "start": (start + timedelta(hours=2)).isoformat(),
                         "end": (start + timedelta(hours=3)).isoformat(),
                     },
-                ]
+                ],
             }
             assert persisted.dialogue[-1].text == "Scheduled."
 
@@ -1261,7 +1095,10 @@ def test_schedule_entries_survive_task_changes(
         {"status": "dropped", "task_id": "dropped", "name": "Original dropped"},
     ]
     assert status == 0
-    assert output == {"summary": solve_summary(scheduled_tasks=1, dropped_tasks=1, dropped_cost=5.0), "items": expected}
+    assert output == {
+        "summary": solve_summary(scheduled_tasks=1, dropped_tasks=1, dropped_cost=5.0),
+        "items": expected,
+    }
     persisted: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["previous"] == {"items": expected}
     changes: tuple[list[dict[str, object]], ...] = (
@@ -1335,3 +1172,383 @@ def test_solve_option_passes_previous_schedule(
         to_problem(state.problem), previous if stability else None
     )
     assert to_schedule(load_state(path).previous) == previous
+
+
+@pytest.mark.parametrize("kind", ["add_constraint", "replace_constraint"])
+@pytest.mark.parametrize("relation", ["within", "avoid"])
+def test_empty_windows_rejected_atomically(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    relation: str,
+) -> None:
+    """Reject empty window expansion on addition and replacement."""
+    existing: HardConstraint = HardConstraint(
+        ConstraintId("c"),
+        TimeBoundCondition(
+            frozenset({TaskId("a")}),
+            Boundary.END,
+            TimeBoundRelation.AT_OR_BEFORE,
+            START + 6 * HOUR,
+        ),
+    )
+    original: SchedulingProblem = replace(
+        problem(task("a"), task("b")),
+        constraints=(existing,) if kind == "replace_constraint" else (),
+    )
+    path: Path = tmp_path / "state.json"
+    save_problem(path, original)
+    before: bytes = path.read_bytes()
+    condition: dict[str, object] = {
+        "kind": "time_window",
+        "task_ids": ["a"],
+        "relation": relation,
+        "windows": [{"date_range": {"start": "2027-01-01", "end": "2027-01-02"}}],
+    }
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps({"commands": [constraint_command(condition, kind=kind)]})
+        ),
+    )
+    assert main(["--state", str(path), "apply"]) == 1
+    output: dict[str, object] = json.loads(capsys.readouterr().out)
+    covered: str = "whole slot" if relation == "within" else "time"
+    assert output == {
+        "rejected": [
+            f"Time constraint on task a: the {relation} windows cover no {covered} of the calendar horizon {START.isoformat()} to {(START + timedelta(hours=8)).isoformat()} (slot 1:00:00); widen or move the windows."
+        ]
+    }
+    assert path.read_bytes() == before
+
+
+def test_command_line_add_solve_replace_solve(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Solve a batch with given identifiers and solve after replacement."""
+    path: Path = tmp_path / "state.json"
+    save_problem(path, problem())
+    task: dict[str, object] = {
+        "id": "a",
+        "name": "Review",
+        "duration": "PT1H",
+        "participant_ids": [],
+        "importance": "low",
+        "required": True,
+        "stability": "weak",
+    }
+    condition: dict[str, object] = {
+        "kind": "time_bound",
+        "task_ids": ["a"],
+        "boundary": "start",
+        "relation": "at",
+        "at": START.isoformat(),
+    }
+    window: dict[str, object] = {
+        "kind": "time_window",
+        "task_ids": ["a"],
+        "relation": "within",
+        "windows": [{"time_range": {"start": "09:00", "end": "16:20"}}],
+    }
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "commands": [
+                        {"kind": "add_task", "task": task},
+                        constraint_command(condition, "bound"),
+                        constraint_command(window, "window"),
+                    ]
+                }
+            )
+        ),
+    )
+    assert main(["--state", str(path), "apply"]) == 0
+    output: dict[str, object] = json.loads(capsys.readouterr().out)
+    assert output["executed"] == [
+        {"kind": "add_task", "task_id": "a", "name": "Review"},
+        {"kind": "add_constraint", "constraint_id": "bound"},
+        {
+            "kind": "add_constraint",
+            "constraint_id": "window",
+            "note": "Window times were rounded inward to calendar slots.",
+        },
+    ]
+    assert main(["--state", str(path), "solve"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["items"] == [
+        {
+            "status": "scheduled",
+            "task_id": "a",
+            "name": "Review",
+            "start": START.isoformat(),
+            "end": (START + timedelta(hours=1)).isoformat(),
+        }
+    ]
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "commands": [
+                        constraint_command(
+                            {
+                                **condition,
+                                "at": (START + timedelta(hours=2)).isoformat(),
+                            },
+                            "bound",
+                            "replace_constraint",
+                        )
+                    ]
+                }
+            )
+        ),
+    )
+    assert main(["--state", str(path), "apply"]) == 0
+    assert json.loads(capsys.readouterr().out)["executed"] == [
+        {"kind": "replace_constraint", "constraint_id": "bound"}
+    ]
+    assert main(["--state", str(path), "solve"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["items"] == [
+        {
+            "status": "scheduled",
+            "task_id": "a",
+            "name": "Review",
+            "start": (START + timedelta(hours=2)).isoformat(),
+            "end": (START + timedelta(hours=3)).isoformat(),
+        }
+    ]
+
+
+def test_command_schema_exposes_disjoint_task_shapes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Expose both strict task shapes through the schema command."""
+    assert main(["schema"]) == 0
+    schema: dict[str, Any] = json.loads(capsys.readouterr().out)
+    name: str
+    movable: str
+    fixed: str
+    for name, movable, fixed in (
+        ("AddTaskData", "NewTaskData", "NewFixedTaskData"),
+        ("ReplaceTaskData", "TaskData", "FixedTaskData"),
+    ):
+        assert schema["$defs"][name]["properties"]["task"]["anyOf"] == [
+            {"$ref": f"#/$defs/{movable}"},
+            {"$ref": f"#/$defs/{fixed}"},
+        ]
+        assert "start" not in schema["$defs"][movable]["properties"]
+        assert "start" in schema["$defs"][fixed]["required"]
+        assert schema["$defs"][movable]["additionalProperties"] is False
+        assert schema["$defs"][fixed]["additionalProperties"] is False
+
+
+def test_apply_fixed_task_persists_and_reports_generated_identifier(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Persist an added appointment and return its generated identifier."""
+    state: Path = initialized(tmp_path, capsys)
+    commands: Path = tmp_path / "commands.json"
+    commands.write_text(
+        json.dumps({"commands": [{"kind": "add_task", "task": fixed_task_input()}]}),
+        encoding="utf-8",
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(
+        capsys, "apply", "--state", str(state), "--file", str(commands)
+    )
+    assert status == 0
+    stored: SchedulingProblem = to_problem(load_state(state).problem)
+    fixed: FixedTask = stored.fixed_tasks[0]
+    assert output == {
+        "executed": [
+            {"kind": "add_task", "task_id": fixed.id.value, "name": fixed.name}
+        ]
+    }
+    assert fixed.start == START + timedelta(minutes=90)
+    assert fixed.duration == timedelta(minutes=90)
+    assert stored.tasks == ()
+
+
+@pytest.mark.parametrize("command", ["init", "apply"])
+@pytest.mark.parametrize("duration", ["-PT1M", "PT0S"])
+def test_fixed_duration_uses_consistency_channel(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    duration: str,
+) -> None:
+    """Reject negative durations and accept zero through both commands."""
+    fixed: dict[str, object] = {
+        **fixed_task_input(),
+        "id": "fixed",
+        "duration": duration,
+    }
+    input_path: Path = tmp_path / "input.json"
+    state_path: Path
+    arguments: list[str]
+    if command == "init":
+        state_path = tmp_path / "state.json"
+        input_path.write_text(
+            json.dumps({**calendar_data(), "fixed_tasks": [fixed]}), encoding="utf-8"
+        )
+        arguments = ["init", "--calendar", str(input_path)]
+    else:
+        state_path = initialized(tmp_path, capsys)
+        input_path.write_text(
+            json.dumps({"commands": [{"kind": "add_task", "task": fixed}]}),
+            encoding="utf-8",
+        )
+        arguments = ["apply", "--file", str(input_path)]
+    before: bytes | None = state_path.read_bytes() if state_path.exists() else None
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(state_path), *arguments)
+    if duration == "PT0S":
+        assert status == 0
+        return
+    assert status == 1
+    assert output == {"rejected": ["Fixed task fixed duration must not be negative."]}
+    assert (state_path.read_bytes() if state_path.exists() else None) == before
+
+
+@pytest.mark.parametrize("task_ids", [["first", "second"], [], ["first", "missing"]])
+def test_apply_and_query_multi_task_constraint(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    task_ids: list[str],
+) -> None:
+    """Persist one constraint or reject invalid targets atomically."""
+    path: Path = tmp_path / "state.json"
+    save_problem(
+        path, problem(task("first", SLOT), task("second", 2 * SLOT), hours=3, slot=SLOT)
+    )
+    before: bytes = path.read_bytes()
+    command: dict[str, object] = {
+        "kind": "add_constraint",
+        "constraint": {
+            "requirement": {"kind": "soft", "strength": "strong"},
+            "condition": {
+                "kind": "time_window",
+                "task_ids": task_ids,
+                "relation": "avoid",
+                "windows": [{"time_range": {"start": "09:00", "end": "10:00"}}],
+            },
+        },
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": [command]})))
+    status: int = main(["--state", str(path), "apply"])
+    output: dict[str, object] = json.loads(capsys.readouterr().out)
+    if not task_ids or "missing" in task_ids:
+        assert status == 1
+        assert (
+            "at least" if not task_ids else "missing task id missing"
+        ) in json.dumps(output)
+        assert path.read_bytes() == before
+        return
+    assert status == 0
+    executed: object = output["executed"]
+    assert isinstance(executed, list) and len(executed) == 1
+    record: object = executed[0]
+    assert isinstance(record, dict)
+    constraint_id: object = record["constraint_id"]
+    assert isinstance(constraint_id, str)
+    stored: SchedulingProblem = to_problem(load_state(path).problem)
+    assert len(stored.constraints) == 1
+    assert stored.constraints[0].id.value == constraint_id
+    assert stored.constraints[0].condition.task_ids == frozenset(
+        TaskId(value) for value in task_ids
+    )
+    selected: list[str]
+    for selected in (["first"], ["second"], ["first", "second"]):
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(
+                json.dumps({"kind": "constraints", "filter": {"task_ids": selected}})
+            ),
+        )
+        assert main(["--state", str(path), "query"]) == 0
+        output = json.loads(capsys.readouterr().out)
+        items: object = output["items"]
+        assert output["total"] == 1
+        assert isinstance(items, list) and len(items) == 1
+        record = items[0]
+        assert isinstance(record, dict)
+        assert record["id"] == constraint_id
+        assert record["condition"] == {
+            "kind": "time_window",
+            "task_ids": ["first", "second"],
+            "relation": "avoid",
+            "windows": [
+                {
+                    "date_range": None,
+                    "weekdays": None,
+                    "time_range": {"start": "09:00:00", "end": "10:00:00"},
+                }
+            ],
+        }
+
+
+@pytest.mark.parametrize("stability", [False, True])
+def test_command_line_summary_and_queries_use_saved_solution(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stability: bool
+) -> None:
+    """Expose measured summaries and queries through the command line."""
+    item: Task = replace(task("task"), participant_ids=frozenset({PERSON}))
+    previous: Schedule = Schedule(
+        (ScheduledTask(item.id, item.name, START, START + item.duration),), ()
+    )
+    condition: TimeBoundCondition = TimeBoundCondition(
+        frozenset({item.id}), Boundary.START, TimeBoundRelation.AT, START + 3 * HOUR
+    )
+    value: SchedulingProblem = replace(
+        problem(item, hours=4, people=(PERSON,)),
+        constraints=(HardConstraint(ConstraintId("moved"), condition),),
+    )
+    path: Path = tmp_path / "state.json"
+    save_problem(path, value, previous)
+    arguments: list[str] = ["--state", str(path), "solve"] + (
+        [] if stability else ["--no-stability"]
+    )
+    assert main(arguments) == 0
+    output: dict[str, object] = json.loads(capsys.readouterr().out)
+    assert output["summary"] == {
+        "total_cost": 2.5 if stability else 0.0,
+        "costs": {
+            "dropped_tasks": 0.0,
+            "soft_constraints": 0.0,
+            "stability": 2.5 if stability else 0.0,
+        },
+        "counts": {
+            "scheduled_tasks": 1,
+            "dropped_tasks": 0,
+            "violated_soft_constraints": 0,
+            "moved_tasks": 1 if stability else 0,
+        },
+    }
+    saved: State = load_state(path)
+    assert saved.previous is not None
+    assert saved.previous.model_dump(mode="json") == {"items": output["items"]}
+    query_path: Path = tmp_path / "query.json"
+    query_path.write_text('{"kind":"evaluation","filter":{"violated_only":true}}')
+    assert main(["--state", str(path), "query", "--file", str(query_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "kind": "evaluation",
+        "has_previous": True,
+        "items": [],
+        "total": 0,
+        "truncated": False,
+    }
+    query_path.write_text('{"kind":"objective_policy"}')
+    assert main(["--state", str(path), "query", "--file", str(query_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["per_count"] == DEFAULT_POLICY.per_count

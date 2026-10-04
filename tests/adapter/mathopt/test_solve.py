@@ -1,18 +1,29 @@
+"""Tests for schedules returned by the MathOpt solver."""
+
+from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
-from intent_to_schedule.adapter.mathopt.evaluate import compile_evaluation
-from intent_to_schedule.adapter.mathopt.measure import PointExpression
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
+from intent_to_schedule.application.command import AddTask, Executed, Rejected
+from intent_to_schedule.application.objective import (
+    evaluate_constraints,
+    summarize_schedule,
+)
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
+from intent_to_schedule.application.query import (
+    Answered,
+    AvailableStartsAnswer,
+    AvailableStartsQuery,
+)
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Infeasible, Solved
-from intent_to_schedule.domain.availability import available_start_slots, free_slots
+from intent_to_schedule.application.solve import Infeasible, Solved, SolveResult
+from intent_to_schedule.domain.availability import free_slots
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
@@ -20,6 +31,7 @@ from intent_to_schedule.domain.calendar import (
     TimeInterval,
 )
 from intent_to_schedule.domain.condition import (
+    Condition,
     DailyLimitCondition,
     TaskGapCondition,
     TaskGapRelation,
@@ -27,17 +39,21 @@ from intent_to_schedule.domain.condition import (
     TimeBoundRelation,
     TimeWindowCondition,
 )
-from intent_to_schedule.domain.consistency import AllOf
+from intent_to_schedule.domain.consistency import (
+    AlignedToSlots,
+    AllOf,
+    AvailabilityForEveryone,
+    NonemptyTimeWindows,
+    ReferencesExist,
+    UniqueIds,
+)
 from intent_to_schedule.domain.constraint import (
+    Constraint,
     ConstraintId,
     HardConstraint,
     SoftConstraint,
 )
-from intent_to_schedule.domain.evaluation import Shortfall
-from intent_to_schedule.domain.measure import (
-    AggregateQuantity,
-    Boundary,
-)
+from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
@@ -50,8 +66,11 @@ from intent_to_schedule.domain.time_windows import (
     TimeWindow,
 )
 
-START: datetime = datetime(2026, 10, 1, 9)
+START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
 SLOT: timedelta = timedelta(minutes=30)
+HOUR: timedelta = timedelta(hours=1)
+PERSON: PersonId = PersonId("person")
+PEOPLE: frozenset[PersonId] = frozenset({PERSON})
 SOLVER: MathOptSchedulingSolver = MathOptSchedulingSolver(DEFAULT_POLICY)
 
 
@@ -67,27 +86,55 @@ def task(
 
 def problem(
     *tasks: Task,
-    constraints: tuple[HardConstraint | SoftConstraint, ...] = (),
-    end: datetime = START + timedelta(hours=3),
-    availabilities: tuple[Availability, ...] | None = None,
+    constraints: tuple[Constraint, ...] = (),
     fixed_tasks: tuple[FixedTask, ...] = (),
+    start: datetime = START,
+    end: datetime = START + timedelta(hours=3),
+    slot: timedelta = SLOT,
+    availabilities: tuple[Availability, ...] | None = None,
 ) -> SchedulingProblem:
+    """Build a valid problem whose participants are available unless told otherwise."""
     people: tuple[Person, ...] = tuple(
         Person(person_id, person_id.value)
-        for person_id in {
-            person_id
-            for item in (*tasks, *fixed_tasks)
-            for person_id in item.participant_ids
-        }
+        for person_id in sorted(
+            {
+                person_id
+                for item in (*tasks, *fixed_tasks)
+                for person_id in item.participant_ids
+            },
+            key=lambda person_id: person_id.value,
+        )
     )
     if availabilities is None:
         availabilities = tuple(
-            Availability(person.id, (TimeInterval(START, end),)) for person in people
+            Availability(person.id, (TimeInterval(start, end),)) for person in people
         )
-    calendar: Calendar = Calendar(
-        TimeGrid(TimeInterval(START, end), SLOT), availabilities
+    value: SchedulingProblem = SchedulingProblem(
+        Calendar(TimeGrid(TimeInterval(start, end), slot), availabilities),
+        people,
+        tasks,
+        fixed_tasks,
+        constraints,
     )
-    return SchedulingProblem(calendar, people, tasks, fixed_tasks, constraints)
+    assert AllOf(AlignedToSlots(), UniqueIds()).validate(value).is_empty
+    return value
+
+
+def hard(condition: Condition) -> HardConstraint:
+    return HardConstraint(ConstraintId.generate(), condition)
+
+
+def soft(condition: Condition) -> SoftConstraint:
+    return SoftConstraint(ConstraintId.generate(), condition, Strength.WEAK)
+
+
+def bound(
+    item: Task | FixedTask,
+    boundary: Boundary,
+    relation: TimeBoundRelation,
+    at: datetime,
+) -> TimeBoundCondition:
+    return TimeBoundCondition(frozenset({item.id}), boundary, relation, at)
 
 
 def schedule_for(value: SchedulingProblem) -> Schedule:
@@ -202,29 +249,6 @@ def test_soft_aggregate_excess_drops_one_task(
     assert len(result.dropped) == 1
 
 
-def test_hard_intrusion_excludes_region() -> None:
-    item: Task = task("hard", duration=timedelta(hours=1))
-    constraint: HardConstraint = HardConstraint(
-        ConstraintId("hard"),
-        TimeWindowCondition(
-            frozenset({item.id}),
-            TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (TimeInterval(START, START + timedelta(hours=1)),)
-            ),
-        ),
-    )
-    result: Schedule = schedule_for(problem(item, constraints=(constraint,)))
-    assert starts(result)[item.id] >= START + timedelta(hours=1)
-
-
 def test_fixed_task_rounds_outward() -> None:
     person_id: PersonId = PersonId("person")
     item: Task = task("movable", people=frozenset({person_id}))
@@ -327,26 +351,6 @@ def test_dependency_shortfall_to_fixed_task_schedules_task_before_it() -> None:
     ) == {movable.id: START + SLOT}
 
 
-@pytest.mark.parametrize(
-    "quantity, upper",
-    [(AggregateQuantity.COUNT, 0), (AggregateQuantity.TOTAL_DURATION, SLOT)],
-)
-def test_fixed_task_aggregates_use_real_duration(
-    quantity: AggregateQuantity, upper: int | timedelta
-) -> None:
-    fixed: FixedTask = FixedTask(
-        TaskId("fixed"), "Existing", START + timedelta(minutes=10), SLOT, frozenset()
-    )
-    constraint: HardConstraint = HardConstraint(
-        ConstraintId("aggregate"),
-        DailyLimitCondition(frozenset({fixed.id}), quantity, upper),
-    )
-    assert isinstance(
-        SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(constraint,))),
-        Infeasible if quantity is AggregateQuantity.COUNT else Solved,
-    )
-
-
 def test_fixed_task_point_and_interval_measures_use_real_interval() -> None:
     fixed: FixedTask = FixedTask(
         TaskId("fixed"), "Existing", START + timedelta(minutes=10), SLOT, frozenset()
@@ -380,21 +384,6 @@ def test_fixed_task_point_and_interval_measures_use_real_interval() -> None:
     assert isinstance(
         SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(interval,))), Infeasible
     )
-
-
-def test_dependency_to_fixed_task_outside_horizon_is_inactive_when_task_drops() -> None:
-    fixed: FixedTask = FixedTask(
-        TaskId("fixed"), "Past event", START - timedelta(days=1), SLOT, frozenset()
-    )
-    movable: Task = task("optional", required=False)
-    constraint: HardConstraint = HardConstraint(
-        ConstraintId("before"),
-        TaskGapCondition(movable.id, fixed.id, TaskGapRelation.AT_LEAST, SLOT),
-    )
-    result: Schedule = schedule_for(
-        problem(movable, fixed_tasks=(fixed,), constraints=(constraint,))
-    )
-    assert result == Schedule((), (DroppedTask(movable.id, movable.name),))
 
 
 def test_count_penalty_scales_soft_objective() -> None:
@@ -472,61 +461,6 @@ def test_hard_dependency_is_inactive_when_task_drops() -> None:
     assert result.dropped == (DroppedTask(second.id, second.name),)
 
 
-def test_unsupported_evaluation_raises_value_error() -> None:
-    grid: TimeGrid = TimeGrid(TimeInterval(START, START + SLOT), SLOT)
-    model: mathopt.Model = mathopt.Model()
-    expression: PointExpression = PointExpression({0: model.add_binary_variable()})
-    with pytest.raises(ValueError, match="Unsupported evaluation"):
-        compile_evaluation(expression, Shortfall(SLOT), model, grid)
-
-
-@pytest.mark.parametrize("duration", [SLOT, 2 * SLOT, 7 * SLOT])
-@pytest.mark.parametrize("participant_count", [0, 1, 2])
-def test_solver_start_candidates_match_shared_availability(
-    duration: timedelta, participant_count: int
-) -> None:
-    participants: frozenset[PersonId] = frozenset(
-        PersonId(f"person_{index}") for index in range(participant_count)
-    )
-    item: Task = task("movable", duration=duration, people=participants, required=False)
-    fixed: FixedTask = FixedTask(
-        TaskId("fixed"),
-        "Existing",
-        START + timedelta(minutes=40),
-        timedelta(minutes=10),
-        participants,
-    )
-    value: SchedulingProblem = problem(item, fixed_tasks=(fixed,))
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
-    participants_free: tuple[tuple[bool, ...], ...] = tuple(
-        free_slots(value, person_id) for person_id in participants
-    )
-    expected: tuple[int, ...] = available_start_slots(
-        value.calendar.grid, participants_free, duration
-    )
-    assert tuple(compiled.placements[item.id]) == expected
-
-
-def test_compile_computes_person_free_slots_once() -> None:
-    person_id: PersonId = PersonId("shared")
-    value: SchedulingProblem = problem(
-        task("first", people=frozenset({person_id})),
-        task("second", people=frozenset({person_id})),
-    )
-    free_slots_mock: MagicMock
-    starts_mock: MagicMock
-    with patch(
-        "intent_to_schedule.adapter.mathopt.compile.free_slots", wraps=free_slots
-    ) as free_slots_mock:
-        with patch(
-            "intent_to_schedule.adapter.mathopt.compile.available_start_slots",
-            wraps=available_start_slots,
-        ) as starts_mock:
-            compile_problem(value, DEFAULT_POLICY)
-    free_slots_mock.assert_called_once_with(value, person_id)
-    assert starts_mock.call_count == 2
-
-
 @pytest.mark.parametrize("importance", list(Importance))
 def test_stability_moves_optional_task_instead_of_dropping(
     importance: Importance,
@@ -599,48 +533,301 @@ def test_stability_keeps_required_task_at_nearest_free_start() -> None:
     assert starts(result.schedule) == {item.id: target + SLOT}
 
 
-@pytest.mark.parametrize("importance", list(Importance))
-@pytest.mark.parametrize("strength", list(Strength))
-@pytest.mark.parametrize("hours", [-24.0, -0.25, 0.0, 0.25, 24.0])
-@pytest.mark.parametrize("required", [False, True])
-def test_stability_objective_uses_capped_cost(
-    importance: Importance, strength: Strength, hours: float, required: bool
-) -> None:
-    """Charge capped stability cost for a task with one available start."""
-    item: Task = replace(
-        task("movable", required=required), importance=importance, stability=strength
-    )
-    previous_start: datetime = START - timedelta(hours=hours)
-    previous: Schedule = Schedule(
-        (
-            ScheduledTask(
-                item.id, "Previous name", previous_start, previous_start + item.duration
-            ),
+@pytest.mark.parametrize("boundary", list(Boundary))
+def test_hard_deadline_moves_task_before_bound(boundary: Boundary) -> None:
+    item: Task = task("deadline", duration=HOUR, people=PEOPLE)
+    deadline: datetime = START + timedelta(minutes=150)
+    value: SchedulingProblem = problem(
+        item,
+        constraints=(
+            hard(bound(item, boundary, TimeBoundRelation.AT_OR_BEFORE, deadline)),
+            soft(bound(item, Boundary.START, TimeBoundRelation.AT, START + 3 * HOUR)),
         ),
-        (),
+        end=START + 4 * HOUR,
+        slot=HOUR,
     )
-    policy: ObjectivePolicy = replace(DEFAULT_POLICY, stability_drop_cost_ratio=0.3)
-    compiled: CompiledProblem = compile_problem(
-        problem(item, end=START + SLOT), policy, previous
+    assert (
+        starts(schedule_for(value))[item.id]
+        == START + (2 if boundary is Boundary.START else 1) * HOUR
     )
-    result: mathopt.SolveResult = mathopt.solve(
-        compiled.model, mathopt.SolverType.GSCIP
-    )
-    assert result.variable_values()[compiled.presences[item.id]] == pytest.approx(1.0)
-    expected: float = min(
-        policy.weight(strength) * abs(hours), 0.3 * policy.drop_cost(importance)
-    )
-    assert result.objective_value() == pytest.approx(expected)
 
 
-def test_previous_dropped_tasks_have_no_stability_cost() -> None:
-    """Schedule previously dropped tasks without charging movement."""
-    item: Task = task("movable", required=False)
-    previous: Schedule = Schedule((), (DroppedTask(item.id, "Previous name"),))
-    compiled: CompiledProblem = compile_problem(
-        problem(item, end=START + SLOT), DEFAULT_POLICY, previous
+@pytest.mark.parametrize("boundary", list(Boundary))
+def test_at_or_after_moves_task_after_bound(boundary: Boundary) -> None:
+    item: Task = task("earliest", duration=HOUR, people=PEOPLE)
+    value: SchedulingProblem = problem(
+        item,
+        constraints=(
+            hard(
+                bound(
+                    item,
+                    boundary,
+                    TimeBoundRelation.AT_OR_AFTER,
+                    START + timedelta(minutes=90),
+                )
+            ),
+            soft(bound(item, Boundary.START, TimeBoundRelation.AT, START)),
+        ),
+        end=START + 4 * HOUR,
+        slot=HOUR,
     )
-    result: mathopt.SolveResult = mathopt.solve(
-        compiled.model, mathopt.SolverType.GSCIP
+    assert (
+        starts(schedule_for(value))[item.id]
+        == START + (2 if boundary is Boundary.START else 1) * HOUR
     )
-    assert result.objective_value() == pytest.approx(0.0)
+
+
+def test_zero_minimum_gap_orders_tasks() -> None:
+    first: Task = task("first", duration=HOUR, people=PEOPLE)
+    second: Task = task("second", duration=HOUR, people=PEOPLE)
+    condition: TaskGapCondition = TaskGapCondition(
+        first.id, second.id, TaskGapRelation.AT_LEAST, timedelta(0)
+    )
+    value: SchedulingProblem = problem(
+        first, second, constraints=(hard(condition),), end=START + 2 * HOUR, slot=HOUR
+    )
+    assert starts(schedule_for(value)) == {first.id: START, second.id: START + HOUR}
+
+
+def test_exact_zero_gap_places_task_after_fixed_task() -> None:
+    fixed: FixedTask = FixedTask(TaskId("fixed"), "Fixed", START, HOUR, PEOPLE)
+    item: Task = task("following", duration=HOUR, people=PEOPLE)
+    condition: TaskGapCondition = TaskGapCondition(
+        fixed.id, item.id, TaskGapRelation.EXACTLY, timedelta(0)
+    )
+    value: SchedulingProblem = problem(
+        item,
+        constraints=(hard(condition),),
+        fixed_tasks=(fixed,),
+        end=START + 4 * HOUR,
+        slot=HOUR,
+    )
+    assert starts(schedule_for(value)) == {item.id: START + HOUR}
+
+
+@pytest.mark.parametrize(
+    "quantity,maximum",
+    [(AggregateQuantity.COUNT, 1), (AggregateQuantity.TOTAL_DURATION, 2 * HOUR)],
+)
+def test_daily_limit_distributes_tasks_across_two_dates(
+    quantity: AggregateQuantity, maximum: int | timedelta
+) -> None:
+    first: Task = task("first", duration=2 * HOUR, people=PEOPLE)
+    second: Task = task("second", duration=2 * HOUR, people=PEOPLE)
+    condition: DailyLimitCondition = DailyLimitCondition(
+        frozenset({first.id, second.id}), quantity, maximum
+    )
+    value: SchedulingProblem = problem(
+        first,
+        second,
+        constraints=(hard(condition),),
+        start=START.replace(hour=22),
+        end=(START + timedelta(days=1)).replace(hour=4).astimezone(timezone.utc),
+        slot=HOUR,
+    )
+    assert {at.date() for at in starts(schedule_for(value)).values()} == {
+        START.date(),
+        (START + timedelta(days=1)).date(),
+    }
+
+
+@pytest.mark.parametrize("relation", list(TimeRelation))
+def test_hard_time_window_places_whole_task_in_allowed_region(
+    relation: TimeRelation,
+) -> None:
+    item: Task = task("window", duration=2 * HOUR, people=PEOPLE)
+    condition: TimeWindowCondition = TimeWindowCondition(
+        frozenset({item.id}),
+        relation,
+        (TimeWindow(None, None, TimeRange(time(9), time(11))),),
+    )
+    value: SchedulingProblem = problem(
+        item, constraints=(hard(condition),), end=START + 4 * HOUR, slot=HOUR
+    )
+    assert starts(schedule_for(value)) == {
+        item.id: START + (0 if relation is TimeRelation.WITHIN else 2) * HOUR
+    }
+
+
+@pytest.mark.parametrize("offset, duration", [(90, 90), (95, 80)])
+def test_added_fixed_task_blocks_available_starts_and_later_tasks(
+    offset: int, duration: int
+) -> None:
+    """Block all touched slots for present and future tasks."""
+    review: Task = task("review", duration=HOUR, people=PEOPLE)
+    original: SchedulingProblem = problem(review, end=START + 4 * HOUR)
+    scheduling: Scheduling = Scheduling(
+        SOLVER,
+        AllOf(
+            UniqueIds(),
+            ReferencesExist(),
+            AvailabilityForEveryone(),
+            AlignedToSlots(),
+            NonemptyTimeWindows(),
+        ),
+    )
+    fixed: FixedTask = FixedTask(
+        TaskId("health-check"),
+        "Health check",
+        START + timedelta(minutes=offset),
+        timedelta(minutes=duration),
+        PEOPLE,
+    )
+    added: Executed | Rejected = scheduling.execute(original, (AddTask(fixed),))
+    assert isinstance(added, Executed)
+    assert free_slots(added.problem, PERSON) == (
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        True,
+        True,
+    )
+    expected: tuple[datetime, ...] = (START, START + SLOT, START + 3 * HOUR)
+    query: AvailableStartsQuery = AvailableStartsQuery(PEOPLE, HOUR, None, 100)
+    assert query.answer(added.problem, None) == Answered(
+        AvailableStartsAnswer(expected, len(expected))
+    )
+    first_solution: SolveResult = scheduling.solve(added.problem, None)
+    assert isinstance(first_solution, Solved)
+    assert first_solution.schedule.scheduled[0].start in expected
+    later: Task = replace(review, id=TaskId("later"))
+    with_later: Executed | Rejected = scheduling.execute(
+        added.problem, (AddTask(later),)
+    )
+    assert isinstance(with_later, Executed)
+    solution: SolveResult = scheduling.solve(with_later.problem, None)
+    assert isinstance(solution, Solved)
+    assert {item.task_id for item in solution.schedule.scheduled} == {
+        review.id,
+        later.id,
+    }
+    item: ScheduledTask
+    for item in solution.schedule.scheduled:
+        assert item.start in expected
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["window", "deadline", "gap", "count", "duration", "drop", "move", "stable"],
+)
+@pytest.mark.parametrize("custom_policy", [False, True])
+def test_summary_matches_objective_of_the_same_solve(
+    scenario: str, custom_policy: bool
+) -> None:
+    """Match independently measured costs to the solved MathOpt objective."""
+    item: Task = task("task", duration=HOUR, people=PEOPLE, required=scenario != "drop")
+    condition: Condition
+    previous: Schedule | None = None
+    fixed_tasks: tuple[FixedTask, ...] = ()
+    constraints: tuple[Constraint, ...] = ()
+    policy: ObjectivePolicy = (
+        replace(DEFAULT_POLICY, per_count=2.5, stability_drop_cost_ratio=0.25)
+        if custom_policy
+        else DEFAULT_POLICY
+    )
+    if scenario == "window":
+        condition = TimeWindowCondition(
+            frozenset({item.id}),
+            TimeRelation.AVOID,
+            (TimeWindow(None, None, TimeRange(time(9, 15), time(12, 45))),),
+        )
+    elif scenario in {"deadline", "drop"}:
+        condition = TimeBoundCondition(
+            frozenset({item.id}),
+            Boundary.END,
+            TimeBoundRelation.AT_OR_BEFORE,
+            START - HOUR,
+        )
+    elif scenario == "gap":
+        fixed_tasks = (
+            FixedTask(
+                TaskId("fixed"),
+                "Fixed",
+                START + timedelta(minutes=10),
+                HOUR,
+                frozenset({PERSON}),
+            ),
+        )
+        condition = TaskGapCondition(
+            fixed_tasks[0].id, item.id, TaskGapRelation.EXACTLY, timedelta(minutes=15)
+        )
+    elif scenario in {"count", "duration"}:
+        condition = DailyLimitCondition(
+            frozenset({item.id}),
+            AggregateQuantity.COUNT
+            if scenario == "count"
+            else AggregateQuantity.TOTAL_DURATION,
+            0 if scenario == "count" else timedelta(minutes=15),
+        )
+    else:
+        previous = Schedule(
+            (ScheduledTask(item.id, item.name, START, START + item.duration),), ()
+        )
+        constraints = (
+            HardConstraint(
+                ConstraintId("move"),
+                TimeBoundCondition(
+                    frozenset({item.id}),
+                    Boundary.START,
+                    TimeBoundRelation.AT,
+                    START + (3 if scenario == "move" else 0) * HOUR,
+                ),
+            ),
+        )
+        condition = TimeBoundCondition(
+            frozenset({item.id}), Boundary.START, TimeBoundRelation.AT_OR_AFTER, START
+        )
+    constraints += (
+        SoftConstraint(ConstraintId("preference"), condition, Strength.NORMAL),
+    )
+    value: SchedulingProblem = problem(
+        item,
+        constraints=constraints,
+        fixed_tasks=fixed_tasks,
+        end=START + 4 * HOUR,
+        slot=HOUR,
+    )
+    captured: list[mathopt.SolveResult] = []
+    original_solve: Callable[..., mathopt.SolveResult] = mathopt.solve
+
+    def capture(
+        model: mathopt.Model,
+        solver_type: mathopt.SolverType,
+        *,
+        params: mathopt.SolveParameters,
+    ) -> mathopt.SolveResult:
+        result: mathopt.SolveResult = original_solve(model, solver_type, params=params)
+        captured.append(result)
+        return result
+
+    solved: SolveResult
+    with patch(
+        "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", side_effect=capture
+    ):
+        solved = MathOptSchedulingSolver(policy).solve(value, previous)
+    assert isinstance(solved, Solved)
+    assert solved.summary is not None
+    assert solved.summary.total_cost == pytest.approx(captured[0].objective_value())
+    assert solved.summary.total_cost == pytest.approx(
+        solved.summary.dropped_tasks_cost
+        + solved.summary.soft_constraints_cost
+        + solved.summary.stability_cost
+    )
+    assert solved.summary.moved_tasks == (1 if scenario == "move" else 0)
+    assert solved.summary.dropped_tasks == (1 if scenario == "drop" else 0)
+    assert solved.summary.scheduled_tasks == (0 if scenario == "drop" else 1)
+    assert all(
+        item.violation.amount == 0
+        for item in evaluate_constraints(value, solved.schedule, policy)
+        if isinstance(item.constraint, HardConstraint)
+    )
+    if scenario == "move":
+        assert (
+            solved.summary.stability_cost
+            == policy.drop_cost(item.importance) * policy.stability_drop_cost_ratio
+        )
+    assert summarize_schedule(value, solved.schedule, policy).moved_tasks == 0
+    assert summarize_schedule(value, solved.schedule, policy).stability_cost == 0

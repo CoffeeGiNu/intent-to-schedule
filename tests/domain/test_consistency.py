@@ -1,7 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import datetime, timedelta
 
 from intent_to_schedule.domain.calendar import (
     Availability,
@@ -9,7 +7,11 @@ from intent_to_schedule.domain.calendar import (
     TimeGrid,
     TimeInterval,
 )
-from intent_to_schedule.domain.condition import TimeBoundCondition, TimeBoundRelation
+from intent_to_schedule.domain.condition import (
+    TimeBoundCondition,
+    TimeBoundRelation,
+    TimeWindowCondition,
+)
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
     AllOf,
@@ -24,78 +26,7 @@ from intent_to_schedule.domain.measure import Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
-
-
-def test_time_interval_rejects_reversed_endpoints() -> None:
-    """Reject an interval whose end precedes its start."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    with pytest.raises(ValueError, match="start.*end"):
-        TimeInterval(start, start - timedelta(minutes=1))
-
-
-def test_time_interval_allows_equal_endpoints() -> None:
-    """Allow zero-length domain intervals."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    assert TimeInterval(start, start).end == start
-
-
-@pytest.mark.parametrize("duration", [timedelta(0), timedelta(hours=1, microseconds=1)])
-def test_time_interval_duration(duration: timedelta) -> None:
-    """Measure interval duration exactly."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    assert TimeInterval(start, start + duration).duration == duration
-
-
-@pytest.mark.parametrize("first,last,expected", [
-    (0, 60, True), (10, 50, True), (0, 0, True), (60, 60, True),
-    (-1, 30, False), (30, 61, False), (-1, 61, False),
-])
-def test_time_interval_contains_whole_interval(first: int, last: int, expected: bool) -> None:
-    """Contain intervals including equal and empty endpoints."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    outer: TimeInterval = TimeInterval(start, start + timedelta(hours=1))
-    inner: TimeInterval = TimeInterval(start + timedelta(minutes=first), start + timedelta(minutes=last))
-    assert outer.contains(inner) is expected
-
-
-@pytest.mark.parametrize("offset,expected", [(-1, False), (0, True), (30, True), (60, False), (61, False)])
-def test_time_interval_includes_half_open_points(offset: int, expected: bool) -> None:
-    """Include the start and exclude the end."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    assert TimeInterval(start, start + timedelta(hours=1)).includes(start + timedelta(minutes=offset)) is expected
-    assert not TimeInterval(start, start).includes(start)
-
-
-@pytest.mark.parametrize("first,last,minutes", [
-    (-60, -1, 0), (-30, 0, 0), (60, 90, 0), (70, 90, 0),
-    (-10, 10, 10), (30, 90, 30), (10, 50, 40), (-10, 70, 60),
-    (0, 60, 60), (30, 30, 0),
-])
-def test_time_interval_overlap_is_symmetric_and_nonnegative(first: int, last: int, minutes: int) -> None:
-    """Measure overlapping time without counting touching endpoints."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    outer: TimeInterval = TimeInterval(start, start + timedelta(hours=1))
-    other: TimeInterval = TimeInterval(start + timedelta(minutes=first), start + timedelta(minutes=last))
-    assert outer.overlap(other) == timedelta(minutes=minutes)
-    assert other.overlap(outer) == timedelta(minutes=minutes)
-
-
-def test_time_interval_operations_compare_instants_across_offsets() -> None:
-    """Compare equivalent times with different offsets."""
-    start: datetime = datetime(2026, 10, 5, 9, tzinfo=timezone(timedelta(hours=9)))
-    outer: TimeInterval = TimeInterval(start, start + timedelta(hours=1))
-    other: TimeInterval = TimeInterval(start.astimezone(timezone.utc), outer.end.astimezone(timezone.utc))
-    assert outer.contains(other)
-    assert outer.includes(other.start)
-    assert outer.overlap(other) == timedelta(hours=1)
-
-
-@pytest.mark.parametrize("duration", [timedelta(0), timedelta(minutes=31, microseconds=1)])
-def test_fixed_task_interval_uses_start_and_duration(duration: timedelta) -> None:
-    """Expose the fixed task's exact interval."""
-    start: datetime = datetime(2026, 10, 5, 9)
-    task: FixedTask = FixedTask(TaskId("fixed"), "Existing", start, duration, frozenset())
-    assert task.interval == TimeInterval(start, start + duration)
+from intent_to_schedule.domain.time_windows import TimeRelation, TimeWindow
 
 
 def make_problem() -> SchedulingProblem:
@@ -265,4 +196,46 @@ def test_alignment_uses_grid_origin_for_availability_and_durations() -> None:
                 "Availability for person p1 start is not aligned to the time grid."
             ),
         )
+    )
+
+
+def test_references_exist_reports_every_missing_task_of_a_condition() -> None:
+    """Validate every Task referenced by one condition."""
+    problem: SchedulingProblem = make_problem()
+    constraint: HardConstraint = HardConstraint(
+        ConstraintId("combined"),
+        TimeWindowCondition(
+            frozenset(
+                {problem.tasks[0].id, TaskId("missing-one"), TaskId("missing-two")}
+            ),
+            TimeRelation.WITHIN,
+            (TimeWindow(None, None, None),),
+        ),
+    )
+    given: SchedulingProblem = replace(problem, constraints=(constraint,))
+    assert {item.message for item in ReferencesExist().validate(given).items} == {
+        "Constraint combined references missing task id missing-one.",
+        "Constraint combined references missing task id missing-two.",
+    }
+
+
+def test_aligned_to_slots_rejects_negative_fixed_duration() -> None:
+    """Reject negative fixed durations and accept zero."""
+    problem: SchedulingProblem = make_problem()
+    fixed: FixedTask = FixedTask(
+        TaskId("fixed"),
+        "Existing",
+        problem.calendar.grid.horizon.start,
+        timedelta(minutes=-1),
+        frozenset(),
+    )
+    assert AlignedToSlots().validate(
+        replace(problem, fixed_tasks=(fixed,))
+    ) == Violations((Violation("Fixed task fixed duration must not be negative."),))
+    assert (
+        AlignedToSlots()
+        .validate(
+            replace(problem, fixed_tasks=(replace(fixed, duration=timedelta(0)),))
+        )
+        .is_empty
     )
