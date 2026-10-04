@@ -41,12 +41,19 @@ from intent_to_schedule.application.query import (
     TaskType,
     summarize,
 )
-from intent_to_schedule.application.time_windows import TimeRange, TimeWindow
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
     TimeGrid,
     TimeInterval,
+)
+from intent_to_schedule.domain.condition import (
+    DailyLimitCondition,
+    TaskGapCondition,
+    TaskGapRelation,
+    TimeBoundCondition,
+    TimeBoundRelation,
+    TimeWindowCondition,
 )
 from intent_to_schedule.domain.constraint import (
     Constraint,
@@ -54,19 +61,18 @@ from intent_to_schedule.domain.constraint import (
     HardConstraint,
     SoftConstraint,
 )
-from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
-from intent_to_schedule.domain.measure import (
-    AggregateMeasure,
-    AggregateQuantity,
-    DependencyMeasure,
-    IntervalMeasure,
-    PointMeasure,
-)
+from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
+from intent_to_schedule.domain.time_windows import (
+    DateRange,
+    TimeRange,
+    TimeRelation,
+    TimeWindow,
+)
 
 
 def at(hour: int, minute: int = 0) -> datetime:
@@ -349,10 +355,10 @@ def test_tasks_order_and_json_preserve_element_shapes(
     ) == Answered(TasksAnswer(tuple(reversed(problem.tasks)), 2))
 
 
-def test_constraints_filters_references_and_compression(
+def test_constraints_filters_references_and_preserves_windows(
     problem: SchedulingProblem,
 ) -> None:
-    """Filter referenced tasks and shorten intrusion regions."""
+    """Filter referenced tasks and preserve all entered windows."""
     region: tuple[TimeInterval, ...] = tuple(
         TimeInterval(
             at(9) + timedelta(minutes=30 * index),
@@ -363,19 +369,37 @@ def test_constraints_filters_references_and_compression(
     constraints: tuple[Constraint, ...] = (
         SoftConstraint(
             ConstraintId("constraint-b"),
-            DependencyMeasure(TaskId("task-one"), TaskId("task-two")),
-            Shortfall(timedelta(minutes=30)),
+            TaskGapCondition(
+                TaskId("task-one"),
+                TaskId("task-two"),
+                TaskGapRelation.AT_LEAST,
+                timedelta(minutes=30),
+            ),
             Strength.STRONG,
         ),
         HardConstraint(
             ConstraintId("constraint-a"),
-            IntervalMeasure(frozenset({TaskId("task-one")})),
-            Intrusion(region),
+            TimeWindowCondition(
+                frozenset({TaskId("task-one")}),
+                TimeRelation.AVOID,
+                tuple(
+                    TimeWindow(
+                        DateRange(
+                            interval.start.date(),
+                            interval.start.date() + timedelta(days=1),
+                        ),
+                        None,
+                        TimeRange(interval.start.time(), interval.end.time()),
+                    )
+                    for interval in region
+                ),
+            ),
         ),
         HardConstraint(
             ConstraintId("constraint-c"),
-            AggregateMeasure(frozenset({TaskId("task-two")}), AggregateQuantity.COUNT),
-            Excess(2),
+            DailyLimitCondition(
+                frozenset({TaskId("task-two")}), AggregateQuantity.COUNT, 2
+            ),
         ),
     )
     query: SchedulingQuery = parse_query(
@@ -395,24 +419,13 @@ def test_constraints_filters_references_and_compression(
     expected: dict[str, object] = to_constraint_data(constraints[1]).model_dump(
         mode="json"
     )
-    expected["evaluation"] = {
-        "kind": "intrusion",
-        "region": {
-            "items": [
-                to_time_interval_data(item).model_dump(mode="json")
-                for item in region[:3]
-            ],
-            "total": 5,
-            "truncated": True,
-        },
-    }
     assert record == {
         "kind": "constraints",
         "items": [expected],
         "total": 2,
         "truncated": True,
     }
-    assert constraints[1].evaluation == Intrusion(region)
+    assert len(record["items"][0]["condition"]["windows"]) == 5
     assert parse_query({"kind": "constraints", "filter": {"task_ids": []}}).answer(
         replace(problem, constraints=constraints), None
     ) == Answered(ConstraintsAnswer((), 0))
@@ -425,21 +438,32 @@ def test_constraints_filters_references_and_compression(
 
 
 @pytest.mark.parametrize("count", [0, 3])
-def test_short_intrusion_regions_are_not_truncated(
+def test_time_window_query_keeps_all_windows(
     problem: SchedulingProblem, count: int
 ) -> None:
-    """Keep short intrusion regions complete."""
+    """Keep entered windows complete."""
     region: tuple[TimeInterval, ...] = tuple(
         TimeInterval(at(9), at(10)) for _ in range(count)
     )
     constraint: Constraint = HardConstraint(
         ConstraintId("constraint"),
-        IntervalMeasure(frozenset({TaskId("task-one")})),
-        Intrusion(region),
+        TimeWindowCondition(
+            frozenset({TaskId("task-one")}),
+            TimeRelation.AVOID,
+            tuple(
+                TimeWindow(
+                    DateRange(
+                        interval.start.date(), interval.start.date() + timedelta(days=1)
+                    ),
+                    None,
+                    TimeRange(interval.start.time(), interval.end.time()),
+                )
+                for interval in region
+            ),
+        ),
     )
     record: dict[str, object] = answer_record(ConstraintsAnswer((constraint,), 1))
-    assert record["items"][0]["evaluation"]["region"]["total"] == count
-    assert record["items"][0]["evaluation"]["region"]["truncated"] is False
+    assert len(record["items"][0]["condition"]["windows"]) == count
 
 
 def test_previous_schedule_keeps_history_and_sorts_starts(
@@ -452,7 +476,10 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
             ScheduledTask(TaskId("old-b"), "Old B", at(10), at(11)),
             ScheduledTask(TaskId("old-a"), "Old A", at(10), at(11)),
         ),
-        (DroppedTask(TaskId("dropped-b"), "Dropped B"), DroppedTask(TaskId("dropped-a"), "Dropped A")),
+        (
+            DroppedTask(TaskId("dropped-b"), "Dropped B"),
+            DroppedTask(TaskId("dropped-a"), "Dropped A"),
+        ),
     )
     result: AnswerResult = parse_query(
         {"kind": "previous_schedule", "limit": 4}
@@ -471,9 +498,27 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
     assert answer_record(expected) == {
         "kind": "previous_schedule",
         "items": [
-            {"status": "scheduled", "task_id": "old-a", "name": "Old A", "start": at(10).isoformat(), "end": at(11).isoformat()},
-            {"status": "scheduled", "task_id": "old-b", "name": "Old B", "start": at(10).isoformat(), "end": at(11).isoformat()},
-            {"status": "scheduled", "task_id": "old-late", "name": "Old late", "start": at(12).isoformat(), "end": at(13).isoformat()},
+            {
+                "status": "scheduled",
+                "task_id": "old-a",
+                "name": "Old A",
+                "start": at(10).isoformat(),
+                "end": at(11).isoformat(),
+            },
+            {
+                "status": "scheduled",
+                "task_id": "old-b",
+                "name": "Old B",
+                "start": at(10).isoformat(),
+                "end": at(11).isoformat(),
+            },
+            {
+                "status": "scheduled",
+                "task_id": "old-late",
+                "name": "Old late",
+                "start": at(12).isoformat(),
+                "end": at(13).isoformat(),
+            },
             {"status": "dropped", "task_id": "dropped-a", "name": "Dropped A"},
         ],
         "total": 5,
@@ -495,7 +540,9 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
     assert parse_query(
         {"kind": "previous_schedule", "filter": {"task_ids": ["dropped-a"]}}
     ).answer(problem, previous) == Answered(
-        PreviousScheduleAnswer((DroppedTask(TaskId("dropped-a"), "Dropped A"),), 1, True)
+        PreviousScheduleAnswer(
+            (DroppedTask(TaskId("dropped-a"), "Dropped A"),), 1, True
+        )
     )
 
 
@@ -817,10 +864,22 @@ def test_constraints_combine_identifier_and_task_filters(
     """Require both the constraint and referenced task filters."""
     constraints: tuple[Constraint, ...] = (
         HardConstraint(
-            ConstraintId("first"), PointMeasure(TaskId("task-one")), Distance(at(10))
+            ConstraintId("first"),
+            TimeBoundCondition(
+                frozenset({TaskId("task-one")}),
+                Boundary.START,
+                TimeBoundRelation.AT,
+                at(10),
+            ),
         ),
         HardConstraint(
-            ConstraintId("second"), PointMeasure(TaskId("task-two")), Distance(at(11))
+            ConstraintId("second"),
+            TimeBoundCondition(
+                frozenset({TaskId("task-two")}),
+                Boundary.START,
+                TimeBoundRelation.AT,
+                at(11),
+            ),
         ),
     )
     query: SchedulingQuery = parse_query(
@@ -864,10 +923,24 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
     task: Task = replace(movable("blocking"), duration=timedelta(hours=4))
     constraint: Constraint = HardConstraint(
         ConstraintId("blocking"),
-        IntervalMeasure(frozenset({task.id})),
-        Intrusion((problem.calendar.grid.horizon,)),
+        TimeWindowCondition(
+            frozenset({task.id}),
+            TimeRelation.AVOID,
+            tuple(
+                TimeWindow(
+                    DateRange(
+                        interval.start.date(), interval.start.date() + timedelta(days=1)
+                    ),
+                    None,
+                    TimeRange(interval.start.time(), interval.end.time()),
+                )
+                for interval in (problem.calendar.grid.horizon,)
+            ),
+        ),
     )
-    previous: Schedule = Schedule((ScheduledTask(task.id, task.name, at(9), at(9) + task.duration),), ())
+    previous: Schedule = Schedule(
+        (ScheduledTask(task.id, task.name, at(9), at(9) + task.duration),), ()
+    )
     given: SchedulingProblem = replace(
         problem, tasks=(task,), fixed_tasks=(), constraints=(constraint,)
     )

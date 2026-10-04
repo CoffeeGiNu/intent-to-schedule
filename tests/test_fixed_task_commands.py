@@ -19,12 +19,12 @@ from intent_to_schedule.adapter.data_model import (
     AddTaskData,
     CommandData,
     CommandsData,
-    FixedTaskData,
     FixedTaskContentData,
+    FixedTaskData,
     NewFixedTaskData,
     NewTaskData,
-    TaskContentData,
     ReplaceTaskData,
+    TaskContentData,
     TaskData,
     command_record,
     convert_commands_input,
@@ -53,22 +53,21 @@ from intent_to_schedule.domain.calendar import (
     TimeGrid,
     TimeInterval,
 )
+from intent_to_schedule.domain.condition import TimeBoundCondition, TimeBoundRelation
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
     AllOf,
     AvailabilityForEveryone,
+    NonemptyTimeWindows,
     ReferencesExist,
-    SupportedCombinations,
     UniqueIds,
 )
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
-from intent_to_schedule.domain.evaluation import Distance
-from intent_to_schedule.domain.measure import PointMeasure
+from intent_to_schedule.domain.measure import Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import ScheduledTask
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
-
 
 START: datetime = datetime.fromisoformat("2026-10-19T09:00:00+09:00")
 PARTICIPANT: PersonId = PersonId("ito")
@@ -103,7 +102,7 @@ def scheduling() -> Scheduling:
             ReferencesExist(),
             AvailabilityForEveryone(),
             AlignedToSlots(),
-            SupportedCombinations(),
+            NonemptyTimeWindows(),
         ),
     )
 
@@ -212,8 +211,9 @@ def test_replace_task_changes_fixedness_and_keeps_constraints(
     fixed: FixedTask = replace(appointment(), id=movable.id)
     constraint: HardConstraint = HardConstraint(
         ConstraintId("start"),
-        PointMeasure(movable.id),
-        Distance(fixed.start),
+        TimeBoundCondition(
+            frozenset({movable.id}), Boundary.START, TimeBoundRelation.AT, fixed.start
+        ),
     )
     original: SchedulingProblem = replace(problem, constraints=(constraint,))
     result: Executed | Rejected = scheduling.execute(original, (ReplaceTask(fixed),))
@@ -229,7 +229,11 @@ def test_replace_task_changes_fixedness_and_keeps_constraints(
     assert released.problem == original
     solution: SolveResult = scheduling.solve(released.problem, None)
     assert isinstance(solution, Solved)
-    assert solution.schedule.scheduled == (ScheduledTask(movable.id, movable.name, fixed.start, fixed.start + movable.duration),)
+    assert solution.schedule.scheduled == (
+        ScheduledTask(
+            movable.id, movable.name, fixed.start, fixed.start + movable.duration
+        ),
+    )
 
 
 def test_replace_fixed_task_preserves_other_tasks_and_order(

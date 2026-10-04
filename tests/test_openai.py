@@ -260,6 +260,12 @@ def test_installed_structured_output_helper_marks_defaulted_fields_required() ->
         "ConstraintsQueryData",
         "PreviousScheduleQueryData",
         "AvailableStartsQueryData",
+        "NewConstraintData",
+        "ConstraintData",
+        "TimeWindowConditionData",
+        "TimeBoundConditionData",
+        "TaskGapConditionData",
+        "DailyLimitConditionData",
     ):
         definition: dict[str, object] = definitions[name]
         properties: dict[str, dict[str, object]] = cast(
@@ -271,3 +277,5 @@ def test_installed_structured_output_helper_marks_defaulted_fields_required() ->
         dict[str, dict[str, object]], definitions["TimeWindowData"]["properties"]
     )
     assert all("default" not in value for value in window_properties.values())
+    assert "oneOf" not in json.dumps(schema)
+    assert "discriminator" not in json.dumps(schema)

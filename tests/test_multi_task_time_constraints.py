@@ -1,14 +1,12 @@
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 import io
 import json
-from pathlib import Path
 import sys
-from unittest.mock import Mock, patch
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from ortools.math_opt.python import mathopt
-from pydantic import ValidationError
 
 from intent_to_schedule.adapter.command_line_interface.main import main
 from intent_to_schedule.adapter.command_line_interface.state import (
@@ -18,39 +16,36 @@ from intent_to_schedule.adapter.command_line_interface.state import (
     to_problem,
     to_problem_state,
 )
-from intent_to_schedule.adapter.data_model import (
-    AddTimeConstraintData,
-    IntervalMeasureData,
-    MeasureData,
-    convert_command,
-    convert_measure,
-    to_measure_data,
-)
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
 from intent_to_schedule.application.command import (
-    AddTimeConstraint,
     Executed,
     Rejected,
     RemoveTask,
-    SchedulingCommand,
 )
 from intent_to_schedule.application.policy import DEFAULT_POLICY
-from intent_to_schedule.application.time_windows import TimeRelation, TimeWindow
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
-from intent_to_schedule.domain.compatibility import is_supported
-from intent_to_schedule.domain.consistency import ReferencesExist, SupportedCombinations
+from intent_to_schedule.domain.condition import (
+    TimeBoundCondition,
+    TimeBoundRelation,
+    TimeWindowCondition,
+)
+from intent_to_schedule.domain.consistency import ReferencesExist
 from intent_to_schedule.domain.constraint import (
     Constraint,
     ConstraintId,
     HardConstraint,
     SoftConstraint,
 )
-from intent_to_schedule.domain.evaluation import Distance, Intrusion
-from intent_to_schedule.domain.measure import IntervalMeasure, PointMeasure
+from intent_to_schedule.domain.measure import Boundary, IntervalMeasure
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
-
+from intent_to_schedule.domain.time_windows import (
+    DateRange,
+    TimeRange,
+    TimeRelation,
+    TimeWindow,
+)
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 SLOT: timedelta = timedelta(minutes=30)
@@ -95,29 +90,41 @@ def test_multi_task_intrusion_matches_separate_constraints(
 ) -> None:
     """Match separate objectives and placements for every requirement."""
     task_ids: frozenset[TaskId] = frozenset(task.id for task in problem.tasks)
-    evaluation: Intrusion = Intrusion(
-        (TimeInterval(START, START + SLOT * (2 if strength is None else 6)),)
+    condition: TimeWindowCondition = TimeWindowCondition(
+        task_ids,
+        TimeRelation.AVOID,
+        (
+            TimeWindow(
+                None,
+                None,
+                TimeRange(
+                    START.time(), (START + SLOT * (2 if strength is None else 6)).time()
+                ),
+            ),
+        ),
     )
     combined: Constraint = (
-        HardConstraint(ConstraintId("combined"), IntervalMeasure(task_ids), evaluation)
+        HardConstraint(ConstraintId("combined"), condition)
         if strength is None
-        else SoftConstraint(
-            ConstraintId("combined"), IntervalMeasure(task_ids), evaluation, strength
-        )
+        else SoftConstraint(ConstraintId("combined"), condition, strength)
     )
     separate: tuple[Constraint, ...] = tuple(
         replace(
             combined,
             id=ConstraintId(task.id.value),
-            measure=IntervalMeasure(frozenset({task.id})),
+            condition=replace(combined.condition, task_ids=frozenset({task.id})),
         )
         for task in problem.tasks
     )
     targets: tuple[Constraint, ...] = tuple(
         SoftConstraint(
             ConstraintId(f"target-{task.id.value}"),
-            PointMeasure(task.id),
-            Distance(START + SLOT * (index + (2 if strength is None else 0))),
+            TimeBoundCondition(
+                frozenset({task.id}),
+                Boundary.START,
+                TimeBoundRelation.AT,
+                START + SLOT * (index + (2 if strength is None else 0)),
+            ),
             Strength.WEAK,
         )
         for index, task in enumerate(problem.tasks)
@@ -145,23 +152,36 @@ def test_multi_task_soft_intrusion_matches_separate_drops(
     )
     combined: SoftConstraint = SoftConstraint(
         ConstraintId("combined"),
-        IntervalMeasure(frozenset(task.id for task in tasks)),
-        Intrusion((problem.calendar.grid.horizon,)),
+        TimeWindowCondition(
+            frozenset((task.id for task in tasks)),
+            TimeRelation.AVOID,
+            tuple(
+                TimeWindow(
+                    DateRange(
+                        interval.start.date(), interval.start.date() + timedelta(days=1)
+                    ),
+                    None,
+                    TimeRange(interval.start.time(), interval.end.time()),
+                )
+                for interval in (problem.calendar.grid.horizon,)
+            ),
+        ),
         Strength.NORMAL,
     )
     separate: tuple[Constraint, ...] = tuple(
         replace(
             combined,
             id=ConstraintId(task.id.value),
-            measure=IntervalMeasure(frozenset({task.id})),
+            condition=replace(combined.condition, task_ids=frozenset({task.id})),
         )
         for task in tasks
     )
     targets: tuple[Constraint, ...] = tuple(
         SoftConstraint(
             ConstraintId(f"target-{task.id.value}"),
-            PointMeasure(task.id),
-            Distance(START),
+            TimeBoundCondition(
+                frozenset({task.id}), Boundary.START, TimeBoundRelation.AT, START
+            ),
             Strength.WEAK,
         )
         for task in tasks
@@ -195,22 +215,35 @@ def test_multi_task_intrusion_sums_rounded_fixed_and_movable_overlap(
     )
     combined: SoftConstraint = SoftConstraint(
         ConstraintId("combined"),
-        IntervalMeasure(frozenset({first.id, fixed.id})),
-        Intrusion((problem.calendar.grid.horizon,)),
+        TimeWindowCondition(
+            frozenset({first.id, fixed.id}),
+            TimeRelation.AVOID,
+            tuple(
+                TimeWindow(
+                    DateRange(
+                        interval.start.date(), interval.start.date() + timedelta(days=1)
+                    ),
+                    None,
+                    TimeRange(interval.start.time(), interval.end.time()),
+                )
+                for interval in (problem.calendar.grid.horizon,)
+            ),
+        ),
         Strength.NORMAL,
     )
     separate: tuple[Constraint, ...] = tuple(
         replace(
             combined,
             id=ConstraintId(task_id.value),
-            measure=IntervalMeasure(frozenset({task_id})),
+            condition=replace(combined.condition, task_ids=frozenset({task_id})),
         )
         for task_id in (first.id, fixed.id)
     )
     target: SoftConstraint = SoftConstraint(
         ConstraintId("target"),
-        PointMeasure(first.id),
-        Distance(START),
+        TimeBoundCondition(
+            frozenset({first.id}), Boundary.START, TimeBoundRelation.AT, START
+        ),
         Strength.WEAK,
     )
     given: SchedulingProblem = replace(problem, tasks=(first,), fixed_tasks=(fixed,))
@@ -225,14 +258,26 @@ def test_multi_task_hard_intrusion_matches_separate_infeasibility(
     """Reject a hard region covering every possible placement."""
     combined: HardConstraint = HardConstraint(
         ConstraintId("combined"),
-        IntervalMeasure(frozenset(task.id for task in problem.tasks)),
-        Intrusion((problem.calendar.grid.horizon,)),
+        TimeWindowCondition(
+            frozenset((task.id for task in problem.tasks)),
+            TimeRelation.AVOID,
+            tuple(
+                TimeWindow(
+                    DateRange(
+                        interval.start.date(), interval.start.date() + timedelta(days=1)
+                    ),
+                    None,
+                    TimeRange(interval.start.time(), interval.end.time()),
+                )
+                for interval in (problem.calendar.grid.horizon,)
+            ),
+        ),
     )
     separate: tuple[Constraint, ...] = tuple(
         replace(
             combined,
             id=ConstraintId(task.id.value),
-            measure=IntervalMeasure(frozenset({task.id})),
+            condition=replace(combined.condition, task_ids=frozenset({task.id})),
         )
         for task in problem.tasks
     )
@@ -267,131 +312,42 @@ def test_remove_task_keeps_remaining_interval_targets(
         frozenset({first.id, problem.tasks[-1].id})
     )
     constraint: HardConstraint = HardConstraint(
-        ConstraintId("combined"), measure, Intrusion(())
+        ConstraintId("combined"),
+        TimeWindowCondition(
+            measure.task_ids, TimeRelation.WITHIN, (TimeWindow(None, None, None),)
+        ),
     )
     result: Executed | Rejected = RemoveTask(first.id).execute(
         replace(problem, constraints=(constraint,))
     )
     assert isinstance(result, Executed)
     remaining: IntervalMeasure = IntervalMeasure(frozenset({problem.tasks[-1].id}))
-    assert result.problem.constraints == (replace(constraint, measure=remaining),)
+    assert result.problem.constraints == (
+        replace(
+            constraint,
+            condition=replace(constraint.condition, task_ids=remaining.task_ids),
+        ),
+    )
     assert measure.without_task(TaskId("unrelated")) == measure
     result = RemoveTask(problem.tasks[-1].id).execute(result.problem)
     assert isinstance(result, Executed)
     assert result.problem.constraints == ()
 
 
-def test_interval_measure_round_trips_sorted_targets() -> None:
-    """Round trip interval targets in deterministic order."""
-    data: IntervalMeasureData = IntervalMeasureData.model_validate(
-        {"kind": "interval", "task_ids": ["second", "first", "first"]}
-    )
-    restored: IntervalMeasureData = IntervalMeasureData.model_validate_json(
-        data.model_dump_json()
-    )
-    measure: IntervalMeasure = IntervalMeasure(
-        frozenset({TaskId("first"), TaskId("second")})
-    )
-    assert convert_measure(restored) == measure
-    output: MeasureData = to_measure_data(measure)
-    assert isinstance(output, IntervalMeasureData)
-    assert output.model_dump(mode="json") == {
-        "kind": "interval",
-        "task_ids": ["first", "second"],
-    }
-    assert (
-        convert_measure(
-            IntervalMeasureData.model_validate_json(output.model_dump_json())
-        )
-        == measure
-    )
-
-
-@pytest.mark.parametrize(
-    "requirement", [{"kind": "hard"}, {"kind": "soft", "strength": "strong"}]
-)
-def test_add_time_constraint_round_trip_generates_one_identifier(
-    requirement: dict[str, str],
-) -> None:
-    """Round trip a multi-task command with one generated identifier."""
-    data: AddTimeConstraintData = AddTimeConstraintData.model_validate(
-        {
-            "kind": "add_time_constraint",
-            "task_ids": ["second", "first", "first"],
-            "relation": "within",
-            "windows": [{}],
-            "requirement": requirement,
-        }
-    )
-    restored: AddTimeConstraintData = AddTimeConstraintData.model_validate_json(
-        data.model_dump_json()
-    )
-    assert restored == data
-    generation: Mock
-    with patch.object(
-        ConstraintId, "generate", return_value=ConstraintId("created")
-    ) as generation:
-        command: SchedulingCommand = convert_command(restored)
-    generation.assert_called_once_with()
-    assert isinstance(command, AddTimeConstraint)
-    assert command.constraint_id == ConstraintId("created")
-    assert command.task_ids == frozenset({TaskId("first"), TaskId("second")})
-
-
-@pytest.mark.parametrize("data_type", [IntervalMeasureData, AddTimeConstraintData])
-def test_empty_task_ids_are_rejected_by_data_models(
-    data_type: type[IntervalMeasureData] | type[AddTimeConstraintData],
-) -> None:
-    """Reject an empty target list with an explanation."""
-    data: dict[str, object] = {"kind": "interval", "task_ids": []}
-    if data_type is AddTimeConstraintData:
-        data.update(
-            kind="add_time_constraint",
-            relation="within",
-            windows=[{}],
-            requirement={"kind": "hard"},
-        )
-    error: pytest.ExceptionInfo[ValidationError]
-    with pytest.raises(ValidationError, match="task_ids") as error:
-        data_type.model_validate(data)
-    assert "at least" in str(error.value)
-
-
-def test_empty_interval_measure_is_rejected() -> None:
-    """Reject an interval measure without targets."""
-    with pytest.raises(ValueError, match="at least one Task"):
-        IntervalMeasure(frozenset())
-
-
-def test_empty_command_is_rejected(problem: SchedulingProblem) -> None:
-    """Reject an application command without targets."""
-    command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("empty"),
-        frozenset(),
-        TimeRelation.WITHIN,
-        (TimeWindow(None, None, None),),
-        None,
-    )
-    result: Executed | Rejected = command.execute(problem)
-    assert isinstance(result, Rejected)
-    assert "at least one Task" in result.violations.items[0].message
-
-
 def test_multi_task_interval_validators_check_every_target(
     problem: SchedulingProblem,
 ) -> None:
-    """Validate compatibility and every referenced Task."""
+    """Validate every referenced Task."""
     measure: IntervalMeasure = IntervalMeasure(
         frozenset({problem.tasks[0].id, TaskId("missing-one"), TaskId("missing-two")})
     )
-    evaluation: Intrusion = Intrusion(())
     constraint: HardConstraint = HardConstraint(
-        ConstraintId("combined"), measure, evaluation
+        ConstraintId("combined"),
+        TimeWindowCondition(
+            measure.task_ids, TimeRelation.WITHIN, (TimeWindow(None, None, None),)
+        ),
     )
     given: SchedulingProblem = replace(problem, constraints=(constraint,))
-    assert is_supported(measure, evaluation)
-    assert not is_supported(measure, Distance(START))
-    assert SupportedCombinations().validate(given).is_empty
     assert {item.message for item in ReferencesExist().validate(given).items} == {
         "Constraint combined references missing task id missing-one.",
         "Constraint combined references missing task id missing-two.",
@@ -413,11 +369,16 @@ def test_apply_and_query_multi_task_constraint(
     )
     before: bytes = path.read_bytes()
     command: dict[str, object] = {
-        "kind": "add_time_constraint",
-        "task_ids": task_ids,
-        "relation": "avoid",
-        "windows": [{"time_range": {"start": "09:00", "end": "10:00"}}],
-        "requirement": {"kind": "soft", "strength": "strong"},
+        "kind": "add_constraint",
+        "constraint": {
+            "requirement": {"kind": "soft", "strength": "strong"},
+            "condition": {
+                "kind": "time_window",
+                "task_ids": task_ids,
+                "relation": "avoid",
+                "windows": [{"time_range": {"start": "09:00", "end": "10:00"}}],
+            },
+        },
     }
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": [command]})))
     status: int = main(["--state", str(path), "apply"])
@@ -439,8 +400,8 @@ def test_apply_and_query_multi_task_constraint(
     stored: SchedulingProblem = to_problem(load_state(path).problem)
     assert len(stored.constraints) == 1
     assert stored.constraints[0].id.value == constraint_id
-    assert stored.constraints[0].measure == IntervalMeasure(
-        frozenset(TaskId(value) for value in task_ids)
+    assert stored.constraints[0].condition.task_ids == frozenset(
+        TaskId(value) for value in task_ids
     )
     selected: list[str]
     for selected in (["first"], ["second"], ["first", "second"]):
@@ -459,7 +420,15 @@ def test_apply_and_query_multi_task_constraint(
         record = items[0]
         assert isinstance(record, dict)
         assert record["id"] == constraint_id
-        assert record["measure"] == {
-            "kind": "interval",
+        assert record["condition"] == {
+            "kind": "time_window",
             "task_ids": ["first", "second"],
+            "relation": "avoid",
+            "windows": [
+                {
+                    "date_range": None,
+                    "weekdays": None,
+                    "time_range": {"start": "09:00:00", "end": "10:00:00"},
+                }
+            ],
         }

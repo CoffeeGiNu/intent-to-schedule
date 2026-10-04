@@ -4,7 +4,7 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 
-from intent_to_schedule.application.time_windows import (
+from intent_to_schedule.domain.time_windows import (
     DateRange,
     Expansion,
     TimeRange,

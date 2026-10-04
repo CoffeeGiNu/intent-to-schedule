@@ -18,24 +18,31 @@ from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolic
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import Infeasible
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
+from intent_to_schedule.domain.condition import (
+    DailyLimitCondition,
+    TimeBoundCondition,
+    TimeBoundRelation,
+)
 from intent_to_schedule.domain.consistency import AllOf, Violation, Violations
-from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint, SoftConstraint
-from intent_to_schedule.domain.evaluation import Distance
-from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantity, PointMeasure
+from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
+from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
-
 START: datetime = datetime(2026, 10, 1, 9)
 
 
 def task(value: str, name: str = "Task") -> Task:
-    return Task(TaskId(value), name, timedelta(hours=1), frozenset(), Importance.HIGH, True)
+    return Task(
+        TaskId(value), name, timedelta(hours=1), frozenset(), Importance.HIGH, True
+    )
 
 
-def problem(*tasks: Task, constraints: tuple[HardConstraint, ...] = ()) -> SchedulingProblem:
+def problem(
+    *tasks: Task, constraints: tuple[HardConstraint, ...] = ()
+) -> SchedulingProblem:
     calendar: Calendar = Calendar(
         TimeGrid(TimeInterval(START, START + timedelta(days=1)), timedelta(minutes=30)),
         (),
@@ -60,9 +67,14 @@ def test_policy_rejects_nonpositive_or_nonfinite_coefficients(value: float) -> N
     with pytest.raises(ValueError):
         replace(DEFAULT_POLICY, per_count=value)
     with pytest.raises(ValueError):
-        replace(DEFAULT_POLICY, drop_costs={**DEFAULT_POLICY.drop_costs, Importance.LOW: value})
+        replace(
+            DEFAULT_POLICY,
+            drop_costs={**DEFAULT_POLICY.drop_costs, Importance.LOW: value},
+        )
     with pytest.raises(ValueError):
-        replace(DEFAULT_POLICY, weights={**DEFAULT_POLICY.weights, Strength.WEAK: value})
+        replace(
+            DEFAULT_POLICY, weights={**DEFAULT_POLICY.weights, Strength.WEAK: value}
+        )
 
 
 def test_policy_requires_every_importance_and_strength() -> None:
@@ -92,7 +104,9 @@ def test_task_commands_keep_input_and_order() -> None:
 
 def test_execute_commands_stops_at_first_rejection() -> None:
     original: SchedulingProblem = problem()
-    with patch.object(AddTask, "execute", side_effect=AssertionError("Later command ran")):
+    with patch.object(
+        AddTask, "execute", side_effect=AssertionError("Later command ran")
+    ):
         result: Executed | Rejected = execute_commands(
             original, (RemoveTask(TaskId("missing")), AddTask(task("later")))
         )
@@ -105,59 +119,113 @@ def test_remove_task_repairs_aggregate_and_drops_other_references() -> None:
     second: Task = task("b")
     shared: HardConstraint = HardConstraint(
         ConstraintId("shared"),
-        AggregateMeasure(frozenset({first.id, second.id}), AggregateQuantity.COUNT),
-        Distance(1),
+        DailyLimitCondition(
+            frozenset({first.id, second.id}), AggregateQuantity.COUNT, 1
+        ),
     )
-    lone: HardConstraint = replace(shared, id=ConstraintId("lone"), measure=replace(shared.measure, task_ids=frozenset({first.id})))
-    point: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(first.id), Distance(START))
-    other: HardConstraint = HardConstraint(ConstraintId("other"), PointMeasure(second.id), Distance(START))
-    original: SchedulingProblem = problem(first, second, constraints=(shared, lone, point, other))
+    lone: HardConstraint = replace(
+        shared,
+        id=ConstraintId("lone"),
+        condition=replace(shared.condition, task_ids=frozenset({first.id})),
+    )
+    point: HardConstraint = HardConstraint(
+        ConstraintId("point"),
+        TimeBoundCondition(
+            frozenset({first.id}), Boundary.START, TimeBoundRelation.AT, START
+        ),
+    )
+    other: HardConstraint = HardConstraint(
+        ConstraintId("other"),
+        TimeBoundCondition(
+            frozenset({second.id}), Boundary.START, TimeBoundRelation.AT, START
+        ),
+    )
+    original: SchedulingProblem = problem(
+        first, second, constraints=(shared, lone, point, other)
+    )
 
     result: Executed | Rejected = RemoveTask(first.id).execute(original)
     assert isinstance(result, Executed)
     assert result.problem.tasks == (second,)
     assert result.problem.constraints == (
-        replace(shared, measure=replace(shared.measure, task_ids=frozenset({second.id}))),
+        replace(
+            shared, condition=replace(shared.condition, task_ids=frozenset({second.id}))
+        ),
         other,
     )
     assert original.constraints == (shared, lone, point, other)
 
 
 def test_constraint_commands_check_only_ids() -> None:
-    constraint: HardConstraint = HardConstraint(ConstraintId("c"), PointMeasure(TaskId("missing")), Distance(START))
+    constraint: HardConstraint = HardConstraint(
+        ConstraintId("c"),
+        TimeBoundCondition(
+            frozenset({TaskId("missing")}), Boundary.START, TimeBoundRelation.AT, START
+        ),
+    )
     original: SchedulingProblem = problem()
     added: Executed | Rejected = AddConstraint(constraint).execute(original)
     assert isinstance(added, Executed)
     assert added.problem.constraints == (constraint,)
     assert isinstance(AddConstraint(constraint).execute(added.problem), Rejected)
-    assert isinstance(RemoveConstraint(ConstraintId("missing")).execute(added.problem), Rejected)
-    removed: Executed | Rejected = RemoveConstraint(constraint.id).execute(added.problem)
+    assert isinstance(
+        RemoveConstraint(ConstraintId("missing")).execute(added.problem), Rejected
+    )
+    removed: Executed | Rejected = RemoveConstraint(constraint.id).execute(
+        added.problem
+    )
     assert isinstance(removed, Executed)
     assert removed.problem == original
 
 
 def test_remove_fixed_task_repairs_constraints() -> None:
     movable: Task = task("movable")
-    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset())
-    aggregate: HardConstraint = HardConstraint(
-        ConstraintId("aggregate"), AggregateMeasure(frozenset({movable.id, fixed.id}), AggregateQuantity.COUNT), Distance(1)
+    fixed: FixedTask = FixedTask(
+        TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset()
     )
-    point: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(fixed.id), Distance(START))
-    original: SchedulingProblem = replace(problem(movable, constraints=(aggregate, point)), fixed_tasks=(fixed,))
+    aggregate: HardConstraint = HardConstraint(
+        ConstraintId("aggregate"),
+        DailyLimitCondition(
+            frozenset({movable.id, fixed.id}), AggregateQuantity.COUNT, 1
+        ),
+    )
+    point: HardConstraint = HardConstraint(
+        ConstraintId("point"),
+        TimeBoundCondition(
+            frozenset({fixed.id}), Boundary.START, TimeBoundRelation.AT, START
+        ),
+    )
+    original: SchedulingProblem = replace(
+        problem(movable, constraints=(aggregate, point)), fixed_tasks=(fixed,)
+    )
     result: Executed | Rejected = RemoveTask(fixed.id).execute(original)
     assert isinstance(result, Executed)
     assert result.problem.tasks == (movable,)
     assert result.problem.fixed_tasks == ()
-    assert result.problem.constraints == (replace(aggregate, measure=replace(aggregate.measure, task_ids=frozenset({movable.id}))),)
+    assert result.problem.constraints == (
+        replace(
+            aggregate,
+            condition=replace(aggregate.condition, task_ids=frozenset({movable.id})),
+        ),
+    )
     assert original.fixed_tasks == (fixed,)
 
 
 def test_replace_fixed_task_makes_it_movable_and_keeps_constraints() -> None:
     movable: Task = task("movable")
-    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset())
+    fixed: FixedTask = FixedTask(
+        TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset()
+    )
     other: FixedTask = replace(fixed, id=TaskId("other"))
-    constraint: HardConstraint = HardConstraint(ConstraintId("point"), PointMeasure(fixed.id), Distance(START))
-    original: SchedulingProblem = replace(problem(movable, constraints=(constraint,)), fixed_tasks=(fixed, other))
+    constraint: HardConstraint = HardConstraint(
+        ConstraintId("point"),
+        TimeBoundCondition(
+            frozenset({fixed.id}), Boundary.START, TimeBoundRelation.AT, START
+        ),
+    )
+    original: SchedulingProblem = replace(
+        problem(movable, constraints=(constraint,)), fixed_tasks=(fixed, other)
+    )
     replacement: Task = task("fixed", "Movable meeting")
     assert isinstance(AddTask(replacement).execute(original), Rejected)
     result: Executed | Rejected = ReplaceTask(replacement).execute(original)
@@ -172,10 +240,14 @@ def test_replace_fixed_task_makes_it_movable_and_keeps_constraints() -> None:
 def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
     first: Task = task("a")
     second: Task = task("b")
-    previous: Schedule | None = Schedule(
-        (ScheduledTask(first.id, first.name, START, START + first.duration),),
-        (DroppedTask(second.id, second.name),),
-    ) if stability else None
+    previous: Schedule | None = (
+        Schedule(
+            (ScheduledTask(first.id, first.name, START, START + first.duration),),
+            (DroppedTask(second.id, second.name),),
+        )
+        if stability
+        else None
+    )
     original: SchedulingProblem = problem(first, second)
     solver: Solver = Solver()
     assert Scheduling(solver, Validator()).solve(original, previous) == Infeasible()
@@ -188,7 +260,9 @@ class Solver:
         self.problem: SchedulingProblem | None = None
         self.previous: Schedule | None = None
 
-    def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> Infeasible:
+    def solve(
+        self, problem: SchedulingProblem, previous: Schedule | None
+    ) -> Infeasible:
         self.problem = problem
         self.previous = previous
         return Infeasible()
@@ -201,7 +275,9 @@ class Validator:
 
     def validate(self, problem: SchedulingProblem) -> Violations:
         self.problems.append(problem)
-        return Violations((Violation(self.message),)) if self.message else Violations(())
+        return (
+            Violations((Violation(self.message),)) if self.message else Violations(())
+        )
 
 
 def test_scheduling_execute_returns_command_rejection() -> None:
@@ -232,204 +308,3 @@ def test_scheduling_execute_returns_merged_validator_rejection() -> None:
     assert first.problems == second.problems
     assert first.problems[0].tasks == (task("a"),)
     assert original.tasks == ()
-
-
-@pytest.mark.parametrize("relation_value", ["within", "avoid"])
-@pytest.mark.parametrize(
-    "strength", [None, Strength.WEAK, Strength.NORMAL, Strength.STRONG]
-)
-def test_add_time_constraint_builds_one_intrusion_and_delegates(
-    relation_value: str,
-    strength: Strength | None,
-) -> None:
-    from datetime import time
-    from unittest.mock import Mock
-
-    from intent_to_schedule.application.command import AddTimeConstraint
-    from intent_to_schedule.application.time_windows import (
-        Expansion,
-        TimeRange,
-        TimeRelation,
-        TimeWindow,
-    )
-    from intent_to_schedule.domain.evaluation import Intrusion
-    from intent_to_schedule.domain.measure import IntervalMeasure
-
-    original: SchedulingProblem = problem(replace(task("a"), required=False))
-    allowed: TimeInterval = TimeInterval(
-        START + timedelta(hours=1), START + timedelta(hours=2)
-    )
-    windows: tuple[TimeWindow, ...] = (
-        TimeWindow(None, None, TimeRange(time(10), time(11))),
-    )
-    command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("time"),
-        frozenset({TaskId("a")}),
-        TimeRelation(relation_value),
-        windows,
-        strength,
-    )
-    expansion: Mock
-    delegation: Mock
-    with patch(
-        "intent_to_schedule.application.command.expand",
-        return_value=Expansion((allowed,), True),
-    ) as expansion:
-        with patch.object(
-            AddConstraint, "execute", autospec=True, return_value=Executed(original)
-        ) as delegation:
-            assert command.execute(original) == Executed(original)
-    expansion.assert_called_once_with(windows, command.relation, original.calendar.grid)
-    added: AddConstraint = delegation.call_args.args[0]
-    assert delegation.call_args.args[1] is original
-    region: tuple[TimeInterval, ...] = (
-        (
-            TimeInterval(START, allowed.start),
-            TimeInterval(allowed.end, original.calendar.grid.horizon.end),
-        )
-        if relation_value == "within"
-        else (allowed,)
-    )
-    assert added.constraint.measure == IntervalMeasure(frozenset({TaskId("a")}))
-    assert added.constraint.evaluation == Intrusion(region)
-    assert added.constraint.id == command.constraint_id
-    assert isinstance(
-        added.constraint, HardConstraint if strength is None else SoftConstraint
-    )
-    if isinstance(added.constraint, SoftConstraint):
-        assert added.constraint.strength is strength
-    assert original.constraints == ()
-    assert not original.tasks[0].required
-
-
-@pytest.mark.parametrize("relation_value", ["within", "avoid"])
-def test_add_time_constraint_rejects_empty_windows_with_actionable_message(
-    relation_value: str,
-) -> None:
-    from intent_to_schedule.application.command import AddTimeConstraint
-    from intent_to_schedule.application.time_windows import TimeRelation
-
-    command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("time"), frozenset({TaskId("a")}), TimeRelation(relation_value), (), None
-    )
-    result: Executed | Rejected = command.execute(problem(task("a")))
-    assert isinstance(result, Rejected)
-    message: str = result.violations.items[0].message
-    assert "task a" in message
-    assert relation_value in message
-    assert "horizon" in message
-
-
-def test_add_time_constraint_rejects_windows_removed_by_rounding() -> None:
-    from datetime import time
-
-    from intent_to_schedule.application.command import AddTimeConstraint
-    from intent_to_schedule.application.time_windows import (
-        TimeRange,
-        TimeRelation,
-        TimeWindow,
-    )
-
-    command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("time"),
-        frozenset({TaskId("a")}),
-        TimeRelation.WITHIN,
-        (TimeWindow(None, None, TimeRange(time(9, 5), time(9, 10))),),
-        None,
-    )
-    with patch.object(TimeGrid, "round_inward", return_value=None):
-        result: Executed | Rejected = command.execute(problem(task("a")))
-    assert isinstance(result, Rejected)
-    message: str = result.violations.items[0].message
-    assert "task a" in message
-    assert "slot" in message and "within" in message
-
-
-def test_add_time_constraint_delegates_duplicate_id_rejection() -> None:
-    from intent_to_schedule.application.command import AddTimeConstraint
-    from intent_to_schedule.application.time_windows import (
-        Expansion,
-        TimeRelation,
-        TimeWindow,
-    )
-
-    existing: HardConstraint = HardConstraint(
-        ConstraintId("time"), PointMeasure(TaskId("a")), Distance(START)
-    )
-    original: SchedulingProblem = problem(task("a"), constraints=(existing,))
-    command: AddTimeConstraint = AddTimeConstraint(
-        existing.id,
-        frozenset({TaskId("a")}),
-        TimeRelation.AVOID,
-        (TimeWindow(None, None, None),),
-        None,
-    )
-    with patch(
-        "intent_to_schedule.application.command.expand",
-        return_value=Expansion((original.calendar.grid.horizon,), False),
-    ):
-        result: Executed | Rejected = command.execute(original)
-    assert result == AddConstraint(existing).execute(original)
-    assert original.constraints == (existing,)
-
-
-def test_add_time_constraint_accepts_whole_horizon_with_empty_complement() -> None:
-    from intent_to_schedule.application.command import AddTimeConstraint
-    from intent_to_schedule.application.time_windows import (
-        Expansion,
-        TimeRelation,
-        TimeWindow,
-    )
-    from intent_to_schedule.domain.evaluation import Intrusion
-
-    original: SchedulingProblem = problem(task("a"))
-    command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("time"),
-        frozenset({TaskId("a")}),
-        TimeRelation.WITHIN,
-        (TimeWindow(None, None, None),),
-        None,
-    )
-    with patch(
-        "intent_to_schedule.application.command.expand",
-        return_value=Expansion((original.calendar.grid.horizon,), False),
-    ):
-        result: Executed | Rejected = command.execute(original)
-    assert isinstance(result, Executed)
-    assert len(result.problem.constraints) == 1
-    assert result.problem.constraints[0].evaluation == Intrusion(())
-
-
-@pytest.mark.parametrize("relation_value", ["within", "avoid"])
-def test_add_time_constraint_real_grid_creates_expected_region(
-    relation_value: str,
-) -> None:
-    from datetime import time
-
-    from intent_to_schedule.application.command import AddTimeConstraint
-    from intent_to_schedule.application.time_windows import (
-        TimeRange,
-        TimeRelation,
-        TimeWindow,
-    )
-    from intent_to_schedule.domain.evaluation import Intrusion
-
-    original: SchedulingProblem = problem(task("a"))
-    command: AddTimeConstraint = AddTimeConstraint(
-        ConstraintId("time"),
-        frozenset({TaskId("a")}),
-        TimeRelation(relation_value),
-        (TimeWindow(None, None, TimeRange(time(9, 10), time(10, 10))),),
-        None,
-    )
-    result: Executed | Rejected = command.execute(original)
-    assert isinstance(result, Executed)
-    region: tuple[TimeInterval, ...] = (
-        (
-            TimeInterval(START, START + timedelta(minutes=30)),
-            TimeInterval(START + timedelta(hours=1), START + timedelta(days=1)),
-        )
-        if relation_value == "within"
-        else (TimeInterval(START, START + timedelta(minutes=90)),)
-    )
-    assert result.problem.constraints[0].evaluation == Intrusion(region)
