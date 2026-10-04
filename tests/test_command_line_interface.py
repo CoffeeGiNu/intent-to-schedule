@@ -53,6 +53,21 @@ def invoke(
     return status, json.loads(output)
 
 
+def solve_summary(
+    scheduled_tasks: int = 0,
+    dropped_tasks: int = 0,
+    dropped_cost: float = 0.0,
+    stability_cost: float = 0.0,
+    moved_tasks: int = 0,
+) -> dict[str, object]:
+    """Build an expected schedule summary without soft violations."""
+    return {
+        "total_cost": dropped_cost + stability_cost,
+        "costs": {"dropped_tasks": dropped_cost, "soft_constraints": 0.0, "stability": stability_cost},
+        "counts": {"scheduled_tasks": scheduled_tasks, "dropped_tasks": dropped_tasks, "violated_soft_constraints": 0, "moved_tasks": moved_tasks},
+    }
+
+
 def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
     """Create a state file from a calendar."""
     calendar_path: Path = tmp_path / "calendar.json"
@@ -145,7 +160,7 @@ def test_init_fixed_tasks_persists_ids_and_round_trips(
     assert to_problem(to_problem_state(problem)) == problem
     status, output = invoke(capsys, "solve", "--state", str(path))
     assert status == 0
-    assert output == {"items": []}
+    assert output == {"summary": solve_summary(), "items": []}
 
 
 def test_init_rejects_fixed_task_with_unknown_participant(
@@ -254,6 +269,7 @@ def test_apply_reject_and_solve(
     status, output = invoke(capsys, "--state", str(path), "solve")
     assert status == 0
     assert output == {
+        "summary": solve_summary(scheduled_tasks=1),
         "items": [
             {
                 "status": "scheduled",
@@ -890,17 +906,21 @@ def test_query_previous_schedule_and_schema(
         "constraints",
         "previous_schedule",
         "available_starts",
+        "evaluation",
+        "objective_policy",
     }
 
 
 @pytest.mark.parametrize("outcome", ["message", "exhausted", "solved", "infeasible"])
 @pytest.mark.parametrize("explicit_now", [False, True])
+@pytest.mark.parametrize("stability", [False, True])
 def test_chat_persists_only_solve_changes_and_uses_clock(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     outcome: str,
     explicit_now: bool,
+    stability: bool,
 ) -> None:
     """Persist dialogue for every turn and problem changes only after solve."""
     from unittest.mock import MagicMock
@@ -999,7 +1019,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     )
     save_state(path, state)
     terminal: Step = (
-        MessageStep("When works for you?") if outcome == "message" else SolveStep(True)
+        MessageStep("When works for you?") if outcome == "message" else SolveStep(stability)
     )
     steps: list[Step] = [ApplyStep((AddTask(added),)), terminal]
     if outcome == "exhausted":
@@ -1057,6 +1077,11 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
             assert status == 0
             assert persisted.previous == to_schedule_state(replacement)
             assert output == {
+                "summary": solve_summary(
+                    scheduled_tasks=2,
+                    stability_cost=5.0 if stability else 0.0,
+                    moved_tasks=1 if stability else 0,
+                ),
                 "items": [
                     {
                         "status": "scheduled",
@@ -1134,7 +1159,7 @@ def test_schedule_entries_survive_task_changes(
         {"status": "dropped", "task_id": "dropped", "name": "Original dropped"},
     ]
     assert status == 0
-    assert output == {"items": expected}
+    assert output == {"summary": solve_summary(scheduled_tasks=1, dropped_tasks=1, dropped_cost=5.0), "items": expected}
     persisted: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["previous"] == {"items": expected}
     change: list[dict[str, object]]
@@ -1202,7 +1227,7 @@ def test_solve_option_passes_previous_schedule(
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(path), "solve", *arguments)
     assert status == 0
-    assert output == {"items": []}
+    assert output == {"summary": solve_summary(), "items": []}
     solver.assert_called_once_with(
         to_problem(state.problem), previous if stability else None
     )
