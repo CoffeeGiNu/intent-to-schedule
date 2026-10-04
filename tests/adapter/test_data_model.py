@@ -187,12 +187,13 @@ def test_commands_input_converts_mixed_commands() -> None:
     data: CommandsData = CommandsData.model_validate(
         {
             "commands": [
-                {"kind": "add_task", "task": task_data},
+                {"kind": "add_task", "task": {"id": "new", **task_data}},
                 {"kind": "replace_task", "task": {"id": "old", **task_data}},
                 {"kind": "remove_task", "task_id": "old"},
                 {
                     "kind": "add_constraint",
                     "constraint": {
+                        "id": "c1",
                         "requirement": {"kind": "hard"},
                         "condition": {
                             "kind": "time_bound",
@@ -207,11 +208,7 @@ def test_commands_input_converts_mixed_commands() -> None:
             ]
         }
     )
-    with (
-        patch.object(TaskId, "generate", return_value=TaskId("new")),
-        patch.object(ConstraintId, "generate", return_value=ConstraintId("c1")),
-    ):
-        commands: tuple[SchedulingCommand, ...] = convert_commands_input(data)
+    commands: tuple[SchedulingCommand, ...] = convert_commands_input(data)
     task: Task = Task(
         TaskId("new"),
         "Review",
@@ -441,12 +438,7 @@ def test_replace_constraint_conversion_keeps_identifier_requirement_and_label() 
             ]
         }
     )
-    with patch.object(
-        ConstraintId,
-        "generate",
-        side_effect=AssertionError("Replacement generated an identifier"),
-    ):
-        commands: tuple[SchedulingCommand, ...] = convert_commands_input(data)
+    commands: tuple[SchedulingCommand, ...] = convert_commands_input(data)
     assert commands == (
         ReplaceConstraint(
             SoftConstraint(

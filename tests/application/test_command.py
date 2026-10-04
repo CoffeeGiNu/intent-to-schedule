@@ -1,6 +1,5 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 from intent_to_schedule.application.command import (
     AddConstraint,
@@ -74,12 +73,9 @@ def test_task_commands_keep_input_and_order() -> None:
 
 def test_execute_commands_stops_at_first_rejection() -> None:
     original: SchedulingProblem = problem()
-    with patch.object(
-        AddTask, "execute", side_effect=AssertionError("Later command ran")
-    ):
-        result: Executed | Rejected = execute_commands(
-            original, (RemoveTask(TaskId("missing")), AddTask(task("later")))
-        )
+    result: Executed | Rejected = execute_commands(
+        original, (RemoveTask(TaskId("missing")), RemoveTask(TaskId("later")))
+    )
     assert result == Rejected(Violations((Violation("Task missing does not exist"),)))
     assert execute_commands(original, ()) == Executed(original)
 
