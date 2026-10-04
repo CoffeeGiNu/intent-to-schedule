@@ -73,9 +73,7 @@ def compile_evaluation(
             region_slots: set[int] = {
                 slot_index
                 for interval in region
-                for slot_index in range(grid.slot_count)
-                if interval.start <= grid.time_at(slot_index)
-                and grid.time_at(slot_index + 1) <= interval.end
+                for slot_index in grid.slots_within(interval)
             }
             return (
                 mathopt.LinearSum(occupancy[slot_index] for slot_index in region_slots)

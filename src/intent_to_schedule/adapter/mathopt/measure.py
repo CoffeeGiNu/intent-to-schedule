@@ -69,12 +69,12 @@ def compile_measure(
     del model
     grid: TimeGrid = problem.calendar.grid
     durations: dict[TaskId, int] = {
-        task.id: grid.index_of(grid.horizon.start + task.duration) for task in problem.tasks
+        task.id: grid.slots_of(task.duration) for task in problem.tasks
     }
     task: FixedTask
     rounded: TimeInterval
     for task in problem.fixed_tasks:
-        rounded = grid.round_outward(TimeInterval(task.start, task.start + task.duration))
+        rounded = grid.round_outward(task.interval)
         durations[task.id] = grid.index_of(rounded.end) - grid.index_of(rounded.start)
 
     match measure:
@@ -128,7 +128,7 @@ def compile_measure(
                 gap, from_presence, presences[measure.to_task_id], bound
             )
         case AggregateMeasure():
-            dates: set[date] = {grid.time_at(slot_index).date() for slot_index in range(grid.slot_count)}
+            dates: tuple[date, ...] = grid.dates
             values: dict[date, mathopt.LinearBase] = {
                 day: mathopt.LinearSum(
                     (
@@ -139,7 +139,7 @@ def compile_measure(
                     * variable
                     for task_id in measure.task_ids
                     for start, variable in placements[task_id].items()
-                    if grid.time_at(start).date() == day
+                    if grid.date_of(grid.time_at(start)) == day
                 )
                 for day in dates
             }

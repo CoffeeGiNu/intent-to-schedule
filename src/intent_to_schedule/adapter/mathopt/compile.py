@@ -45,7 +45,7 @@ def compile_problem(
     presences: dict[TaskId, mathopt.Variable] = {}
     placements: dict[TaskId, dict[int, mathopt.Variable]] = {}
     durations: dict[TaskId, int] = {
-        task.id: grid.index_of(grid.horizon.start + task.duration)
+        task.id: grid.slots_of(task.duration)
         for task in problem.tasks
     }
     participant_ids: set[PersonId] = {
@@ -123,9 +123,7 @@ def compile_problem(
 
     fixed_task: FixedTask
     for fixed_task in problem.fixed_tasks:
-        rounded: TimeInterval = grid.round_outward(
-            TimeInterval(fixed_task.start, fixed_task.start + fixed_task.duration)
-        )
+        rounded: TimeInterval = grid.round_outward(fixed_task.interval)
         start = grid.index_of(rounded.start)
         variable = model.add_variable(
             lb=1.0, ub=1.0, is_integer=True, name=f"place_{fixed_task.id.value}_{start}"

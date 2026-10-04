@@ -13,30 +13,20 @@ def free_slots(problem: SchedulingProblem, person_id: PersonId) -> tuple[bool, .
     free: list[bool] = [False] * grid.slot_count
     availability: Availability
     interval: TimeInterval
-    rounded: TimeInterval | None
-    first: int
-    last: int
+    slots: range
     for availability in problem.calendar.availabilities:
         if availability.person_id != person_id:
             continue
         for interval in availability.intervals:
-            rounded = grid.round_inward(interval)
-            if rounded is None:
-                continue
-            first = max(0, grid.index_of(rounded.start))
-            last = min(grid.slot_count, grid.index_of(rounded.end))
-            if first < last:
-                free[first:last] = [True] * (last - first)
+            slots = grid.slots_within(interval)
+            free[slots.start:slots.stop] = [True] * len(slots)
 
     task: FixedTask
     for task in problem.fixed_tasks:
-        if person_id not in task.participant_ids or task.duration == timedelta(0):
+        if person_id not in task.participant_ids:
             continue
-        rounded = grid.round_outward(TimeInterval(task.start, task.start + task.duration))
-        first = max(0, grid.index_of(rounded.start))
-        last = min(grid.slot_count, grid.index_of(rounded.end))
-        if first < last:
-            free[first:last] = [False] * (last - first)
+        slots = grid.slots_touching(task.interval)
+        free[slots.start:slots.stop] = [False] * len(slots)
     return tuple(free)
 
 
@@ -46,11 +36,11 @@ def available_start_slots(
     """Start slots where every participant is free for the duration."""
     if duration <= timedelta(0):
         raise ValueError("Task duration must be positive.")
-    if duration % grid.slot != timedelta(0):
+    if not grid.is_whole_slots(duration):
         raise ValueError("Task duration must be a multiple of the time grid slot.")
-    if duration > grid.horizon.end - grid.horizon.start:
+    if duration > grid.horizon.duration:
         return ()
-    duration_slots: int = grid.index_of(grid.horizon.start + duration)
+    duration_slots: int = grid.slots_of(duration)
     return tuple(
         start
         for start in range(max(0, grid.slot_count - duration_slots + 1))

@@ -129,13 +129,13 @@ def expand(
     intervals: list[TimeInterval] = []
     interval: TimeInterval
     for interval in times:
-        aligned: TimeInterval | None = (
-            grid.round_inward(interval)
+        slots: range = (
+            grid.slots_within(interval)
             if relation is TimeRelation.WITHIN
-            else grid.round_outward(interval)
+            else grid.slots_touching(interval)
         )
-        if aligned is not None:
-            intervals.append(aligned)
+        if slots:
+            intervals.append(grid.interval_of(slots))
     merged: tuple[TimeInterval, ...] = _merge(intervals, grid.horizon)
     return Expansion(merged, merged != times)
 

@@ -106,25 +106,20 @@ def measure_criterion(
         case IntervalMeasure():
             if not isinstance(criterion.evaluation, Intrusion):
                 raise ValueError("Unsupported interval evaluation")
+            region_indices: set[int] = {
+                slot
+                for region in criterion.evaluation.region
+                for slot in grid.slots_within(region)
+            }
             region_slots: tuple[TimeInterval, ...] = tuple(
                 TimeInterval(grid.time_at(slot), grid.time_at(slot + 1))
-                for slot in range(grid.slot_count)
-                if any(
-                    region.start <= grid.time_at(slot)
-                    and grid.time_at(slot + 1) <= region.end
-                    for region in criterion.evaluation.region
-                )
+                for slot in sorted(region_indices)
             )
             for task_id in sorted(measure.task_ids, key=lambda item: item.value):
                 interval = placements.get(task_id)
                 amount = (
                     sum(
-                        max(
-                            min(interval.end, slot.end)
-                            - max(interval.start, slot.start),
-                            timedelta(0),
-                        )
-                        / timedelta(hours=1)
+                        interval.overlap(slot) / timedelta(hours=1)
                         for slot in region_slots
                     )
                     if interval is not None
@@ -141,9 +136,7 @@ def measure_criterion(
             )
             return CriterionViolation(amount, "hours", ())
         case AggregateMeasure():
-            dates: set[date] = {
-                grid.time_at(slot).date() for slot in range(grid.slot_count)
-            }
+            dates: tuple[date, ...] = grid.dates
             totals: dict[date, int | timedelta] = {
                 day: 0 if measure.quantity is AggregateQuantity.COUNT else timedelta(0)
                 for day in dates
@@ -152,17 +145,17 @@ def measure_criterion(
                 interval = placements.get(task_id)
                 if interval is None:
                     continue
-                day: date = interval.start.astimezone(grid.horizon.start.tzinfo).date()
+                day: date = grid.date_of(interval.start)
                 if day not in totals:
                     continue
                 current: int | timedelta = totals[day]
                 if isinstance(current, int):
                     totals[day] = current + 1
                 else:
-                    totals[day] = current + interval.end - interval.start
+                    totals[day] = current + interval.duration
             parts = [
                 ViolationPart(_evaluate(totals[day], criterion), calendar_date=day)
-                for day in sorted(dates)
+                for day in dates
             ]
     unit: ViolationUnit = (
         "count"

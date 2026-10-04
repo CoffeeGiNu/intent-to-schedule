@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Self
 
+from intent_to_schedule.domain.calendar import TimeInterval
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.strength import Strength
 
@@ -52,3 +53,8 @@ class FixedTask:
     start: datetime
     duration: timedelta
     participant_ids: frozenset[PersonId]
+
+    @property
+    def interval(self) -> TimeInterval:
+        """Time interval occupied by the fixed task."""
+        return TimeInterval(self.start, self.start + self.duration)

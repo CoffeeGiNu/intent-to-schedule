@@ -151,7 +151,7 @@ class AlignedToSlots:
                 )
 
         def check_duration(value: timedelta, label: str) -> None:
-            if not grid.is_aligned(grid.horizon.start + value):
+            if not grid.is_whole_slots(value):
                 violations.append(
                     Violation(f"{label} is not aligned to the time grid.")
                 )

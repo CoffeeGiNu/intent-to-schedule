@@ -372,7 +372,7 @@ class PreviousScheduleQuery:
                     if (self.task_ids is None or item.task_id in self.task_ids)
                     and (
                         self.start_range is None
-                        or self.start_range.start <= item.start < self.start_range.end
+                        or self.start_range.includes(item.start)
                     )
                 ),
                 key=lambda item: (item.start, item.task_id.value),
@@ -436,7 +436,7 @@ class AvailableStartsQuery:
                     f"available_starts duration {self.duration} must be positive."
                 )
             )
-        elif self.duration % grid.slot != timedelta(0):
+        elif not grid.is_whole_slots(self.duration):
             violations.append(
                 Violation(
                     f"available_starts duration {self.duration} must be a multiple of slot {grid.slot}."
@@ -462,10 +462,8 @@ class AvailableStartsQuery:
         start: int
         for start in sorted(starts):
             at: datetime = grid.time_at(start)
-            if any(
-                interval.start <= at and at + self.duration <= interval.end
-                for interval in intervals
-            ):
+            candidate: TimeInterval = TimeInterval(at, at + self.duration)
+            if any(interval.contains(candidate) for interval in intervals):
                 items.append(at)
         return Answered(AvailableStartsAnswer(tuple(items[: self.limit]), len(items)))
 
