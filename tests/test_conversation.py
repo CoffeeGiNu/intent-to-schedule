@@ -135,14 +135,14 @@ def test_message_ends_without_solving(
     """Return the user's message without invoking the solver."""
     problem: SchedulingProblem = make_problem()
     translator: FakeStepTranslator = FakeStepTranslator(
-        (MessageStep("いつがよいですか？"), SolveStep(True))
+        (MessageStep("When works for you?"), SolveStep(True))
     )
     solver: FakeSolver = FakeSolver(Infeasible())
-    dialogue: tuple[Utterance, ...] = (Utterance(Speaker.USER, "相談したい"),)
+    dialogue: tuple[Utterance, ...] = (Utterance(Speaker.USER, "Can we talk about the schedule?"),)
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
         dialogue, problem, None
     )
-    assert response == Response(problem, MessageStep("いつがよいですか？"))
+    assert response == Response(problem, MessageStep("When works for you?"))
     assert translator.calls[0][0] == dialogue
     assert translator.calls[0][2] == ()
     assert summary_calls == [(problem, None)]

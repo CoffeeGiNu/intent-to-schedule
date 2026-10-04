@@ -65,8 +65,8 @@ def make_summary() -> Summary:
     "data, expected",
     [
         (
-            {"result": {"kind": "message", "text": "いつがよいですか？"}},
-            MessageStep("いつがよいですか？"),
+            {"result": {"kind": "message", "text": "When works for you?"}},
+            MessageStep("When works for you?"),
         ),
         ({"result": {"kind": "solve", "stability": True}}, SolveStep(True)),
         ({"result": {"kind": "solve", "stability": False}}, SolveStep(False)),
@@ -177,9 +177,9 @@ def test_translate_sends_summary_dialogue_and_step_results(
     )
     now: datetime = datetime(2026, 9, 30, 10, tzinfo=timezone.utc)
     dialogue: tuple[Utterance, ...] = (
-        Utterance(Speaker.USER, "前の発言"),
-        Utterance(Speaker.ASSISTANT, "確認です"),
-        Utterance(Speaker.USER, "お願いします"),
+        Utterance(Speaker.USER, "Earlier request"),
+        Utterance(Speaker.ASSISTANT, "Let me confirm"),
+        Utterance(Speaker.USER, "Yes, please"),
     )
     result: Step = OpenAIStepTranslator(
         cast(openai.OpenAI, client), "demo-model", lambda: now

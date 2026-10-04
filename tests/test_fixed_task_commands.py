@@ -110,7 +110,7 @@ def appointment() -> FixedTask:
     """Build a fixed health check appointment."""
     return FixedTask(
         TaskId("health-check"),
-        "健康診断",
+        "Health check",
         START + timedelta(minutes=90),
         timedelta(minutes=90),
         frozenset({PARTICIPANT}),
@@ -286,7 +286,7 @@ def test_fixed_task_commands_validate_participant_references(
 def task_input(fixed: bool) -> dict[str, Any]:
     """Build the selected task input shape."""
     data: dict[str, Any] = {
-        "name": "健康診断",
+        "name": "Health check",
         "duration": "PT1H30M",
         "participant_ids": ["ito"],
     }
@@ -337,7 +337,7 @@ def test_json_task_shape_and_identifier_generation(kind: str, fixed: bool) -> No
         assert command_record(command, grid) == {
             "kind": "add_task",
             "task_id": "generated",
-            "name": "健康診断",
+            "name": "Health check",
         }
 
 

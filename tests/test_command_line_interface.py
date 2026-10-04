@@ -711,7 +711,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     )
     save_state(path, state)
     terminal: Step = (
-        MessageStep("いつがよいですか？") if outcome == "message" else SolveStep(True)
+        MessageStep("When works for you?") if outcome == "message" else SolveStep(True)
     )
     steps: list[Step] = [ApplyStep((AddTask(added),)), terminal]
     if outcome == "exhausted":
@@ -751,8 +751,8 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
         solver.solve.assert_not_called()
         if outcome == "message":
             assert status == 0
-            assert output == {"message": "いつがよいですか？"}
-            assert persisted.dialogue[-1].text == "いつがよいですか？"
+            assert output == {"message": "When works for you?"}
+            assert persisted.dialogue[-1].text == "When works for you?"
         else:
             assert status == 1
             assert output == {"exhausted": True}
