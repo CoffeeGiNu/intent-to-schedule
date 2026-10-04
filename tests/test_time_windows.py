@@ -134,7 +134,7 @@ def test_empty_expansion_needs_no_rounding(relation: TimeRelation) -> None:
 
 
 @pytest.mark.parametrize("relation", list(TimeRelation))
-def test_expansion_merges_before_calling_grid_rounding(relation: TimeRelation) -> None:
+def test_expansion_merges_before_selecting_grid_slots(relation: TimeRelation) -> None:
     grid: TimeGrid = TimeGrid(interval(12, 9, 12), timedelta(hours=1))
     windows: tuple[TimeWindow, ...] = (
         TimeWindow(None, None, TimeRange(time(9, 10), time(9, 30))),
@@ -147,8 +147,8 @@ def test_expansion_merges_before_calling_grid_rounding(relation: TimeRelation) -
     rounding: Mock
     with patch.object(
         TimeGrid,
-        "round_outward" if relation is TimeRelation.AVOID else "round_inward",
-        return_value=expected,
+        "slots_touching" if relation is TimeRelation.AVOID else "slots_within",
+        return_value=range(0, 2) if relation is TimeRelation.AVOID else range(0),
     ) as rounding:
         result: Expansion = expand(windows, relation, grid)
     rounding.assert_called_once_with(TimeInterval(at(12, 9, 10), at(12, 10, 10)))
@@ -157,7 +157,7 @@ def test_expansion_merges_before_calling_grid_rounding(relation: TimeRelation) -
     )
 
 
-def test_avoid_expansion_merges_again_after_rounding() -> None:
+def test_avoid_expansion_merges_again_after_selecting_slots() -> None:
     grid: TimeGrid = TimeGrid(interval(12, 9, 13), timedelta(hours=1))
     windows: tuple[TimeWindow, ...] = (
         TimeWindow(None, None, TimeRange(time(9, 10), time(9, 20))),
@@ -167,8 +167,8 @@ def test_avoid_expansion_merges_again_after_rounding() -> None:
     rounding: Mock
     with patch.object(
         TimeGrid,
-        "round_outward",
-        side_effect=(interval(12, 9, 10), interval(12, 10, 11), interval(12, 10, 12)),
+        "slots_touching",
+        side_effect=(range(0, 1), range(1, 2), range(1, 3)),
     ) as rounding:
         result: Expansion = expand(windows, TimeRelation.AVOID, grid)
     assert rounding.call_args_list == [
@@ -180,21 +180,21 @@ def test_avoid_expansion_merges_again_after_rounding() -> None:
 
 
 @pytest.mark.parametrize("relation", list(TimeRelation))
-def test_expansion_reports_unchanged_aligned_times(relation: TimeRelation) -> None:
+def test_expansion_reports_unchanged_aligned_slot_times(relation: TimeRelation) -> None:
     grid: TimeGrid = TimeGrid(interval(12, 9, 12), timedelta(hours=1))
     with patch.object(
         TimeGrid,
-        "round_outward" if relation is TimeRelation.AVOID else "round_inward",
-        return_value=interval(12, 10, 11),
+        "slots_touching" if relation is TimeRelation.AVOID else "slots_within",
+        return_value=range(1, 2),
     ):
         assert expand(
             (TimeWindow(None, None, TimeRange(time(10), time(11))),), relation, grid
         ) == Expansion((interval(12, 10, 11),), False)
 
 
-def test_within_expansion_drops_intervals_without_a_complete_slot() -> None:
+def test_within_expansion_drops_empty_slot_ranges() -> None:
     grid: TimeGrid = TimeGrid(interval(12, 9, 12), timedelta(hours=1))
-    with patch.object(TimeGrid, "round_inward", return_value=None):
+    with patch.object(TimeGrid, "slots_within", return_value=range(0)):
         assert expand(
             (TimeWindow(None, None, TimeRange(time(9, 10), time(9, 20))),),
             TimeRelation.WITHIN,

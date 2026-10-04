@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -37,6 +37,65 @@ def test_time_interval_allows_equal_endpoints() -> None:
     """Allow zero-length domain intervals."""
     start: datetime = datetime(2026, 10, 5, 9)
     assert TimeInterval(start, start).end == start
+
+
+@pytest.mark.parametrize("duration", [timedelta(0), timedelta(hours=1, microseconds=1)])
+def test_time_interval_duration(duration: timedelta) -> None:
+    """Measure interval duration exactly."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    assert TimeInterval(start, start + duration).duration == duration
+
+
+@pytest.mark.parametrize("first,last,expected", [
+    (0, 60, True), (10, 50, True), (0, 0, True), (60, 60, True),
+    (-1, 30, False), (30, 61, False), (-1, 61, False),
+])
+def test_time_interval_contains_whole_interval(first: int, last: int, expected: bool) -> None:
+    """Contain intervals including equal and empty endpoints."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    outer: TimeInterval = TimeInterval(start, start + timedelta(hours=1))
+    inner: TimeInterval = TimeInterval(start + timedelta(minutes=first), start + timedelta(minutes=last))
+    assert outer.contains(inner) is expected
+
+
+@pytest.mark.parametrize("offset,expected", [(-1, False), (0, True), (30, True), (60, False), (61, False)])
+def test_time_interval_includes_half_open_points(offset: int, expected: bool) -> None:
+    """Include the start and exclude the end."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    assert TimeInterval(start, start + timedelta(hours=1)).includes(start + timedelta(minutes=offset)) is expected
+    assert not TimeInterval(start, start).includes(start)
+
+
+@pytest.mark.parametrize("first,last,minutes", [
+    (-60, -1, 0), (-30, 0, 0), (60, 90, 0), (70, 90, 0),
+    (-10, 10, 10), (30, 90, 30), (10, 50, 40), (-10, 70, 60),
+    (0, 60, 60), (30, 30, 0),
+])
+def test_time_interval_overlap_is_symmetric_and_nonnegative(first: int, last: int, minutes: int) -> None:
+    """Measure overlapping time without counting touching endpoints."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    outer: TimeInterval = TimeInterval(start, start + timedelta(hours=1))
+    other: TimeInterval = TimeInterval(start + timedelta(minutes=first), start + timedelta(minutes=last))
+    assert outer.overlap(other) == timedelta(minutes=minutes)
+    assert other.overlap(outer) == timedelta(minutes=minutes)
+
+
+def test_time_interval_operations_compare_instants_across_offsets() -> None:
+    """Compare equivalent times with different offsets."""
+    start: datetime = datetime(2026, 10, 5, 9, tzinfo=timezone(timedelta(hours=9)))
+    outer: TimeInterval = TimeInterval(start, start + timedelta(hours=1))
+    other: TimeInterval = TimeInterval(start.astimezone(timezone.utc), outer.end.astimezone(timezone.utc))
+    assert outer.contains(other)
+    assert outer.includes(other.start)
+    assert outer.overlap(other) == timedelta(hours=1)
+
+
+@pytest.mark.parametrize("duration", [timedelta(0), timedelta(minutes=31, microseconds=1)])
+def test_fixed_task_interval_uses_start_and_duration(duration: timedelta) -> None:
+    """Expose the fixed task's exact interval."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    task: FixedTask = FixedTask(TaskId("fixed"), "Existing", start, duration, frozenset())
+    assert task.interval == TimeInterval(start, start + duration)
 
 
 def make_problem() -> SchedulingProblem:
