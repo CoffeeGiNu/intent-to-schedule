@@ -281,12 +281,21 @@ def test_compiled_problem_has_only_movable_task_variables() -> None:
     )
 
 
-@pytest.mark.parametrize("quantity", list(AggregateQuantity))
 @pytest.mark.parametrize(
-    "offset,expected_count", [(-1440, 0), (-20, 1), (20, 1), (1500, 0)]
+    ("quantity", "offset", "amounts"),
+    [
+        (AggregateQuantity.COUNT, -1440, (0.0, 0.0)),
+        (AggregateQuantity.COUNT, -20, (1.0, 0.0)),
+        (AggregateQuantity.COUNT, 20, (0.0, 1.0)),
+        (AggregateQuantity.COUNT, 1500, (0.0, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, -1440, (0.0, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, -20, (0.25, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, 20, (0.0, 0.25)),
+        (AggregateQuantity.TOTAL_DURATION, 1500, (0.0, 0.0)),
+    ],
 )
 def test_fixed_daily_values_use_real_start_date_in_grid_offset(
-    quantity: AggregateQuantity, offset: int, expected_count: int
+    quantity: AggregateQuantity, offset: int, amounts: tuple[float, float]
 ) -> None:
     """Count real start dates only when they occur in the grid's dates."""
     horizon_start: datetime = START.replace(hour=23, minute=50)
@@ -307,21 +316,17 @@ def test_fixed_daily_values_use_real_start_date_in_grid_offset(
         calendar=Calendar(grid, ()),
         fixed_tasks=(fixed,),
     )
-    expected: float = expected_count * (
-        1.0 if quantity is AggregateQuantity.COUNT else 0.25
-    )
-    schedule: Schedule = assert_costs(value, expected)
+    schedule: Schedule = assert_costs(value, sum(amounts))
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
-    assert (
-        tuple(part.calendar_date for part in evaluation.violation.breakdown)
-        == grid.dates
+    assert tuple(part.calendar_date for part in evaluation.violation.breakdown) == (
+        date(2026, 10, 1),
+        date(2026, 10, 2),
     )
-    if expected_count:
-        assert next(
-            part.calendar_date for part in evaluation.violation.breakdown if part.amount
-        ) == grid.date_of(fixed.start)
+    assert tuple(
+        part.amount for part in evaluation.violation.breakdown
+    ) == pytest.approx(amounts)
 
 
 @pytest.mark.parametrize("relation", list(TaskGapRelation))
@@ -403,16 +408,26 @@ def test_fixed_intrusion_clips_real_overlap_to_horizon(
     )
 
 
-@pytest.mark.parametrize("quantity", list(AggregateQuantity))
 @pytest.mark.parametrize(
-    "offset,duration,expected_count",
-    [(-1440, 40, 0), (-5, 40, 1), (15, 0, 1), (45, 5, 1), (1455, 40, 0)],
+    ("quantity", "offset", "duration", "amounts"),
+    [
+        (AggregateQuantity.COUNT, -1440, 40, (0.0, 0.0)),
+        (AggregateQuantity.COUNT, -5, 40, (1.0, 0.0)),
+        (AggregateQuantity.COUNT, 15, 0, (0.0, 1.0)),
+        (AggregateQuantity.COUNT, 45, 5, (0.0, 1.0)),
+        (AggregateQuantity.COUNT, 1455, 40, (0.0, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, -1440, 40, (0.0, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, -5, 40, (2 / 3, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, 15, 0, (0.0, 0.0)),
+        (AggregateQuantity.TOTAL_DURATION, 45, 5, (0.0, 1 / 12)),
+        (AggregateQuantity.TOTAL_DURATION, 1455, 40, (0.0, 0.0)),
+    ],
 )
 def test_fixed_daily_limit_covers_horizon_dates_without_slot_starts(
     quantity: AggregateQuantity,
-    duration: int,
     offset: int,
-    expected_count: int,
+    duration: int,
+    amounts: tuple[float, float],
 ) -> None:
     """Count whole fixed intervals on included calendar dates."""
     start: datetime = datetime(2026, 10, 1, 23, 50, tzinfo=timezone.utc)
@@ -432,10 +447,7 @@ def test_fixed_daily_limit_covers_horizon_dates_without_slot_starts(
         calendar=Calendar(grid, ()),
         fixed_tasks=(fixed,),
     )
-    expected: float = expected_count * (
-        1.0 if quantity is AggregateQuantity.COUNT else duration / 60
-    )
-    schedule: Schedule = assert_costs(value, expected)
+    schedule: Schedule = assert_costs(value, sum(amounts))
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
@@ -445,7 +457,7 @@ def test_fixed_daily_limit_covers_horizon_dates_without_slot_starts(
     )
     assert tuple(
         part.amount for part in evaluation.violation.breakdown
-    ) == pytest.approx((expected, 0.0) if offset == -5 else (0.0, expected))
+    ) == pytest.approx(amounts)
 
 
 @pytest.mark.parametrize("quantity", list(AggregateQuantity))

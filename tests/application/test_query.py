@@ -1,12 +1,10 @@
 """Tests for scheduling queries."""
 
-from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 
 import pytest
 
-import intent_to_schedule.application.query as query_module
 from intent_to_schedule.application.command import Rejected
 from intent_to_schedule.application.query import (
     Answered,
@@ -428,55 +426,35 @@ def test_available_starts_rejects_invalid_inputs(
     assert message in rejection(query.answer(problem, None)).lower()
 
 
-def test_available_starts_reuses_shared_functions_for_requested_people(
-    problem: SchedulingProblem, monkeypatch: pytest.MonkeyPatch
+def test_available_starts_uses_requested_people_and_limits_afterward(
+    problem: SchedulingProblem,
 ) -> None:
-    """Build requested people only and limit shared candidates afterward."""
-    calls: list[PersonId] = []
-    participants: list[tuple[bool, ...]] = []
-
-    def free_slots(
-        given_problem: SchedulingProblem, person_id: PersonId
-    ) -> tuple[bool, ...]:
-        assert given_problem is problem
-        calls.append(person_id)
-        return (person_id == PersonId("alice"),) * 8
-
-    def available_starts(
-        grid: TimeGrid, participants_free: Sequence[Sequence[bool]], duration: timedelta
-    ) -> tuple[int, ...]:
-        assert grid is problem.calendar.grid and duration == timedelta(hours=1)
-        participants.extend(tuple(slots) for slots in participants_free)
-        return (2, 3, 4)
-
-    monkeypatch.setattr(query_module, "free_slots", free_slots)
-    monkeypatch.setattr(query_module, "available_start_slots", available_starts)
+    """Ignore unrequested people and count shared candidates before the limit."""
+    availabilities: tuple[Availability, ...] = (
+        Availability(PersonId("alice"), (TimeInterval(at(9), at(13)),)),
+        Availability(PersonId("bob"), (TimeInterval(at(10), at(12)),)),
+        Availability(PersonId("alice-two"), ()),
+    )
+    given: SchedulingProblem = replace(
+        problem,
+        calendar=Calendar(problem.calendar.grid, availabilities),
+        fixed_tasks=(),
+    )
     query: AvailableStartsQuery = AvailableStartsQuery(
         frozenset({PersonId("bob"), PersonId("alice")}), timedelta(hours=1), None, 1
     )
-    result: AnswerResult = query.answer(problem, Schedule((), ()))
-    assert result == Answered(AvailableStartsAnswer((at(10),), 3))
-    assert calls == [PersonId("alice"), PersonId("bob")]
-    assert participants == [(True,) * 8, (False,) * 8]
+    assert query.answer(given, Schedule((), ())) == Answered(
+        AvailableStartsAnswer((at(10),), 3)
+    )
 
 
 def test_available_starts_window_filter_uses_whole_duration(
-    problem: SchedulingProblem, monkeypatch: pytest.MonkeyPatch
+    problem: SchedulingProblem,
 ) -> None:
     """Require the whole task to fit a merged window."""
     windows: tuple[TimeWindow, ...] = (
         TimeWindow(None, None, TimeRange(time(10, 15), time(12))),
     )
-
-    def window_times(
-        given_windows: Sequence[TimeWindow], horizon: TimeInterval
-    ) -> tuple[TimeInterval, ...]:
-        assert (
-            tuple(given_windows) == windows and horizon == problem.calendar.grid.horizon
-        )
-        return (TimeInterval(at(10, 15), at(12)),)
-
-    monkeypatch.setattr(query_module, "window_times", window_times)
     result: AnswerResult = AvailableStartsQuery(
         frozenset(), timedelta(hours=1), windows, 1
     ).answer(problem, None)
@@ -486,19 +464,10 @@ def test_available_starts_window_filter_uses_whole_duration(
 @pytest.mark.parametrize("windows, total", [(None, 7), ((), 0)])
 def test_available_starts_omitted_and_empty_windows(
     problem: SchedulingProblem,
-    monkeypatch: pytest.MonkeyPatch,
     windows: tuple[TimeWindow, ...] | None,
     total: int,
 ) -> None:
     """Distinguish the whole horizon from an empty set of windows."""
-
-    def window_times(
-        given_windows: Sequence[TimeWindow], horizon: TimeInterval
-    ) -> tuple[TimeInterval, ...]:
-        assert tuple(given_windows) == ()
-        return ()
-
-    monkeypatch.setattr(query_module, "window_times", window_times)
     result: AnswerResult = AvailableStartsQuery(
         frozenset(), timedelta(hours=1), windows, 20
     ).answer(problem, None)

@@ -4,6 +4,7 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 
+from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.time_windows import (
     DateRange,
     Expansion,
@@ -14,8 +15,6 @@ from intent_to_schedule.domain.time_windows import (
     expand,
     window_times,
 )
-from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
-
 
 OFFSET: timezone = timezone(timedelta(hours=9))
 

@@ -10,8 +10,6 @@ import pytest
 from openai.lib._parsing._responses import type_to_text_format_param
 from openai.types.responses import ResponseFormatTextConfigParam
 
-import intent_to_schedule.adapter.openai.translate as translate
-from intent_to_schedule.adapter.data_model import SummaryQueryData
 from intent_to_schedule.adapter.openai.translate import (
     OpenAIStepTranslator,
     StepOutput,
@@ -80,24 +78,15 @@ def make_summary() -> Summary:
             },
             ApplyStep((RemoveTask(TaskId("review")),)),
         ),
+        (
+            {"result": {"kind": "query", "query": {"kind": "summary"}}},
+            QueryStep(SummaryQuery()),
+        ),
     ],
 )
 def test_convert_step_output(data: dict[str, object], expected: Step) -> None:
-    """Convert terminal and command steps to application values."""
+    """Convert terminal, query, and command steps to application values."""
     assert convert_step_output(StepOutput.model_validate(data)) == expected
-
-
-def test_query_conversion_uses_shared_converter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Delegate query conversion to the shared boundary."""
-    converter: MagicMock = MagicMock(return_value=SummaryQuery())
-    monkeypatch.setattr(translate, "convert_query", converter)
-    output: StepOutput = StepOutput.model_validate(
-        {"result": {"kind": "query", "query": {"kind": "summary"}}}
-    )
-    assert convert_step_output(output) == QueryStep(SummaryQuery())
-    converter.assert_called_once_with(SummaryQueryData(kind="summary"))
 
 
 def test_new_task_gets_generated_id() -> None:
@@ -131,9 +120,7 @@ def test_new_task_gets_generated_id() -> None:
     assert first.commands[0].task.id != second.commands[0].task.id
 
 
-def test_translate_sends_summary_dialogue_and_step_results(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_translate_sends_summary_dialogue_and_step_results() -> None:
     """Send compact JSON context and make one parsed response request."""
     summary: Summary = make_summary()
     task: Task = Task(
@@ -158,18 +145,6 @@ def test_translate_sends_summary_dialogue_and_step_results(
         ApplyRecord(ApplyStep((RemoveTask(TaskId("missing")),)), rejected),
         QueryRecord(QueryStep(SummaryQuery()), rejected),
     )
-    answer_converter: MagicMock = MagicMock(
-        side_effect=[
-            {"kind": "summary", "counts": {"people": 1}, "has_previous": True},
-            {
-                "kind": "people",
-                "items": [{"id": "alice", "name": "Alice"}],
-                "total": 1,
-                "truncated": False,
-            },
-        ]
-    )
-    monkeypatch.setattr(translate, "answer_record", answer_converter)
     client: MagicMock = MagicMock()
     client.responses.parse.return_value.output_parsed = StepOutput.model_validate(
         {"result": {"kind": "message", "text": "done"}}
@@ -198,7 +173,14 @@ def test_translate_sends_summary_dialogue_and_step_results(
     assert context["current_time"] == now.isoformat()
     assert context["summary"] == {
         "kind": "summary",
-        "counts": {"people": 1},
+        "grid": {
+            "horizon": {
+                "start": "2026-10-01T09:00:00Z",
+                "end": "2026-10-01T12:00:00Z",
+            },
+            "slot": "PT1H",
+        },
+        "counts": {"people": 1, "tasks": 0, "fixed_tasks": 0, "constraints": 0},
         "has_previous": True,
     }
     assert "problem" not in context and "previous_schedule" not in context
@@ -226,15 +208,10 @@ def test_translate_sends_summary_dialogue_and_step_results(
         {"kind": "apply", "result": {"rejected": ["Task missing does not exist"]}},
         {"kind": "query", "result": {"rejected": ["Task missing does not exist"]}},
     ]
-    assert answer_converter.call_args_list[0].args == (summary,)
-    assert answer_converter.call_args_list[1].args == (people,)
 
 
-def test_missing_parsed_output_raises_without_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_missing_parsed_output_raises_without_retry() -> None:
     """Fail once when the model returns no structured output."""
-    monkeypatch.setattr(translate, "answer_record", lambda answer: {})
     client: MagicMock = MagicMock()
     client.responses.parse.return_value.output_parsed = None
     with pytest.raises(ValueError, match="no parsed"):

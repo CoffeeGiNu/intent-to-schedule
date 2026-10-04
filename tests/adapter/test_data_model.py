@@ -881,24 +881,19 @@ def test_tasks_record_keeps_fixed_and_movable_shapes() -> None:
 @pytest.mark.parametrize("count", [0, 3])
 def test_time_window_query_keeps_all_windows(count: int) -> None:
     """Keep entered windows complete."""
-    region: tuple[TimeInterval, ...] = tuple(
-        TimeInterval(at(9), at(10)) for _ in range(count)
-    )
     constraint: Constraint = HardConstraint(
         ConstraintId("constraint"),
         TimeWindowCondition(
             frozenset({TaskId("task-one")}),
             TimeRelation.AVOID,
-            tuple(
+            (
                 TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
+                    DateRange(date(2026, 10, 1), date(2026, 10, 2)),
                     None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in region
-            ),
+                    TimeRange(time(9), time(10)),
+                ),
+            )
+            * count,
         ),
     )
     window: dict[str, object] = {
