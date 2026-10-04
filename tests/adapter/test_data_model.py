@@ -1,7 +1,8 @@
 """Tests for the JSON data models and their conversions."""
 
 import json
-from datetime import datetime, time, timedelta, timezone
+from calendar import Day
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Annotated, Any, cast
 from unittest.mock import Mock, patch
 
@@ -9,6 +10,7 @@ import pytest
 from pydantic import Field, TypeAdapter, ValidationError
 
 from intent_to_schedule.adapter.data_model import (
+    AddConstraintData,
     AddTaskData,
     CommandData,
     CommandsData,
@@ -25,11 +27,14 @@ from intent_to_schedule.adapter.data_model import (
     TaskData,
     TimeBoundConditionData,
     TimeIntervalData,
+    TimeWindowData,
     answer_record,
     command_record,
+    convert_command,
     convert_commands_input,
     convert_fixed_task,
     convert_query,
+    convert_time_window,
     to_fixed_task_data,
 )
 from intent_to_schedule.application.command import (
@@ -86,6 +91,7 @@ from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 from intent_to_schedule.domain.time_windows import (
     DateRange,
+    Expansion,
     TimeRange,
     TimeRelation,
     TimeWindow,
@@ -540,36 +546,6 @@ def test_time_window_constraint_conversion_generates_id_once(
     requirement: dict[str, str],
     expected_strength: str | None,
 ) -> None:
-    from calendar import Day
-    from datetime import date, time
-    from unittest.mock import Mock, patch
-
-    from intent_to_schedule.adapter.data_model import (
-        AddConstraintData,
-        command_record,
-        convert_command,
-    )
-    from intent_to_schedule.application.command import (
-        AddConstraint,
-        SchedulingCommand,
-    )
-    from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
-    from intent_to_schedule.domain.condition import TimeWindowCondition
-    from intent_to_schedule.domain.constraint import (
-        ConstraintId,
-        HardConstraint,
-        SoftConstraint,
-    )
-    from intent_to_schedule.domain.strength import Strength
-    from intent_to_schedule.domain.task import TaskId
-    from intent_to_schedule.domain.time_windows import (
-        DateRange,
-        Expansion,
-        TimeRange,
-        TimeRelation,
-        TimeWindow,
-    )
-
     data: AddConstraintData = AddConstraintData.model_validate(
         {
             "kind": "add_constraint",
@@ -634,12 +610,6 @@ def test_time_window_constraint_conversion_generates_id_once(
 def test_time_window_constraint_conversion_preserves_omitted_and_empty_window_fields() -> (
     None
 ):
-    from intent_to_schedule.adapter.data_model import (
-        TimeWindowData,
-        convert_time_window,
-    )
-    from intent_to_schedule.domain.time_windows import TimeWindow
-
     assert convert_time_window(TimeWindowData()) == TimeWindow(None, None, None)
     assert convert_time_window(TimeWindowData(weekdays=())) == TimeWindow(
         None, frozenset(), None
@@ -648,10 +618,6 @@ def test_time_window_constraint_conversion_preserves_omitted_and_empty_window_fi
 
 @pytest.mark.parametrize("end", ["13:00", "12:00"])
 def test_time_window_constraint_input_rejects_nonincreasing_times(end: str) -> None:
-    from pydantic import ValidationError
-
-    from intent_to_schedule.adapter.data_model import AddConstraintData
-
     with pytest.raises(ValidationError) as error:
         AddConstraintData.model_validate(
             {
@@ -676,10 +642,6 @@ def test_time_window_constraint_input_rejects_nonincreasing_times(end: str) -> N
 def test_time_window_constraint_input_rejects_zoned_times(
     start: str, end: str | None
 ) -> None:
-    from pydantic import ValidationError
-
-    from intent_to_schedule.adapter.data_model import AddConstraintData
-
     with pytest.raises(ValidationError) as error:
         AddConstraintData.model_validate(
             {

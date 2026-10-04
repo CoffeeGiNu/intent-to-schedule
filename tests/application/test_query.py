@@ -428,32 +428,6 @@ def test_available_starts_rejects_invalid_inputs(
     assert message in rejection(query.answer(problem, None)).lower()
 
 
-def stub_start_candidates(
-    monkeypatch: pytest.MonkeyPatch, candidates: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
-) -> None:
-    """Supply shared start candidates without invoking unfinished dependencies."""
-
-    def available_starts(
-        grid: TimeGrid, participants_free: Sequence[Sequence[bool]], duration: timedelta
-    ) -> tuple[int, ...]:
-        return candidates
-
-    def time_at(grid: TimeGrid, index: int) -> datetime:
-        return (
-            at(9),
-            at(9, 30),
-            at(10),
-            at(10, 30),
-            at(11),
-            at(11, 30),
-            at(12),
-            at(12, 30),
-        )[index]
-
-    monkeypatch.setattr(query_module, "available_start_slots", available_starts)
-    monkeypatch.setattr(TimeGrid, "time_at", time_at)
-
-
 def test_available_starts_reuses_shared_functions_for_requested_people(
     problem: SchedulingProblem, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -475,7 +449,6 @@ def test_available_starts_reuses_shared_functions_for_requested_people(
         participants.extend(tuple(slots) for slots in participants_free)
         return (2, 3, 4)
 
-    stub_start_candidates(monkeypatch)
     monkeypatch.setattr(query_module, "free_slots", free_slots)
     monkeypatch.setattr(query_module, "available_start_slots", available_starts)
     query: AvailableStartsQuery = AvailableStartsQuery(
@@ -491,7 +464,6 @@ def test_available_starts_window_filter_uses_whole_duration(
     problem: SchedulingProblem, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Require the whole task to fit a merged window."""
-    stub_start_candidates(monkeypatch)
     windows: tuple[TimeWindow, ...] = (
         TimeWindow(None, None, TimeRange(time(10, 15), time(12))),
     )
@@ -519,7 +491,6 @@ def test_available_starts_omitted_and_empty_windows(
     total: int,
 ) -> None:
     """Distinguish the whole horizon from an empty set of windows."""
-    stub_start_candidates(monkeypatch)
 
     def window_times(
         given_windows: Sequence[TimeWindow], horizon: TimeInterval
@@ -582,10 +553,9 @@ def test_available_starts_no_participants_shared_horizon(
 
 
 def test_available_starts_shared_windows_merge_before_containment(
-    problem: SchedulingProblem, monkeypatch: pytest.MonkeyPatch
+    problem: SchedulingProblem,
 ) -> None:
     """Fit across adjacent windows before checking the whole duration."""
-    stub_start_candidates(monkeypatch)
     windows: tuple[TimeWindow, ...] = (
         TimeWindow(None, None, TimeRange(time(10, 15), time(11))),
         TimeWindow(None, None, TimeRange(time(11), time(12))),
@@ -672,16 +642,7 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
         TimeWindowCondition(
             frozenset({task.id}),
             TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (problem.calendar.grid.horizon,)
-            ),
+            (TimeWindow(None, None, TimeRange(time(9), time(13))),),
         ),
     )
     previous: Schedule = Schedule(

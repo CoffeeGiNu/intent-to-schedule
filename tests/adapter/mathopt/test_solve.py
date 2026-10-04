@@ -60,7 +60,6 @@ from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledT
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 from intent_to_schedule.domain.time_windows import (
-    DateRange,
     TimeRange,
     TimeRelation,
     TimeWindow,
@@ -180,16 +179,7 @@ def test_soft_interval_intrusion_avoids_region() -> None:
         TimeWindowCondition(
             frozenset({item.id}),
             TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (TimeInterval(START, START + timedelta(hours=1)),)
-            ),
+            (TimeWindow(None, None, TimeRange(time(9), time(10))),),
         ),
         Strength.STRONG,
     )
@@ -369,16 +359,7 @@ def test_fixed_task_point_and_interval_measures_use_real_interval() -> None:
         TimeWindowCondition(
             frozenset({fixed.id}),
             TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (TimeInterval(START + SLOT, START + 2 * SLOT),)
-            ),
+            (TimeWindow(None, None, TimeRange(time(9, 30), time(10))),),
         ),
     )
     assert isinstance(

@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-import intent_to_schedule.application.converse as converse
 from intent_to_schedule.application.command import (
     AddTask,
     Executed,
@@ -14,10 +13,10 @@ from intent_to_schedule.application.command import (
     RemoveTask,
 )
 from intent_to_schedule.application.converse import (
+    STEP_LIMIT,
     Conversation,
     Exhausted,
     Response,
-    STEP_LIMIT,
 )
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import (
@@ -43,7 +42,7 @@ from intent_to_schedule.application.translate import (
     Utterance,
 )
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
-from intent_to_schedule.domain.consistency import AllOf
+from intent_to_schedule.domain.consistency import AllOf, Violation, Violations
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 from intent_to_schedule.domain.strength import Strength
@@ -125,31 +124,7 @@ def make_task() -> Task:
     )
 
 
-@pytest.fixture
-def summary_calls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[SchedulingProblem, Schedule | None]]:
-    """Replace the unfinished summary query with a recording fake."""
-    calls: list[tuple[SchedulingProblem, Schedule | None]] = []
-
-    def summarize(problem: SchedulingProblem, previous: Schedule | None) -> Summary:
-        calls.append((problem, previous))
-        return Summary(
-            problem.calendar.grid,
-            len(problem.people),
-            len(problem.tasks),
-            len(problem.fixed_tasks),
-            len(problem.constraints),
-            previous is not None,
-        )
-
-    monkeypatch.setattr(converse, "summarize", summarize, raising=False)
-    return calls
-
-
-def test_message_ends_without_solving(
-    summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
-) -> None:
+def test_message_ends_without_solving() -> None:
     """Return the user's message without invoking the solver."""
     problem: SchedulingProblem = make_problem()
     translator: FakeStepTranslator = FakeStepTranslator(
@@ -163,16 +138,15 @@ def test_message_ends_without_solving(
         dialogue, problem, None
     )
     assert response == Response(problem, MessageStep("When works for you?"))
-    assert translator.calls[0][0] == dialogue
-    assert translator.calls[0][2] == ()
-    assert summary_calls == [(problem, None)]
+    assert translator.calls == [
+        (dialogue, Summary(problem.calendar.grid, 0, 0, 0, 0, False), ())
+    ]
     assert solver.problems == []
 
 
 @pytest.mark.parametrize("stability", [True, False])
 @pytest.mark.parametrize("result", [Solved(Schedule((), ())), Infeasible()])
 def test_apply_then_solve_uses_working_problem_and_stability(
-    summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
     monkeypatch: pytest.MonkeyPatch,
     stability: bool,
     result: SolveResult,
@@ -200,14 +174,14 @@ def test_apply_then_solve_uses_working_problem_and_stability(
     assert problem.tasks == ()
     assert response.outcome == result
     assert solve_calls == [(response.problem, previous if stability else None)]
-    assert summary_calls == [(problem, previous), (response.problem, previous)]
-    assert translator.calls[1][1].tasks == 1
+    assert [call[1] for call in translator.calls] == [
+        Summary(problem.calendar.grid, 0, 0, 0, 0, True),
+        Summary(problem.calendar.grid, 0, 1, 0, 0, True),
+    ]
     assert translator.calls[1][2] == (ApplyRecord(step, Executed(response.problem)),)
 
 
-def test_rejected_batch_is_recorded_and_can_be_corrected(
-    summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
-) -> None:
+def test_rejected_batch_is_recorded_and_can_be_corrected() -> None:
     """Continue after rejection without retaining partial batch edits."""
     problem: SchedulingProblem = make_problem()
     task: Task = make_task()
@@ -224,20 +198,16 @@ def test_rejected_batch_is_recorded_and_can_be_corrected(
     assert isinstance(record, ApplyRecord)
     assert isinstance(record.result, Rejected)
     assert record.result.violations.items[0].message == "Task missing does not exist"
-    assert summary_calls[1][0] == problem
+    assert translator.calls[1][1].tasks == 0
     assert response.problem.tasks == (task,)
     assert len(translator.calls[2][2]) == 2
 
 
 @pytest.mark.parametrize("rejected", [False, True])
 def test_query_uses_working_problem_and_records_result(
-    summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
-    monkeypatch: pytest.MonkeyPatch,
-    rejected: bool,
+    monkeypatch: pytest.MonkeyPatch, rejected: bool
 ) -> None:
     """Feed query answers and rejections into the next step."""
-    from intent_to_schedule.domain.consistency import Violation, Violations
-
     problem: SchedulingProblem = make_problem()
     previous: Schedule = Schedule((), ())
     task: Task = make_task()
@@ -272,9 +242,7 @@ def test_query_uses_working_problem_and_records_result(
     assert translator.calls[2][2][1] == QueryRecord(query_step, result)
 
 
-def test_step_limit_returns_exhausted_after_repeated_rejections(
-    summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
-) -> None:
+def test_step_limit_returns_exhausted_after_repeated_rejections() -> None:
     """Stop at the step limit without raising for repeated rejections."""
     problem: SchedulingProblem = make_problem()
     translator: FakeStepTranslator = FakeStepTranslator(
@@ -286,14 +254,11 @@ def test_step_limit_returns_exhausted_after_repeated_rejections(
     )
     assert response == Response(problem, Exhausted())
     assert len(translator.calls) == STEP_LIMIT
-    assert len(summary_calls) == STEP_LIMIT
     assert len(translator.calls[-1][2]) == STEP_LIMIT - 1
     assert solver.problems == []
 
 
-def test_terminal_step_at_limit_is_honored(
-    summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
-) -> None:
+def test_terminal_step_at_limit_is_honored() -> None:
     """Allow the final permitted step to end the turn."""
     translator: FakeStepTranslator = FakeStepTranslator(
         (ApplyStep(()),) * (STEP_LIMIT - 1) + (MessageStep("done"),)

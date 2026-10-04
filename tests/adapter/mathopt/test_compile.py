@@ -49,12 +49,10 @@ from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledT
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 from intent_to_schedule.domain.time_windows import (
-    DateRange,
     TimeRange,
     TimeRelation,
     TimeWindow,
 )
-from intent_to_schedule.domain.violation import ViolationPart
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
 SLOT: timedelta = timedelta(minutes=30)
@@ -441,7 +439,6 @@ def test_fixed_daily_limit_covers_horizon_dates_without_slot_starts(
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
-    part: ViolationPart
     assert tuple(part.calendar_date for part in evaluation.violation.breakdown) == (
         date(2026, 10, 1),
         date(2026, 10, 2),
@@ -518,7 +515,6 @@ def test_daily_breakdown_includes_dates_without_slot_starts(
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
-    part: ViolationPart
     assert tuple(part.calendar_date for part in evaluation.violation.breakdown) == (
         date(2026, 10, 1),
         date(2026, 10, 2),
@@ -849,18 +845,9 @@ def test_multi_task_soft_intrusion_matches_separate_drops() -> None:
     combined: SoftConstraint = SoftConstraint(
         ConstraintId("combined"),
         TimeWindowCondition(
-            frozenset((item.id for item in tasks)),
+            frozenset(item.id for item in tasks),
             TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (base.calendar.grid.horizon,)
-            ),
+            (TimeWindow(None, None, TimeRange(time(9), time(12))),),
         ),
         Strength.NORMAL,
     )
@@ -913,16 +900,7 @@ def test_multi_task_intrusion_sums_real_fixed_and_movable_overlap() -> None:
         TimeWindowCondition(
             frozenset({first.id, fixed.id}),
             TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (base.calendar.grid.horizon,)
-            ),
+            (TimeWindow(None, None, TimeRange(time(9), time(12))),),
         ),
         Strength.NORMAL,
     )
@@ -953,18 +931,9 @@ def test_multi_task_hard_intrusion_matches_separate_infeasibility() -> None:
     combined: HardConstraint = HardConstraint(
         ConstraintId("combined"),
         TimeWindowCondition(
-            frozenset((item.id for item in base.tasks)),
+            frozenset(item.id for item in base.tasks),
             TimeRelation.AVOID,
-            tuple(
-                TimeWindow(
-                    DateRange(
-                        interval.start.date(), interval.start.date() + timedelta(days=1)
-                    ),
-                    None,
-                    TimeRange(interval.start.time(), interval.end.time()),
-                )
-                for interval in (base.calendar.grid.horizon,)
-            ),
+            (TimeWindow(None, None, TimeRange(time(9), time(12))),),
         ),
     )
     separate: tuple[Constraint, ...] = tuple(

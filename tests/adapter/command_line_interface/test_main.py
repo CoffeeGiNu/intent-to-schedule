@@ -7,20 +7,44 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import openai
 import pytest
 
-from intent_to_schedule.adapter.command_line_interface.main import main
+import intent_to_schedule.adapter.command_line_interface.main as main_module
+import intent_to_schedule.application.converse as converse
+from intent_to_schedule.adapter.command_line_interface.main import chat, main
 from intent_to_schedule.adapter.command_line_interface.state import (
+    CalendarInput,
+    ProblemState,
     State,
+    UtteranceState,
     load_state,
     save_state,
     to_problem,
     to_problem_state,
+    to_schedule,
     to_schedule_state,
 )
+from intent_to_schedule.adapter.data_model import (
+    ConstraintData,
+    SoftRequirementData,
+    TimeWindowConditionData,
+)
+from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
+from intent_to_schedule.application.command import AddTask
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
+from intent_to_schedule.application.schedule import Scheduling
+from intent_to_schedule.application.solve import Infeasible, Solved
+from intent_to_schedule.application.translate import (
+    ApplyStep,
+    MessageStep,
+    SolveStep,
+    Speaker,
+    Step,
+    Utterance,
+)
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
@@ -28,11 +52,13 @@ from intent_to_schedule.domain.calendar import (
     TimeInterval,
 )
 from intent_to_schedule.domain.condition import TimeBoundCondition, TimeBoundRelation
+from intent_to_schedule.domain.consistency import AllOf
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
 from intent_to_schedule.domain.measure import Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
+from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
@@ -598,12 +624,6 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
     relation_value: str,
     direction: str,
 ) -> None:
-    from intent_to_schedule.adapter.data_model import (
-        ConstraintData,
-        SoftRequirementData,
-        TimeWindowConditionData,
-    )
-
     path: Path = initialized(tmp_path, capsys)
     monkeypatch.setattr(
         sys,
@@ -701,11 +721,6 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
 
 def query_state(tmp_path: Path) -> Path:
     """Create query state without applying commands or solving."""
-    from intent_to_schedule.adapter.command_line_interface.state import (
-        CalendarInput,
-        ProblemState,
-    )
-
     calendar: CalendarInput = CalendarInput.model_validate(calendar_data())
     path: Path = tmp_path / "query-state.json"
     save_state(
@@ -856,40 +871,6 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     stability: bool,
 ) -> None:
     """Persist dialogue for every turn and problem changes only after solve."""
-    from unittest.mock import MagicMock
-
-    import openai
-
-    import intent_to_schedule.adapter.command_line_interface.main as main_module
-    import intent_to_schedule.application.converse as converse
-    from intent_to_schedule.adapter.command_line_interface.main import chat
-    from intent_to_schedule.adapter.command_line_interface.state import (
-        UtteranceState,
-        to_schedule_state,
-    )
-    from intent_to_schedule.application.command import AddTask
-    from intent_to_schedule.application.schedule import Scheduling
-    from intent_to_schedule.application.solve import Infeasible, Solved
-    from intent_to_schedule.application.translate import (
-        ApplyStep,
-        MessageStep,
-        SolveStep,
-        Speaker,
-        Step,
-        Utterance,
-    )
-    from intent_to_schedule.domain.calendar import (
-        Availability,
-        Calendar,
-        TimeGrid,
-        TimeInterval,
-    )
-    from intent_to_schedule.domain.consistency import AllOf
-    from intent_to_schedule.domain.person import Person, PersonId
-    from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
-    from intent_to_schedule.domain.strength import Strength
-    from intent_to_schedule.domain.task import Importance, Task, TaskId
-
     start: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
     horizon: TimeInterval = TimeInterval(start, start + timedelta(hours=3))
     existing: Task = Task(
@@ -1146,16 +1127,6 @@ def test_solve_option_passes_previous_schedule(
     stability: bool,
 ) -> None:
     """Pass the saved schedule only when stability is enabled."""
-    from unittest.mock import MagicMock
-
-    from intent_to_schedule.adapter.command_line_interface.state import (
-        to_schedule,
-        to_schedule_state,
-    )
-    from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
-    from intent_to_schedule.application.solve import Solved
-    from intent_to_schedule.domain.schedule import Schedule
-
     path: Path = initialized(tmp_path, capsys)
     state: State = load_state(path)
     previous: Schedule = Schedule((), ())

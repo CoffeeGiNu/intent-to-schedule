@@ -92,7 +92,7 @@ def test_query_conversion_uses_shared_converter(
 ) -> None:
     """Delegate query conversion to the shared boundary."""
     converter: MagicMock = MagicMock(return_value=SummaryQuery())
-    monkeypatch.setattr(translate, "convert_query", converter, raising=False)
+    monkeypatch.setattr(translate, "convert_query", converter)
     output: StepOutput = StepOutput.model_validate(
         {"result": {"kind": "query", "query": {"kind": "summary"}}}
     )
@@ -169,7 +169,7 @@ def test_translate_sends_summary_dialogue_and_step_results(
             },
         ]
     )
-    monkeypatch.setattr(translate, "answer_record", answer_converter, raising=False)
+    monkeypatch.setattr(translate, "answer_record", answer_converter)
     client: MagicMock = MagicMock()
     client.responses.parse.return_value.output_parsed = StepOutput.model_validate(
         {"result": {"kind": "message", "text": "done"}}
@@ -234,7 +234,7 @@ def test_missing_parsed_output_raises_without_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fail once when the model returns no structured output."""
-    monkeypatch.setattr(translate, "answer_record", lambda answer: {}, raising=False)
+    monkeypatch.setattr(translate, "answer_record", lambda answer: {})
     client: MagicMock = MagicMock()
     client.responses.parse.return_value.output_parsed = None
     with pytest.raises(ValueError, match="no parsed"):
