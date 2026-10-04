@@ -271,7 +271,7 @@ def test_overlapping_fixed_tasks_still_solve() -> None:
     ) == Schedule((), ())
 
 
-def test_dependency_shortfall_schedules_task_after_rounded_fixed_task() -> None:
+def test_dependency_shortfall_schedules_task_after_real_fixed_task() -> None:
     fixed: FixedTask = FixedTask(
         TaskId("fixed"),
         "Existing",
@@ -295,22 +295,9 @@ def test_dependency_shortfall_schedules_task_after_rounded_fixed_task() -> None:
         movable, fixed_tasks=(fixed,), constraints=(constraint, preference)
     )
     compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
-    assert set(compiled.placements[fixed.id]) == {0}
-    assert (
-        compiled.placements[fixed.id][0].lower_bound
-        == compiled.placements[fixed.id][0].upper_bound
-        == 1
-    )
-    assert (
-        compiled.presences[fixed.id].lower_bound
-        == compiled.presences[fixed.id].upper_bound
-        == 1
-    )
-    assert (
-        compiled.starts[fixed.id].lower_bound
-        == compiled.starts[fixed.id].upper_bound
-        == 0
-    )
+    assert fixed.id not in compiled.placements
+    assert fixed.id not in compiled.presences
+    assert fixed.id not in compiled.starts
     assert starts(schedule_for(value)) == {movable.id: START + 3 * SLOT}
 
 
@@ -344,7 +331,7 @@ def test_dependency_shortfall_to_fixed_task_schedules_task_before_it() -> None:
     "quantity, upper",
     [(AggregateQuantity.COUNT, 0), (AggregateQuantity.TOTAL_DURATION, SLOT)],
 )
-def test_fixed_task_aggregates_use_rounded_duration(
+def test_fixed_task_aggregates_use_real_duration(
     quantity: AggregateQuantity, upper: int | timedelta
 ) -> None:
     fixed: FixedTask = FixedTask(
@@ -356,11 +343,11 @@ def test_fixed_task_aggregates_use_rounded_duration(
     )
     assert isinstance(
         SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(constraint,))),
-        Infeasible,
+        Infeasible if quantity is AggregateQuantity.COUNT else Solved,
     )
 
 
-def test_fixed_task_point_and_interval_measures_use_rounded_slots() -> None:
+def test_fixed_task_point_and_interval_measures_use_real_interval() -> None:
     fixed: FixedTask = FixedTask(
         TaskId("fixed"), "Existing", START + timedelta(minutes=10), SLOT, frozenset()
     )
@@ -370,9 +357,9 @@ def test_fixed_task_point_and_interval_measures_use_rounded_slots() -> None:
             frozenset({fixed.id}), Boundary.START, TimeBoundRelation.AT, START
         ),
     )
-    assert schedule_for(
-        problem(fixed_tasks=(fixed,), constraints=(point,))
-    ) == Schedule((), ())
+    assert isinstance(
+        SOLVER.solve(problem(fixed_tasks=(fixed,), constraints=(point,))), Infeasible
+    )
     interval: HardConstraint = HardConstraint(
         ConstraintId("interval"),
         TimeWindowCondition(

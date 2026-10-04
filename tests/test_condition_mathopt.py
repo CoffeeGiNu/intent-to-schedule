@@ -282,7 +282,7 @@ def test_unscheduled_task_has_no_gap_violation(relation: TaskGapRelation) -> Non
 
 @pytest.mark.parametrize("boundary", list(Boundary))
 @pytest.mark.parametrize("relation", list(TimeBoundRelation))
-def test_fixed_time_bound_cost_uses_existing_rounded_interval(
+def test_fixed_time_bound_cost_uses_existing_real_interval(
     boundary: Boundary, relation: TimeBoundRelation
 ) -> None:
     fixed: FixedTask = FixedTask(
@@ -294,7 +294,8 @@ def test_fixed_time_bound_cost_uses_existing_rounded_interval(
     )
     target: datetime = START + timedelta(minutes=45)
     difference: float = (
-        (START if boundary is Boundary.START else START + 2 * HOUR) - target
+        (fixed.interval.start if boundary is Boundary.START else fixed.interval.end)
+        - target
     ) / HOUR
     expected: float = (
         max(difference, 0.0)

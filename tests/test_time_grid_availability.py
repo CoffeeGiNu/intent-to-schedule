@@ -53,38 +53,13 @@ def test_grid_rejects_unaligned_horizon_end() -> None:
 def test_grid_coordinates_extend_beyond_horizon(index: int) -> None:
     assert GRID.slot_count == 4
     assert GRID.time_at(index) == START + index * SLOT
-    assert GRID.index_of(GRID.time_at(index)) == index
     assert GRID.is_aligned(GRID.time_at(index))
-
-
-@pytest.mark.parametrize("offset", [-1, 1, 29, 31, 121])
-def test_grid_rejects_unaligned_times_without_truncation(offset: int) -> None:
-    at: datetime = START + timedelta(minutes=offset)
-    assert not GRID.is_aligned(at)
-    with pytest.raises(ValueError, match="aligned"):
-        GRID.index_of(at)
 
 
 def test_grid_alignment_preserves_microsecond_precision() -> None:
     tiny: TimeGrid = TimeGrid(TimeInterval(START, START + timedelta(microseconds=12)), timedelta(microseconds=3))
     assert tiny.slot_count == 4
-    assert tiny.index_of(START + timedelta(microseconds=9)) == 3
     assert not tiny.is_aligned(START + timedelta(microseconds=10))
-
-
-@pytest.mark.parametrize("first,last,expected", [
-    (10, 40, (0, 60)), (0, 60, (0, 60)), (-40, -10, (-60, 0)),
-    (110, 140, (90, 150)), (-10, 130, (-30, 150)),
-])
-def test_outward_rounding_uses_origin_without_clipping(first: int, last: int, expected: tuple[int, int]) -> None:
-    assert GRID.round_outward(interval(first, last)) == interval(*expected)
-
-
-@pytest.mark.parametrize("offset", [-10, 0, 10, 120, 130])
-def test_outward_rounding_keeps_empty_interval_empty(offset: int) -> None:
-    rounded: TimeInterval = GRID.round_outward(interval(offset, offset))
-    assert rounded.start == rounded.end
-    assert GRID.is_aligned(rounded.start)
 
 
 @pytest.mark.parametrize("first,last,expected", [
@@ -153,12 +128,54 @@ def test_date_of_uses_horizon_start_offset() -> None:
     assert GRID.date_of(at) == date(2026, 10, 2)
 
 
-def test_dates_are_sorted_unique_slot_start_dates() -> None:
+def test_dates_are_sorted_unique_horizon_dates() -> None:
+    """Include every horizon date regardless of slot starts."""
     start: datetime = datetime(2026, 10, 1, 23, tzinfo=START.tzinfo)
     grid: TimeGrid = TimeGrid(TimeInterval(start, start + timedelta(hours=25)), timedelta(hours=1))
     assert grid.dates == (date(2026, 10, 1), date(2026, 10, 2))
     sparse: TimeGrid = TimeGrid(TimeInterval(start, start + timedelta(days=4)), timedelta(days=2))
-    assert sparse.dates == (date(2026, 10, 1), date(2026, 10, 3))
+    assert sparse.dates == (
+        date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3),
+        date(2026, 10, 4), date(2026, 10, 5),
+    )
+
+
+@pytest.mark.parametrize("duration,expected", [
+    (timedelta(minutes=10), (date(2026, 10, 1),)),
+    (timedelta(minutes=10, microseconds=1), (date(2026, 10, 1), date(2026, 10, 2))),
+    (SLOT, (date(2026, 10, 1), date(2026, 10, 2))),
+])
+def test_dates_cover_half_open_horizon_in_start_offset(
+    duration: timedelta, expected: tuple[date, ...]
+) -> None:
+    """Use the start offset and exclude an end at midnight."""
+    start: datetime = START.replace(hour=23, minute=50)
+    end: datetime = (start + duration).astimezone(timezone.utc)
+    grid: TimeGrid = TimeGrid(TimeInterval(start, end), duration)
+    assert grid.dates == expected
+
+
+@pytest.mark.parametrize("slot", [SLOT, timedelta(hours=1), timedelta(days=2)])
+def test_dates_do_not_depend_on_slot_size(slot: timedelta) -> None:
+    """Keep daily scope constant across scheduling resolutions."""
+    start: datetime = START.replace(hour=23, minute=50)
+    grid: TimeGrid = TimeGrid(TimeInterval(start, start + timedelta(days=4)), slot)
+    assert grid.dates == (
+        date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3),
+        date(2026, 10, 4), date(2026, 10, 5),
+    )
+
+
+@pytest.mark.parametrize("end", [
+    datetime.min.replace(tzinfo=timezone.utc) + timedelta(microseconds=1),
+    datetime.max.replace(tzinfo=timezone.utc),
+])
+def test_dates_preserve_datetime_extremes(end: datetime) -> None:
+    """Enumerate dates without overflowing datetime boundaries."""
+    grid: TimeGrid = TimeGrid(
+        TimeInterval(end - timedelta(microseconds=1), end), timedelta(microseconds=1)
+    )
+    assert grid.dates == (end.date(),)
 
 
 def test_free_slots_unions_availability_and_ignores_other_people() -> None:

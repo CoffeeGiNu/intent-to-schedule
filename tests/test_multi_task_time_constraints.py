@@ -200,7 +200,7 @@ def test_multi_task_soft_intrusion_matches_separate_drops(
     )
 
 
-def test_multi_task_intrusion_sums_rounded_fixed_and_movable_overlap(
+def test_multi_task_intrusion_sums_real_fixed_and_movable_overlap(
     problem: SchedulingProblem,
 ) -> None:
     """Count overlapping fixed and movable occupancy separately."""
@@ -247,7 +247,7 @@ def test_multi_task_intrusion_sums_rounded_fixed_and_movable_overlap(
         Strength.WEAK,
     )
     given: SchedulingProblem = replace(problem, tasks=(first,), fixed_tasks=(fixed,))
-    expected: tuple[float, dict[TaskId, int | None]] = (10.0, {first.id: 0})
+    expected: tuple[float, dict[TaskId, int | None]] = (7.5, {first.id: 0})
     assert solve_details(replace(given, constraints=(combined, target))) == expected
     assert solve_details(replace(given, constraints=(*separate, target))) == expected
 

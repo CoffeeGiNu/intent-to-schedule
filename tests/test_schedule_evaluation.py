@@ -323,8 +323,8 @@ def test_evaluation_amounts_units_costs_breakdowns_and_ordering() -> None:
     )
     assert all(part["cost"] is None for part in hard_breakdown)
     assert by_identifier["weak"]["label"] == "Deadline"
-    assert by_identifier["weak"]["violation"] == {"amount": 3.0, "unit": "hours"}
-    assert by_identifier["weak"]["cost"] == 3.0
+    assert by_identifier["weak"]["violation"] == {"amount": 13 / 6, "unit": "hours"}
+    assert by_identifier["weak"]["cost"] == 13 / 6
     assert by_identifier["weak"]["requirement"] == {"kind": "soft", "strength": "weak"}
     assert by_identifier["weak"]["breakdown"] == [
         {
@@ -339,8 +339,8 @@ def test_evaluation_amounts_units_costs_breakdowns_and_ordering() -> None:
         },
         {
             "task_id": "fixed",
-            "violation": {"amount": 1.5, "unit": "hours"},
-            "cost": 1.5,
+            "violation": {"amount": 2 / 3, "unit": "hours"},
+            "cost": 2 / 3,
         },
         {
             "task_id": "missing",
@@ -357,10 +357,10 @@ def test_evaluation_amounts_units_costs_breakdowns_and_ordering() -> None:
             "cost": 20.0,
         }
     ]
-    assert by_identifier["duration"]["violation"] == {"amount": 2.5, "unit": "hours"}
-    assert by_identifier["duration"]["cost"] == 12.5
-    assert by_identifier["window"]["violation"] == {"amount": 3.0, "unit": "hours"}
-    assert by_identifier["gap"]["violation"] == {"amount": 2.0, "unit": "hours"}
+    assert by_identifier["duration"]["violation"] == {"amount": 1.5, "unit": "hours"}
+    assert by_identifier["duration"]["cost"] == 7.5
+    assert by_identifier["window"]["violation"] == {"amount": 2.0, "unit": "hours"}
+    assert by_identifier["gap"]["violation"] == {"amount": 7 / 6, "unit": "hours"}
     assert by_identifier["gap"]["breakdown"] == []
 
 
@@ -394,7 +394,7 @@ def test_evaluation_filters_and_limit(
     assert record["total"] == total
     assert record["truncated"] == (total > limit)
     if items and items[-1]["constraint_id"] == "weak":
-        assert items[-1]["violation"] == {"amount": 3.0, "unit": "hours"}
+        assert items[-1]["violation"] == {"amount": 13 / 6, "unit": "hours"}
 
 
 def test_evaluation_without_previous_and_with_empty_previous() -> None:
@@ -510,10 +510,10 @@ def test_gap_missing_task_contributes_nothing(relation: TaskGapRelation) -> None
 
 
 @pytest.mark.parametrize("quantity", list(AggregateQuantity))
-def test_daily_breakdown_uses_start_date_offset_and_rounded_fixed_duration(
+def test_daily_breakdown_uses_start_date_offset_and_real_fixed_duration(
     quantity: AggregateQuantity,
 ) -> None:
-    """Assign entire rounded durations to their local start dates."""
+    """Assign entire real durations to their local start dates."""
     first: FixedTask = FixedTask(
         TaskId("first"),
         "First",
@@ -545,7 +545,7 @@ def test_daily_breakdown_uses_start_date_offset_and_rounded_fixed_duration(
         {"kind": "evaluation"}, value, Schedule((), ())
     )
     items: list[dict[str, object]] = cast(list[dict[str, object]], record["items"])
-    expected_amount: float = 1.0 if quantity is AggregateQuantity.COUNT else 1.5
+    expected_amount: float = 1.0 if quantity is AggregateQuantity.COUNT else 0.5
     unit: str = "count" if quantity is AggregateQuantity.COUNT else "hours"
     assert items[0]["violation"] == {"amount": 2 * expected_amount, "unit": unit}
     assert items[0]["breakdown"] == [
