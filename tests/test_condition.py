@@ -186,7 +186,7 @@ def test_task_gap_rejects_negative_duration() -> None:
 @pytest.mark.parametrize("maximum", [-1, True, 1.5, timedelta(0)])
 def test_daily_count_rejects_invalid_maximum(maximum: int | float | timedelta) -> None:
     with pytest.raises(ValueError, match="non-negative integer"):
-        DailyLimitCondition(TASK_IDS, AggregateQuantity.COUNT, maximum)  # type: ignore[arg-type]
+        DailyLimitCondition(TASK_IDS, AggregateQuantity.COUNT, maximum)  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize("maximum", [-timedelta(microseconds=1), 0])

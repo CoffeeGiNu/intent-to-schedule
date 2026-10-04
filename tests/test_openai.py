@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import openai
 import pytest
 from openai.lib._parsing._responses import type_to_text_format_param
+from openai.types.responses import ResponseFormatTextConfigParam
 
 import intent_to_schedule.adapter.openai.translate as translate
 from intent_to_schedule.adapter.data_model import SummaryQueryData
@@ -150,11 +151,9 @@ def test_translate_sends_summary_dialogue_and_step_results(
     rejected: Rejected = Rejected(
         Violations((Violation("Task missing does not exist"),))
     )
+    people: PeopleAnswer = PeopleAnswer((Person(PersonId("alice"), "Alice"),), 1)
     steps: tuple[StepRecord, ...] = (
-        QueryRecord(
-            QueryStep(SummaryQuery()),
-            Answered(PeopleAnswer((Person(PersonId("alice"), "Alice"),), 1)),
-        ),
+        QueryRecord(QueryStep(SummaryQuery()), Answered(people)),
         ApplyRecord(ApplyStep((AddTask(task),)), Executed(problem)),
         ApplyRecord(ApplyStep((RemoveTask(TaskId("missing")),)), rejected),
         QueryRecord(QueryStep(SummaryQuery()), rejected),
@@ -228,7 +227,7 @@ def test_translate_sends_summary_dialogue_and_step_results(
         {"kind": "query", "result": {"rejected": ["Task missing does not exist"]}},
     ]
     assert answer_converter.call_args_list[0].args == (summary,)
-    assert answer_converter.call_args_list[1].args == (steps[0].result.answer,)
+    assert answer_converter.call_args_list[1].args == (people,)
 
 
 def test_missing_parsed_output_raises_without_retry(
@@ -249,7 +248,9 @@ def test_missing_parsed_output_raises_without_retry(
 
 def test_installed_structured_output_helper_marks_defaulted_fields_required() -> None:
     """Inspect the installed helper's strict schema without a request."""
-    schema: dict[str, object] = type_to_text_format_param(StepOutput)["schema"]
+    text_format: ResponseFormatTextConfigParam = type_to_text_format_param(StepOutput)
+    assert text_format["type"] == "json_schema"
+    schema: dict[str, object] = text_format["schema"]
     definitions: dict[str, dict[str, object]] = cast(
         dict[str, dict[str, object]], schema["$defs"]
     )

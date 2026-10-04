@@ -169,7 +169,8 @@ def test_init_show_schema_and_round_trip(
     assert to_problem(load_state(path).problem) == to_problem(state_before.problem)
     status, output = invoke(capsys, "schema")
     assert status == 0
-    assert "commands" in output["properties"]
+    assert output["title"] == "CommandsData"
+    assert output["required"] == ["commands"]
 
 
 def test_init_rejects_invalid_calendar_without_writing_state(
@@ -213,7 +214,12 @@ def test_init_fixed_tasks_persists_ids_and_round_trips(
         capsys, "init", "--state", str(path), "--calendar", str(calendar_path)
     )
     assert status == 0
-    assert output["counts"]["fixed_tasks"] == 1
+    assert output["counts"] == {
+        "people": 1,
+        "tasks": 0,
+        "fixed_tasks": 1,
+        "constraints": 0,
+    }
     state: State = load_state(path)
     assert state.problem.fixed_tasks[0].id.value
     problem: SchedulingProblem = to_problem(state.problem)
@@ -233,6 +239,7 @@ def test_init_rejects_fixed_task_with_unknown_participant(
     calendar: dict[str, object] = calendar_data()
     calendar["fixed_tasks"] = [
         {
+            "id": "existing-review",
             "name": "Existing review",
             "start": "2026-10-01T09:15:00+00:00",
             "duration": "PT30M",
@@ -248,7 +255,9 @@ def test_init_rejects_fixed_task_with_unknown_participant(
         capsys, "init", "--state", str(path), "--calendar", str(calendar_path)
     )
     assert status == 1
-    assert "missing person id missing" in output["rejected"][0]
+    assert output == {
+        "rejected": ["Task existing-review references missing person id missing."]
+    }
     assert not path.exists()
 
 
@@ -284,8 +293,10 @@ def test_apply_reject_and_solve(
         capsys, "--state", str(path), "apply", "--file", str(task_file)
     )
     assert status == 0
-    task_id: str = output["executed"][0]["task_id"]
-    assert output["executed"][0]["name"] == "Review"
+    task_id: str = load_state(path).problem.tasks[0].id.value
+    assert output == {
+        "executed": [{"kind": "add_task", "task_id": task_id, "name": "Review"}]
+    }
 
     constraint_input: dict[str, object] = {
         "commands": [
@@ -307,9 +318,16 @@ def test_apply_reject_and_solve(
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(constraint_input)))
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
-    assert output["executed"][0]["constraint_id"]
-    assert len(load_state(path).problem.constraints) == 1
     current: State = load_state(path)
+    assert len(current.problem.constraints) == 1
+    assert output == {
+        "executed": [
+            {
+                "kind": "add_constraint",
+                "constraint_id": current.problem.constraints[0].id.value,
+            }
+        ]
+    }
     domain_problem: SchedulingProblem = to_problem(current.problem)
     save_state(
         path, current.model_copy(update={"problem": to_problem_state(domain_problem)})
@@ -405,8 +423,15 @@ def test_apply_uses_given_ids_within_the_same_batch(
     }
     status, output = invoke(capsys, "--state", str(path), "solve")
     assert status == 0
-    assert output["items"][0]["task_id"] == "review"
-    assert output["items"][0]["start"] == "2026-10-01T10:00:00+00:00"
+    assert output["items"] == [
+        {
+            "status": "scheduled",
+            "task_id": "review",
+            "name": "Review",
+            "start": "2026-10-01T10:00:00+00:00",
+            "end": "2026-10-01T11:00:00+00:00",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -548,8 +573,8 @@ def test_time_window_constraint_conversion_generates_id_once(
         assert isinstance(command, AddConstraint)
         assert command.constraint.id == ConstraintId("created")
         assert command.constraint.condition.task_ids == frozenset({TaskId("review")})
-        assert command.constraint.condition.relation is TimeRelation.WITHIN
         assert isinstance(command.constraint.condition, TimeWindowCondition)
+        assert command.constraint.condition.relation is TimeRelation.WITHIN
         assert isinstance(
             command.constraint, SoftConstraint if expected_strength else HardConstraint
         )
@@ -666,15 +691,13 @@ def test_time_window_constraint_record_has_id_and_only_changed_rounding_note(
         TimeInterval(datetime(2026, 10, 1, 9), datetime(2026, 10, 1, 12)),
         timedelta(hours=1),
     )
+    condition: TimeWindowCondition = TimeWindowCondition(
+        frozenset({TaskId("review")}),
+        TimeRelation(relation_value),
+        (TimeWindow(None, None, None),),
+    )
     command: AddConstraint = AddConstraint(
-        HardConstraint(
-            ConstraintId("created"),
-            TimeWindowCondition(
-                frozenset({TaskId("review")}),
-                TimeRelation(relation_value),
-                (TimeWindow(None, None, None),),
-            ),
-        )
+        HardConstraint(ConstraintId("created"), condition)
     )
     expansion: Mock
     with patch(
@@ -682,11 +705,7 @@ def test_time_window_constraint_record_has_id_and_only_changed_rounding_note(
         return_value=Expansion((grid.horizon,), rounded),
     ) as expansion:
         record: dict[str, str] = command_record(command, grid)
-    expansion.assert_called_once_with(
-        command.constraint.condition.windows,
-        command.constraint.condition.relation,
-        grid,
-    )
+    expansion.assert_called_once_with(condition.windows, condition.relation, grid)
     assert record["constraint_id"] == "created"
     assert record["kind"] == "add_constraint"
     assert set(record) == (
@@ -699,12 +718,15 @@ def test_time_window_constraint_record_has_id_and_only_changed_rounding_note(
         ].lower()
 
 
-@pytest.mark.parametrize("relation_value", ["within", "avoid"])
+@pytest.mark.parametrize(
+    ("relation_value", "direction"), [("within", "inward"), ("avoid", "outward")]
+)
 def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     relation_value: str,
+    direction: str,
 ) -> None:
     from intent_to_schedule.adapter.data_model import (
         ConstraintData,
@@ -740,7 +762,10 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
-    task_id: str = output["executed"][0]["task_id"]
+    task_id: str = load_state(path).problem.tasks[0].id.value
+    assert output == {
+        "executed": [{"kind": "add_task", "task_id": task_id, "name": "Review"}]
+    }
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -774,11 +799,17 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
     )
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
-    record: dict[str, str] = output["executed"][0]
-    assert set(record) == {"kind", "constraint_id", "note"}
     state: State = load_state(path)
     constraint: ConstraintData = state.problem.constraints[0]
-    assert constraint.id.value == record["constraint_id"]
+    assert output == {
+        "executed": [
+            {
+                "kind": "add_constraint",
+                "constraint_id": constraint.id.value,
+                "note": f"Window times were rounded {direction} to calendar slots.",
+            }
+        ]
+    }
     assert isinstance(constraint.requirement, SoftRequirementData)
     assert constraint.requirement.strength == "strong"
     assert isinstance(constraint.condition, TimeWindowConditionData)
@@ -815,6 +846,7 @@ def test_apply_time_window_constraint_rejects_empty_expansion_without_saving(
                         {
                             "kind": "add_constraint",
                             "constraint": {
+                                "id": "empty",
                                 "requirement": {"kind": "hard"},
                                 "condition": {
                                     "kind": "time_window",
@@ -833,8 +865,12 @@ def test_apply_time_window_constraint_rejects_empty_expansion_without_saving(
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 1
-    assert any("windows" in message for message in output["rejected"])
-    assert "review" in output["rejected"][0]
+    assert output == {
+        "rejected": [
+            "Constraint empty references missing task id review.",
+            "Time constraint on task review: the within windows cover no whole slot of the calendar horizon 2026-10-01T09:00:00+00:00 to 2026-10-01T12:00:00+00:00 (slot 1:00:00); widen or move the windows.",
+        ]
+    }
     assert path.read_text(encoding="utf-8") == unchanged
 
 
@@ -961,16 +997,18 @@ def test_query_previous_schedule_and_schema(
     }
     status, output = invoke(capsys, "schema", "query")
     assert status == 0
-    assert output["discriminator"]["propertyName"] == "kind"
-    assert set(output["discriminator"]["mapping"]) == {
-        "summary",
-        "people",
-        "tasks",
-        "constraints",
-        "previous_schedule",
-        "available_starts",
-        "evaluation",
-        "objective_policy",
+    assert output["discriminator"] == {
+        "propertyName": "kind",
+        "mapping": {
+            "summary": "#/$defs/SummaryQueryData",
+            "people": "#/$defs/PeopleQueryData",
+            "tasks": "#/$defs/TasksQueryData",
+            "constraints": "#/$defs/ConstraintsQueryData",
+            "previous_schedule": "#/$defs/PreviousScheduleQueryData",
+            "available_starts": "#/$defs/AvailableStartsQueryData",
+            "evaluation": "#/$defs/EvaluationQueryData",
+            "objective_policy": "#/$defs/ObjectivePolicyQueryData",
+        },
     }
 
 
@@ -1086,9 +1124,10 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     )
     steps: list[Step] = [ApplyStep((AddTask(added),)), terminal]
     if outcome == "exhausted":
-        steps = [ApplyStep((AddTask(added),))] + [ApplyStep(())] * (
-            converse.STEP_LIMIT - 1
-        )
+        steps = [
+            ApplyStep((AddTask(added),)),
+            *(ApplyStep(()) for _ in range(converse.STEP_LIMIT - 1)),
+        ]
     translator: MagicMock = MagicMock()
     translator.translate.side_effect = steps
     factory: MagicMock = MagicMock(return_value=translator)
@@ -1225,8 +1264,7 @@ def test_schedule_entries_survive_task_changes(
     assert output == {"summary": solve_summary(scheduled_tasks=1, dropped_tasks=1, dropped_cost=5.0), "items": expected}
     persisted: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["previous"] == {"items": expected}
-    change: list[dict[str, object]]
-    for change in (
+    changes: tuple[list[dict[str, object]], ...] = (
         [
             {
                 "kind": "replace_task",
@@ -1241,7 +1279,9 @@ def test_schedule_entries_survive_task_changes(
             {"kind": "remove_task", "task_id": "review"},
             {"kind": "remove_task", "task_id": "dropped"},
         ],
-    ):
+    )
+    change: list[dict[str, object]]
+    for change in changes:
         monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": change})))
         status, output = invoke(capsys, "--state", str(path), "apply")
         assert status == 0

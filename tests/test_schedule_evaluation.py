@@ -399,9 +399,7 @@ def test_evaluation_filters_and_limit(
 
 def test_evaluation_without_previous_and_with_empty_previous() -> None:
     """Distinguish a missing saved solution from an empty one."""
-    value: SchedulingProblem
-    previous: Schedule
-    value, previous = evaluation_problem()
+    value: SchedulingProblem = evaluation_problem()[0]
     assert query_record({"kind": "evaluation"}, value, None) == {
         "kind": "evaluation",
         "has_previous": False,

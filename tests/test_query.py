@@ -11,7 +11,9 @@ from pydantic import Field, TypeAdapter
 
 import intent_to_schedule.application.query as query_module
 from intent_to_schedule.adapter.data_model import (
+    ConstraintData,
     QueryData,
+    TimeWindowConditionData,
     TimeWindowData,
     answer_record,
     convert_query,
@@ -29,7 +31,6 @@ from intent_to_schedule.application.query import (
     AvailableStartsAnswer,
     AvailableStartsQuery,
     ConstraintsAnswer,
-    ConstraintsQuery,
     EvaluationAnswer,
     EvaluationQuery,
     ObjectivePolicyAnswer,
@@ -37,7 +38,6 @@ from intent_to_schedule.application.query import (
     PeopleAnswer,
     PeopleQuery,
     PreviousScheduleAnswer,
-    PreviousScheduleQuery,
     SchedulingQuery,
     Summary,
     SummaryQuery,
@@ -153,7 +153,7 @@ def rejection(result: AnswerResult) -> str:
 
 def test_summary_counts_and_json(problem: SchedulingProblem) -> None:
     """Return compact counts and the grid."""
-    previous: Schedule = Schedule((), frozenset())
+    previous: Schedule = Schedule((), ())
     summary: Summary = summarize(problem, previous)
     assert summary == Summary(problem.calendar.grid, 3, 2, 3, 0, True)
     result: AnswerResult = SummaryQuery().answer(problem, previous)
@@ -498,17 +498,15 @@ def test_constraints_filters_references_and_preserves_windows(
     result: AnswerResult = query.answer(replace(problem, constraints=constraints), None)
     assert result == Answered(ConstraintsAnswer((constraints[1],), 2))
     assert isinstance(result, Answered)
-    record: dict[str, object] = answer_record(result.answer)
-    expected: dict[str, object] = to_constraint_data(constraints[1]).model_dump(
-        mode="json"
-    )
-    assert record == {
+    data: ConstraintData = to_constraint_data(constraints[1])
+    assert isinstance(data.condition, TimeWindowConditionData)
+    assert len(data.condition.windows) == 5
+    assert answer_record(result.answer) == {
         "kind": "constraints",
-        "items": [expected],
+        "items": [data.model_dump(mode="json")],
         "total": 2,
         "truncated": True,
     }
-    assert len(record["items"][0]["condition"]["windows"]) == 5
     assert parse_query({"kind": "constraints", "filter": {"task_ids": []}}).answer(
         replace(problem, constraints=constraints), None
     ) == Answered(ConstraintsAnswer((), 0))
@@ -521,9 +519,7 @@ def test_constraints_filters_references_and_preserves_windows(
 
 
 @pytest.mark.parametrize("count", [0, 3])
-def test_time_window_query_keeps_all_windows(
-    problem: SchedulingProblem, count: int
-) -> None:
+def test_time_window_query_keeps_all_windows(count: int) -> None:
     """Keep entered windows complete."""
     region: tuple[TimeInterval, ...] = tuple(
         TimeInterval(at(9), at(10)) for _ in range(count)
@@ -545,8 +541,29 @@ def test_time_window_query_keeps_all_windows(
             ),
         ),
     )
-    record: dict[str, object] = answer_record(ConstraintsAnswer((constraint,), 1))
-    assert len(record["items"][0]["condition"]["windows"]) == count
+    window: dict[str, object] = {
+        "date_range": {"start": "2026-10-03", "end": "2026-10-04"},
+        "weekdays": None,
+        "time_range": {"start": "09:00:00", "end": "10:00:00"},
+    }
+    assert answer_record(ConstraintsAnswer((constraint,), 1)) == {
+        "kind": "constraints",
+        "items": [
+            {
+                "id": "constraint",
+                "label": None,
+                "requirement": {"kind": "hard"},
+                "condition": {
+                    "kind": "time_window",
+                    "task_ids": ["task-one"],
+                    "relation": "avoid",
+                    "windows": [window] * count,
+                },
+            }
+        ],
+        "total": 1,
+        "truncated": False,
+    }
 
 
 def test_previous_schedule_keeps_history_and_sorts_starts(
@@ -646,7 +663,7 @@ def test_previous_schedule_without_a_previous_solution(
         "has_previous": False,
     }
     assert parse_query({"kind": "previous_schedule"}).answer(
-        problem, Schedule((), frozenset())
+        problem, Schedule((), ())
     ) == Answered(PreviousScheduleAnswer((), 0, True))
 
 
@@ -735,21 +752,18 @@ def test_available_starts_reuses_shared_functions_for_requested_people(
         }
     )
     assert isinstance(query, AvailableStartsQuery) and query.windows is None
-    result: AnswerResult = query.answer(problem, Schedule((), frozenset()))
+    result: AnswerResult = query.answer(problem, Schedule((), ()))
     assert result == Answered(AvailableStartsAnswer((at(10),), 3))
     assert calls == [PersonId("alice"), PersonId("bob")]
     assert participants == [(True,) * 8, (False,) * 8]
     assert isinstance(result, Answered)
-    record: dict[str, object] = answer_record(result.answer)
-    assert {key: value for key, value in record.items() if key != "note"} == {
+    assert answer_record(result.answer) == {
         "kind": "available_starts",
         "items": [at(10).isoformat()],
         "total": 3,
         "truncated": True,
+        "note": "Movable Tasks and constraints are not considered; use solve for the final schedule.",
     }
-    assert (
-        "movable" in record["note"].lower() and "constraints" in record["note"].lower()
-    )
 
 
 def test_available_starts_window_filter_uses_whole_duration(

@@ -30,7 +30,11 @@ from intent_to_schedule.application.command import (
     RemoveTask,
     ReplaceConstraint,
 )
-from intent_to_schedule.application.query import Answered, ConstraintsQuery
+from intent_to_schedule.application.query import (
+    Answered,
+    ConstraintsAnswer,
+    ConstraintsQuery,
+)
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import (
     DailyLimitCondition,
@@ -390,13 +394,11 @@ def test_constraints_query_stored_values_and_filters() -> None:
     result = ConstraintsQuery(
         frozenset({ConstraintId("2")}), frozenset({TaskId("a"), TaskId("unknown")}), 20
     ).answer(original, None)
-    assert isinstance(result, Answered) and result.answer.items == (
-        original.constraints[2],
-    )
+    assert result == Answered(ConstraintsAnswer((original.constraints[2],), 1))
     result = ConstraintsQuery(None, frozenset({TaskId("unknown")}), 20).answer(
         original, None
     )
-    assert isinstance(result, Answered) and result.answer.items == ()
+    assert result == Answered(ConstraintsAnswer((), 0))
 
 
 @pytest.mark.parametrize("kind", ["add_constraint", "replace_constraint"])
@@ -510,7 +512,15 @@ def test_command_line_add_solve_replace_solve(
     ]
     assert main(["--state", str(path), "solve"]) == 0
     output = json.loads(capsys.readouterr().out)
-    assert output["items"][0]["start"] == START.isoformat()
+    assert output["items"] == [
+        {
+            "status": "scheduled",
+            "task_id": "a",
+            "name": "Review",
+            "start": START.isoformat(),
+            "end": (START + timedelta(hours=1)).isoformat(),
+        }
+    ]
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -537,4 +547,12 @@ def test_command_line_add_solve_replace_solve(
     ]
     assert main(["--state", str(path), "solve"]) == 0
     output = json.loads(capsys.readouterr().out)
-    assert output["items"][0]["start"] == (START + timedelta(hours=2)).isoformat()
+    assert output["items"] == [
+        {
+            "status": "scheduled",
+            "task_id": "a",
+            "name": "Review",
+            "start": (START + timedelta(hours=2)).isoformat(),
+            "end": (START + timedelta(hours=3)).isoformat(),
+        }
+    ]
