@@ -3,12 +3,12 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from intent_to_schedule.domain.calendar import Availability, TimeGrid, TimeInterval
-from intent_to_schedule.domain.compatibility import is_supported
+from intent_to_schedule.domain.condition import Condition, TimeWindowCondition
 from intent_to_schedule.domain.constraint import Constraint, ConstraintId
-from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import FixedTask, Task, TaskId
+from intent_to_schedule.domain.time_windows import Expansion, TimeRelation, expand
 
 
 @dataclass(frozen=True)
@@ -105,7 +105,7 @@ class ReferencesExist:
                     )
                 )
         for constraint in problem.constraints:
-            for task_id in constraint.measure.task_ids - tasks:
+            for task_id in constraint.condition.task_ids - tasks:
                 violations.append(
                     Violation(
                         f"Constraint {constraint.id.value} references missing task id {task_id.value}."
@@ -160,10 +160,6 @@ class AlignedToSlots:
         task: Task
         availability: Availability
         interval: TimeInterval
-        constraint: Constraint
-        label: str
-        region: tuple[TimeInterval, ...]
-        quantity: datetime | timedelta | int
         for task in problem.tasks:
             if task.duration <= timedelta(0):
                 violations.append(
@@ -180,35 +176,34 @@ class AlignedToSlots:
                     interval.end,
                     f"Availability for person {availability.person_id.value} end",
                 )
-        for constraint in problem.constraints:
-            label = f"Constraint {constraint.id.value} evaluation"
-            match constraint.evaluation:
-                case Intrusion(region=region):
-                    for interval in region:
-                        check_time(interval.start, f"{label} region start")
-                        check_time(interval.end, f"{label} region end")
-                case (
-                    Distance(target=quantity)
-                    | Shortfall(lower=quantity)
-                    | Excess(upper=quantity)
-                ):
-                    match quantity:
-                        case datetime():
-                            check_time(quantity, label)
-                        case timedelta():
-                            check_duration(quantity, label)
         return Violations(tuple(violations))
 
 
-class SupportedCombinations:
-    """Validator that each constraint's Measure and Evaluation are compatible."""
+class NonemptyTimeWindows:
+    """Validator that time windows cover the calendar horizon."""
 
     def validate(self, problem: SchedulingProblem) -> Violations:
-        violations = tuple(
-            Violation(
-                f"Constraint {constraint.id.value} has an unsupported measure and evaluation combination."
+        grid: TimeGrid = problem.calendar.grid
+        violations: list[Violation] = []
+        constraint: Constraint
+        for constraint in problem.constraints:
+            condition: Condition = constraint.condition
+            if not isinstance(condition, TimeWindowCondition):
+                continue
+            expansion: Expansion = expand(condition.windows, condition.relation, grid)
+            if expansion.intervals:
+                continue
+            covered: str = (
+                "whole slot" if condition.relation is TimeRelation.WITHIN else "time"
             )
-            for constraint in problem.constraints
-            if not is_supported(constraint.measure, constraint.evaluation)
-        )
-        return Violations(violations)
+            task_label: str = "task" if len(condition.task_ids) == 1 else "tasks"
+            task_names: str = ", ".join(
+                sorted(task_id.value for task_id in condition.task_ids)
+            )
+            message: str = (
+                f"Time constraint on {task_label} {task_names}: the {condition.relation.value} windows "
+                f"cover no {covered} of the calendar horizon {grid.horizon.start.isoformat()} to "
+                f"{grid.horizon.end.isoformat()} (slot {grid.slot}); widen or move the windows."
+            )
+            violations.append(Violation(message))
+        return Violations(tuple(violations))

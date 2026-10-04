@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
+from intent_to_schedule.application.objective import summarize_schedule
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.application.solve import (
     Infeasible,
@@ -65,6 +66,10 @@ class MathOptSchedulingSolver(SchedulingSolver):
                         )
                     else:
                         dropped.append(DroppedTask(task.id, task.name))
-                return Solved(Schedule(tuple(scheduled), tuple(dropped)))
+                schedule: Schedule = Schedule(tuple(scheduled), tuple(dropped))
+                return Solved(
+                    schedule,
+                    summarize_schedule(problem, schedule, self.policy, previous),
+                )
             case _:
                 raise RuntimeError(f"MathOpt solve failed: {result.termination.reason}")

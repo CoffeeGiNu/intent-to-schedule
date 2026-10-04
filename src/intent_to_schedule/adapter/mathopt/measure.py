@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from ortools.math_opt.python import mathopt
 
@@ -8,6 +8,7 @@ from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.measure import (
     AggregateMeasure,
     AggregateQuantity,
+    Boundary,
     DependencyMeasure,
     IntervalMeasure,
     Measure,
@@ -19,9 +20,10 @@ from intent_to_schedule.domain.task import FixedTask, TaskId
 
 @dataclass(frozen=True)
 class PointExpression:
-    """Placement choices for a Task start."""
+    """Placement choices and the offset of a Task boundary."""
 
     placements: Mapping[int, mathopt.Variable]
+    offset: timedelta = timedelta(0)
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,12 @@ def compile_measure(
 
     match measure:
         case PointMeasure():
-            return PointExpression(placements[measure.task_id])
+            offset: timedelta = (
+                durations[measure.task_id] * grid.slot
+                if measure.boundary is Boundary.END
+                else timedelta(0)
+            )
+            return PointExpression(placements[measure.task_id], offset)
         case IntervalMeasure():
             occupied: dict[int, list[mathopt.Variable]] = {}
             task_id: TaskId

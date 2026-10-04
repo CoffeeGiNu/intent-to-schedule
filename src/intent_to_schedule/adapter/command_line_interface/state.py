@@ -2,20 +2,17 @@
 
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Literal
-
-from pydantic import Field
+from typing import Literal
 
 from intent_to_schedule.adapter.data_model import (
+    ConstraintData,
     DataModel,
     FixedTaskData,
-    HardConstraintData,
     NewFixedTaskData,
     PersonData,
     PersonIdField,
-    ScheduleEntryData,
     ScheduledTaskData,
-    SoftConstraintData,
+    ScheduleEntryData,
     TaskData,
     TimeIntervalData,
     convert_constraint,
@@ -68,10 +65,7 @@ class ProblemState(DataModel):
     people: tuple[PersonData, ...]
     tasks: tuple[TaskData, ...]
     fixed_tasks: tuple[FixedTaskData, ...]
-    constraints: tuple[
-        Annotated[HardConstraintData | SoftConstraintData, Field(discriminator="kind")],
-        ...,
-    ]
+    constraints: tuple[ConstraintData, ...]
 
 
 class ScheduleState(DataModel):

@@ -32,6 +32,7 @@ from intent_to_schedule.adapter.data_model import (
     command_record,
     convert_commands_input,
     convert_query,
+    schedule_summary_record,
 )
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.adapter.openai.translate import OpenAIStepTranslator
@@ -52,7 +53,7 @@ from intent_to_schedule.domain.consistency import (
     AvailabilityForEveryone,
     ConsistencyError,
     ReferencesExist,
-    SupportedCombinations,
+    NonemptyTimeWindows,
     UniqueIds,
     Validator,
     Violations,
@@ -83,7 +84,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "schema": ("Print the JSON Schema of the apply or query input", ""),
     "apply": (
         "Apply a batch of commands",
-        "Reads JSON from --file or standard input; see `schema apply`. "
+        "Reads JSON from --file or standard input. "
+        "Constraints use time_window, time_bound, task_gap, or daily_limit conditions; see `schema apply` and README.md for fields and examples. "
         "Prints created identifiers and any time window rounding note. "
         "Register absences missing from the calendar as fixed tasks (add_task with start), not as avoid constraints. "
         "Exits 1 on rejection without saving changes.",
@@ -91,9 +93,21 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "query": (
         "Read a summary, records, or available start times",
         "Reads JSON from --file or standard input; see `schema query`. "
-        "Listing limit defaults to 20, with a maximum of 100. Exits 1 on rejection.",
+        "evaluation measures current constraints against the last saved solution, with violation amounts, units, costs, and task or date breakdowns. "
+        "Filters are violated_only (default false), constraint_ids, and task_ids, combined with and. "
+        "Hard violations come first, then highest soft costs. Without a saved solution, has_previous is false and items are empty. "
+        "objective_policy returns the current drop_costs, weights, per_count, and stability_drop_cost_ratio. "
+        "Listing limit defaults to 20, with a maximum of 100; total counts matches before limiting and truncated indicates omitted items. Exits 1 on rejection.",
     ),
-    "solve": ("Solve the problem and store the schedule", "Exits 2 if infeasible."),
+    "solve": (
+        "Solve the problem and store the schedule",
+        "Prints {summary, items}. summary contains total_cost, costs (dropped_tasks, soft_constraints, stability), "
+        "and counts (scheduled_tasks, dropped_tasks, violated_soft_constraints, moved_tasks). "
+        "The objective adds importance-based optional drop costs, weighted soft violations in hours (daily counts scaled by per_count), "
+        "and capped stability costs from previous starts. Hard constraints require zero violation. "
+        "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
+        "Use query evaluation for constraint breakdowns and query objective_policy for current weights. Exits 2 if infeasible.",
+    ),
     "chat": (
         "Run a demonstration conversation turn with OpenAI",
         "Uses query, apply, solve, or message steps, with a limit of 12. "
@@ -315,11 +329,12 @@ def query(path: Path, input_path: Path | None) -> int:
     return 0
 
 
-def schedule_output(schedule: Schedule) -> dict[str, object]:
+def schedule_output(result: Solved) -> dict[str, object]:
     """Describe a solved schedule with its saved entries."""
-    form: ScheduleState | None = to_schedule_state(schedule)
+    form: ScheduleState | None = to_schedule_state(result.schedule)
     assert form is not None
-    return form.model_dump(mode="json")
+    assert result.summary is not None
+    return {"summary": schedule_summary_record(result.summary), **form.model_dump(mode="json")}
 
 
 def solve(path: Path, service: Scheduling, stability: bool) -> int:
@@ -336,7 +351,7 @@ def solve(path: Path, service: Scheduling, stability: bool) -> int:
             save_state(
                 path, state.model_copy(update={"previous": to_schedule_state(schedule)})
             )
-            emit(schedule_output(schedule))
+            emit(schedule_output(result))
             return 0
 
 
@@ -385,7 +400,7 @@ def chat(
             updates["problem"] = to_problem_state(response.problem)
             updates["previous"] = to_schedule_state(schedule)
             assistant_text = "Scheduled."
-            output = schedule_output(schedule)
+            output = schedule_output(response.outcome)
             status = 0
     updates["dialogue"] = (
         *dialogue,
@@ -421,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
             ReferencesExist(),
             AvailabilityForEveryone(),
             AlignedToSlots(),
-            SupportedCombinations(),
+            NonemptyTimeWindows(),
         )
         service: Scheduling = scheduling(validator)
         match args.command:

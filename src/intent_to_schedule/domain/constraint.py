@@ -2,8 +2,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Self
 
-from intent_to_schedule.domain.evaluation import Evaluation
-from intent_to_schedule.domain.measure import Measure
+from intent_to_schedule.domain.condition import Condition
 from intent_to_schedule.domain.strength import Strength
 
 
@@ -24,8 +23,8 @@ class HardConstraint:
     """Constraint that must be satisfied."""
 
     id: ConstraintId
-    measure: Measure
-    evaluation: Evaluation
+    condition: Condition
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -33,9 +32,9 @@ class SoftConstraint:
     """Constraint penalized in the objective."""
 
     id: ConstraintId
-    measure: Measure
-    evaluation: Evaluation
+    condition: Condition
     strength: Strength
+    label: str | None = None
 
 
 type Constraint = HardConstraint | SoftConstraint

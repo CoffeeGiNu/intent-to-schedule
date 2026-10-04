@@ -5,11 +5,19 @@ from typing import Self
 from intent_to_schedule.domain.task import TaskId
 
 
+class Boundary(Enum):
+    """Boundary of a Task's time interval."""
+
+    START = "start"
+    END = "end"
+
+
 @dataclass(frozen=True)
 class PointMeasure:
-    """Start time of a Task."""
+    """Start or end time of a Task."""
 
     task_id: TaskId
+    boundary: Boundary = Boundary.START
 
     @property
     def task_ids(self) -> frozenset[TaskId]:

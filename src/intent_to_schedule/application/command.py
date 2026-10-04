@@ -1,25 +1,10 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from intent_to_schedule.application.time_windows import (
-    Expansion,
-    TimeRelation,
-    TimeWindow,
-    complement,
-    expand,
-)
-from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
+from intent_to_schedule.domain.condition import Condition
 from intent_to_schedule.domain.consistency import Violation, Violations
-from intent_to_schedule.domain.constraint import (
-    Constraint,
-    ConstraintId,
-    HardConstraint,
-    SoftConstraint,
-)
-from intent_to_schedule.domain.evaluation import Intrusion
-from intent_to_schedule.domain.measure import IntervalMeasure, Measure
+from intent_to_schedule.domain.constraint import Constraint, ConstraintId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
 
@@ -124,9 +109,11 @@ class RemoveTask:
         constraints: list[Constraint] = []
         constraint: Constraint
         for constraint in problem.constraints:
-            measure: Measure | None = constraint.measure.without_task(self.task_id)
-            if measure is not None:
-                constraints.append(replace(constraint, measure=measure))
+            condition: Condition | None = constraint.condition.without_task(
+                self.task_id
+            )
+            if condition is not None:
+                constraints.append(replace(constraint, condition=condition))
         return Executed(
             replace(
                 problem,
@@ -162,52 +149,29 @@ class AddConstraint:
 
 
 @dataclass(frozen=True)
-class AddTimeConstraint:
-    """Command to constrain Tasks within or away from time windows."""
+class ReplaceConstraint:
+    """Command to replace the constraint with the same ID."""
 
-    constraint_id: ConstraintId
-    task_ids: frozenset[TaskId]
-    relation: TimeRelation
-    windows: tuple[TimeWindow, ...]
-    strength: Strength | None
-    """Strength of a soft constraint, or None for a hard constraint."""
+    constraint: Constraint
 
     def execute(self, problem: SchedulingProblem) -> ExecuteResult:
-        if not self.task_ids:
+        if not any(
+            constraint.id == self.constraint.id for constraint in problem.constraints
+        ):
             return Rejected(
                 Violations(
-                    (Violation("Time constraint must reference at least one Task."),)
+                    (
+                        Violation(
+                            f"Constraint {self.constraint.id.value} does not exist"
+                        ),
+                    )
                 )
             )
-        grid: TimeGrid = problem.calendar.grid
-        expansion: Expansion = expand(self.windows, self.relation, grid)
-        if not expansion.intervals:
-            covered: str = (
-                "whole slot" if self.relation is TimeRelation.WITHIN else "time"
-            )
-            task_label: str = "task" if len(self.task_ids) == 1 else "tasks"
-            task_names: str = ", ".join(
-                sorted(task_id.value for task_id in self.task_ids)
-            )
-            message: str = (
-                f"Time constraint on {task_label} {task_names}: the {self.relation.value} windows "
-                f"cover no {covered} of the calendar horizon {grid.horizon.start.isoformat()} to "
-                f"{grid.horizon.end.isoformat()} (slot {grid.slot}); widen or move the windows."
-            )
-            return Rejected(Violations((Violation(message),)))
-        region: tuple[TimeInterval, ...] = (
-            complement(expansion.intervals, grid.horizon)
-            if self.relation is TimeRelation.WITHIN
-            else expansion.intervals
+        constraints: tuple[Constraint, ...] = tuple(
+            self.constraint if constraint.id == self.constraint.id else constraint
+            for constraint in problem.constraints
         )
-        measure: IntervalMeasure = IntervalMeasure(self.task_ids)
-        evaluation: Intrusion = Intrusion(region)
-        constraint: Constraint = (
-            HardConstraint(self.constraint_id, measure, evaluation)
-            if self.strength is None
-            else SoftConstraint(self.constraint_id, measure, evaluation, self.strength)
-        )
-        return AddConstraint(constraint).execute(problem)
+        return Executed(replace(problem, constraints=constraints))
 
 
 @dataclass(frozen=True)
@@ -241,8 +205,7 @@ type ElementCommand = AddTask | ReplaceTask | RemoveTask
 """Request to change the elements of a SchedulingProblem."""
 
 
-# TODO: consider a precedence command (Task B starts at least a gap after Task A ends) built on DependencyMeasure and Shortfall, a common scheduling constraint.
-type ConstraintCommand = AddConstraint | AddTimeConstraint | RemoveConstraint
+type ConstraintCommand = AddConstraint | ReplaceConstraint | RemoveConstraint
 """Request to change the constraints of a SchedulingProblem."""
 
 

@@ -1,7 +1,6 @@
 from calendar import Day
-from dataclasses import replace
 from datetime import date, datetime, time, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -9,27 +8,35 @@ from pydantic import (
     Field,
     PlainSerializer,
     PlainValidator,
+    StrictInt,
     TypeAdapter,
+    ValidationInfo,
     WithJsonSchema,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
 from intent_to_schedule.application.command import (
     AddConstraint,
     AddTask,
-    AddTimeConstraint,
     RemoveConstraint,
     RemoveTask,
+    ReplaceConstraint,
     ReplaceTask,
     SchedulingCommand,
 )
+from intent_to_schedule.application.objective import ConstraintEvaluation, ScheduleSummary
 from intent_to_schedule.application.query import (
     Answer,
     AvailableStartsAnswer,
     AvailableStartsQuery,
     ConstraintsAnswer,
     ConstraintsQuery,
+    EvaluationAnswer,
+    EvaluationQuery,
+    ObjectivePolicyAnswer,
+    ObjectivePolicyQuery,
     PeopleAnswer,
     PeopleQuery,
     PreviousScheduleAnswer,
@@ -41,7 +48,28 @@ from intent_to_schedule.application.query import (
     TasksQuery,
     TaskType,
 )
-from intent_to_schedule.application.time_windows import (
+from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
+from intent_to_schedule.domain.condition import (
+    Condition,
+    DailyLimitCondition,
+    TaskGapCondition,
+    TaskGapRelation,
+    TimeBoundCondition,
+    TimeBoundRelation,
+    TimeWindowCondition,
+)
+from intent_to_schedule.domain.constraint import (
+    Constraint,
+    ConstraintId,
+    HardConstraint,
+    SoftConstraint,
+)
+from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
+from intent_to_schedule.domain.person import PersonId
+from intent_to_schedule.domain.schedule import DroppedTask, ScheduledTask
+from intent_to_schedule.domain.strength import Strength
+from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
+from intent_to_schedule.domain.time_windows import (
     DateRange,
     Expansion,
     TimeRange,
@@ -49,32 +77,7 @@ from intent_to_schedule.application.time_windows import (
     TimeWindow,
     expand,
 )
-from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
-from intent_to_schedule.domain.constraint import (
-    Constraint,
-    ConstraintId,
-    HardConstraint,
-    SoftConstraint,
-)
-from intent_to_schedule.domain.evaluation import (
-    Distance,
-    Evaluation,
-    Excess,
-    Intrusion,
-    Shortfall,
-)
-from intent_to_schedule.domain.measure import (
-    AggregateMeasure,
-    AggregateQuantity,
-    DependencyMeasure,
-    IntervalMeasure,
-    Measure,
-    PointMeasure,
-)
-from intent_to_schedule.domain.person import PersonId
-from intent_to_schedule.domain.schedule import DroppedTask, ScheduledTask
-from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
+from intent_to_schedule.domain.violation import ViolationPart, ViolationUnit
 
 
 def _parse_id(
@@ -92,7 +95,9 @@ type TaskIdField = Annotated[
     TaskId,
     PlainValidator(lambda value: _parse_id(value, TaskId)),
     PlainSerializer(lambda value: value.value),
-    WithJsonSchema({"type": "string"}),
+    WithJsonSchema(
+        {"type": "string", "description": "Non-empty identifier of a movable or fixed task."}
+    ),
 ]
 """Task ID encoded as a JSON string."""
 
@@ -108,7 +113,9 @@ type ConstraintIdField = Annotated[
     ConstraintId,
     PlainValidator(lambda value: _parse_id(value, ConstraintId)),
     PlainSerializer(lambda value: value.value),
-    WithJsonSchema({"type": "string"}),
+    WithJsonSchema(
+        {"type": "string", "description": "Non-empty identifier of a constraint."}
+    ),
 ]
 """Constraint ID encoded as a JSON string."""
 
@@ -177,17 +184,21 @@ class TimeIntervalData(DataModel):
 
 
 class DateRangeData(DataModel):
-    """JSON form of DateRange."""
+    """Calendar dates from an inclusive start to an exclusive end."""
 
-    start: date
-    end: date
+    start: date = Field(description="First included date, written as YYYY-MM-DD.")
+    end: date = Field(description="First excluded date, written as YYYY-MM-DD.")
 
 
 class TimeRangeData(DataModel):
-    """JSON form of TimeRange."""
+    """Time of day from an inclusive start to an exclusive end."""
 
-    start: TimeOfDayField
-    end: TimeOfDayField | None
+    start: TimeOfDayField = Field(
+        description="Included start as HH:MM or HH:MM:SS without an offset, in the calendar horizon's starting offset."
+    )
+    end: TimeOfDayField | None = Field(
+        description="Excluded end in the same local time format, or null for the end of the day. Must be later than start; split overnight ranges into separate windows."
+    )
 
     @model_validator(mode="after")
     def validate_times(self) -> "TimeRangeData":
@@ -196,26 +207,30 @@ class TimeRangeData(DataModel):
         return self
 
 
-class TimeWindowData(DataModel):
-    """JSON form of TimeWindow."""
+type WeekdayField = Annotated[
+    Literal[
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+    ],
+    Field(description="Named weekday in the calendar horizon's starting offset."),
+]
+"""Weekday encoded as a JSON string."""
 
-    date_range: DateRangeData | None = None
-    weekdays: (
-        tuple[
-            Literal[
-                "monday",
-                "tuesday",
-                "wednesday",
-                "thursday",
-                "friday",
-                "saturday",
-                "sunday",
-            ],
-            ...,
-        ]
-        | None
-    ) = None
-    time_range: TimeRangeData | None = None
+
+class TimeWindowData(DataModel):
+    """Times matching all supplied date, weekday, and time of day fields."""
+
+    date_range: DateRangeData | None = Field(
+        default=None,
+        description="Included start date and excluded end date. Omit or use null for the whole horizon."
+    )
+    weekdays: tuple[WeekdayField, ...] | None = Field(
+        default=None,
+        description="Allowed named weekdays: monday, tuesday, wednesday, thursday, friday, saturday, sunday. Omit or use null for every day; an empty array matches no day."
+    )
+    time_range: TimeRangeData | None = Field(
+        default=None,
+        description="Included start time and excluded end time on each matching date. Omit or use null for the whole day."
+    )
 
 
 class PersonData(DataModel):
@@ -239,7 +254,10 @@ class TaskContentData(DataModel):
 class NewTaskData(TaskContentData):
     """JSON form of a Task to add, with an optional given ID."""
 
-    id: TaskIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+    id: TaskIdField | None = Field(
+        default=None,
+        description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
+    )
 
 
 class TaskData(TaskContentData):
@@ -260,7 +278,10 @@ class FixedTaskContentData(DataModel):
 class NewFixedTaskData(FixedTaskContentData):
     """JSON form of a FixedTask to add, with an optional given ID."""
 
-    id: TaskIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+    id: TaskIdField | None = Field(
+        default=None,
+        description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
+    )
 
 
 class FixedTaskData(FixedTaskContentData):
@@ -269,141 +290,166 @@ class FixedTaskData(FixedTaskContentData):
     id: TaskIdField
 
 
-class PointMeasureData(DataModel):
-    """JSON form of PointMeasure."""
+class TimeWindowConditionData(DataModel):
+    """Whole tasks kept within or away from the combined windows."""
 
-    kind: Literal["point"]
-    task_id: TaskIdField
-
-
-class IntervalMeasureData(DataModel):
-    """JSON form of IntervalMeasure."""
-
-    kind: Literal["interval"]
-    task_ids: tuple[TaskIdField, ...] = Field(min_length=1)
-
-
-class DependencyMeasureData(DataModel):
-    """JSON form of DependencyMeasure."""
-
-    kind: Literal["dependency"]
-    from_task_id: TaskIdField
-    to_task_id: TaskIdField
+    kind: Literal["time_window"] = Field(
+        description="time_window restricts whole task intervals, rather than only their start times."
+    )
+    task_ids: tuple[TaskIdField, ...] = Field(
+        min_length=1,
+        description="Existing movable or fixed task identifiers sharing this condition. Unscheduled tasks have no violation."
+    )
+    relation: Literal["within", "avoid"] = Field(
+        description="within keeps each whole task inside the combined windows; avoid keeps it from overlapping them. Soft violations sum hours outside for within, or overlapping for avoid, across tasks."
+    )
+    windows: tuple[TimeWindowData, ...] = Field(
+        description="Alternative windows combined with or, clipped to the horizon and merged. within rounds inward to whole slots; avoid rounds outward to touched slots; an empty expansion is rejected."
+    )
 
 
-class AggregateMeasureData(DataModel):
-    """JSON form of AggregateMeasure."""
+class TimeBoundConditionData(DataModel):
+    """Start or end bounds for each scheduled task."""
 
-    kind: Literal["aggregate"]
-    task_ids: tuple[TaskIdField, ...]
-    quantity: Literal["count", "total_duration"]
-
-
-type MeasureData = (
-    PointMeasureData
-    | IntervalMeasureData
-    | DependencyMeasureData
-    | AggregateMeasureData
-)
-"""JSON form of Measure."""
-
-
-class InstantData(DataModel):
-    """JSON form of a point in time."""
-
-    kind: Literal["instant"]
-    value: datetime
+    kind: Literal["time_bound"] = Field(
+        description="time_bound compares each task's selected boundary with one date and time."
+    )
+    task_ids: tuple[TaskIdField, ...] = Field(
+        min_length=1,
+        description="Existing movable or fixed task identifiers sharing this bound. Unscheduled tasks have no violation; soft violations sum across scheduled tasks."
+    )
+    boundary: Literal["start", "end"] = Field(
+        description="start is when the task begins; end is when it finishes. Fixed tasks use their occupied interval rounded outward to slots."
+    )
+    relation: Literal["at_or_before", "at_or_after", "at"] = Field(
+        description="at_or_before is an inclusive latest time; at_or_after is an inclusive earliest time; at is exact equality. Soft violations are hours late, early, or away from the target, respectively."
+    )
+    at: datetime = Field(
+        description="Target date and time, such as 2026-10-19T17:00:00+09:00; include the calendar offset. Compared without rounding; hard at is infeasible for a required movable task if the target is between slot boundaries."
+    )
 
 
-class DurationData(DataModel):
-    """JSON form of a duration."""
+class TaskGapConditionData(DataModel):
+    """Minimum or exact gap from one task's end to another's start."""
 
-    kind: Literal["duration"]
-    value: timedelta
-
-
-class CountData(DataModel):
-    """JSON form of a count."""
-
-    kind: Literal["count"]
-    value: int
-
-
-type QuantityData = InstantData | DurationData | CountData
-"""JSON form of Quantity."""
-
-
-class DistanceData(DataModel):
-    """JSON form of Distance."""
-
-    kind: Literal["distance"]
-    target: QuantityData
+    kind: Literal["task_gap"] = Field(
+        description="task_gap applies only when both tasks are scheduled; otherwise it has no violation."
+    )
+    from_task_id: TaskIdField = Field(
+        description="Existing task that comes first; its end starts the gap. Fixed tasks use their occupied interval rounded outward to slots."
+    )
+    to_task_id: TaskIdField = Field(
+        description="Existing task that comes second; its start ends the gap. Fixed tasks use their occupied interval rounded outward to slots."
+    )
+    relation: Literal["at_least", "exactly"] = Field(
+        description="at_least sets an inclusive minimum gap; exactly sets an equal gap. Soft violations are hours short of the minimum or hours away from the exact gap, respectively."
+    )
+    gap: timedelta = Field(
+        ge=timedelta(0),
+        description="Non-negative duration, such as PT30M or PT1H, compared without rounding. PT0S with at_least orders tasks; PT0S with exactly asks for the second task immediately after the first."
+    )
 
 
-class IntrusionData(DataModel):
-    """JSON form of Intrusion."""
+class DailyLimitConditionData(DataModel):
+    """Inclusive daily maximum over the listed scheduled tasks."""
 
-    kind: Literal["intrusion"]
-    region: tuple[TimeIntervalData, ...]
+    kind: Literal["daily_limit"] = Field(
+        description="daily_limit caps each start date in the calendar horizon's starting offset. Soft violations sum daily excess counts or hours."
+    )
+    task_ids: tuple[TaskIdField, ...] = Field(
+        min_length=1,
+        description="Existing movable or fixed tasks to count; unscheduled tasks contribute zero. Only these tasks are included; list a person's meeting tasks to cap that person's new meetings."
+    )
+    quantity: Literal["count", "total_duration"] = Field(
+        description="count counts tasks; total_duration sums their whole durations on their start date, even across midnight. Fixed tasks use their occupied intervals rounded outward to slots, including for the start date."
+    )
+    maximum: StrictInt | timedelta = Field(
+        description="Inclusive non-negative maximum: a JSON integer for count, or a duration string such as PT4H for total_duration. Zero is allowed; duration maxima need not align to slots."
+    )
 
+    @field_validator("maximum", mode="before")
+    @classmethod
+    def validate_maximum_type(
+        cls, value: object, information: ValidationInfo
+    ) -> object:
+        """Require the maximum type for the selected quantity."""
+        if information.data.get("quantity") == "count":
+            if type(value) is not int:
+                raise ValueError("Daily count maximum must be a non-negative integer.")
+        elif not isinstance(value, (str, timedelta)):
+            raise ValueError("Daily duration maximum must be a non-negative duration.")
+        return value
 
-class ShortfallData(DataModel):
-    """JSON form of Shortfall."""
-
-    kind: Literal["shortfall"]
-    lower: QuantityData
-
-
-class ExcessData(DataModel):
-    """JSON form of Excess."""
-
-    kind: Literal["excess"]
-    upper: QuantityData
-
-
-type EvaluationData = DistanceData | IntrusionData | ShortfallData | ExcessData
-"""JSON form of Evaluation."""
-
-
-class HardConstraintContentData(DataModel):
-    """Fields shared by the added and stored JSON forms of HardConstraint."""
-
-    kind: Literal["hard"]
-    measure: MeasureData
-    evaluation: EvaluationData
-
-
-class NewHardConstraintData(HardConstraintContentData):
-    """JSON form of a HardConstraint to add, with an optional given ID."""
-
-    id: ConstraintIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
-
-
-class HardConstraintData(HardConstraintContentData):
-    """JSON form of HardConstraint."""
-
-    id: ConstraintIdField
+    @field_validator("maximum")
+    @classmethod
+    def validate_maximum_sign(cls, value: int | timedelta) -> int | timedelta:
+        """Require a non-negative maximum."""
+        if (isinstance(value, int) and value < 0) or (
+            isinstance(value, timedelta) and value < timedelta(0)
+        ):
+            raise ValueError("Daily maximum must be non-negative.")
+        return value
 
 
-class SoftConstraintContentData(DataModel):
-    """Fields shared by the added and stored JSON forms of SoftConstraint."""
-
-    kind: Literal["soft"]
-    measure: MeasureData
-    evaluation: EvaluationData
-    strength: Literal["weak", "normal", "strong"]
-
-
-class NewSoftConstraintData(SoftConstraintContentData):
-    """JSON form of a SoftConstraint to add, with an optional given ID."""
-
-    id: ConstraintIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+type ConditionData = Annotated[
+    TimeWindowConditionData
+    | TimeBoundConditionData
+    | TaskGapConditionData
+    | DailyLimitConditionData,
+    Field(description="One time window, time bound, task gap, or daily limit condition."),
+]
+"""A time window, time bound, task gap, or daily limit."""
 
 
-class SoftConstraintData(SoftConstraintContentData):
-    """JSON form of SoftConstraint."""
+class HardRequirementData(DataModel):
+    """A condition that must have zero violation."""
 
-    id: ConstraintIdField
+    kind: Literal["hard"] = Field(
+        description="hard requires the condition to hold for scheduled tasks. It does not require placement; use required: true on a movable task to require scheduling it."
+    )
+
+
+class SoftRequirementData(DataModel):
+    """A preference whose weighted violation adds to the solve cost."""
+
+    kind: Literal["soft"] = Field(
+        description="soft permits violations and penalizes them alongside other preferences, dropping optional tasks, and moving previous placements. Unscheduled tasks have no condition violation."
+    )
+    strength: Literal["weak", "normal", "strong"] = Field(
+        description="weak gives a low penalty weight; normal gives a medium weight; strong gives a high weight. These trade off total costs and do not make the condition hard."
+    )
+
+
+class ConstraintContentData(DataModel):
+    """A scheduling condition with a hard requirement or soft preference."""
+
+    label: str | None = Field(
+        default=None,
+        description="Optional text describing the request, returned by the constraints query. It has no effect on scheduling."
+    )
+    requirement: HardRequirementData | SoftRequirementData = Field(
+        description="hard enforces zero violation; soft adds a violation penalty using its required strength. Neither requires optional tasks to be scheduled."
+    )
+    condition: ConditionData = Field(
+        description="One time_window, time_bound, task_gap, or daily_limit condition. Stored as entered and returned by the constraints query, rather than replaced with rounded windows."
+    )
+
+
+class NewConstraintData(ConstraintContentData):
+    """A constraint to add with an optional supplied identifier."""
+
+    id: ConstraintIdField | None = Field(
+        default=None,
+        description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
+    )
+
+
+class ConstraintData(ConstraintContentData):
+    """A stored constraint or complete replacement with its identifier."""
+
+    id: ConstraintIdField = Field(
+        description="Existing constraint identifier returned by apply or the constraints query. Required for replacement; it stays unchanged."
+    )
 
 
 class AddTaskData(DataModel):
@@ -428,40 +474,28 @@ class RemoveTaskData(DataModel):
 
 
 class AddConstraintData(DataModel):
-    """JSON form of AddConstraint."""
+    """Add one hard constraint or soft preference."""
 
-    kind: Literal["add_constraint"]
-    constraint: NewHardConstraintData | NewSoftConstraintData
+    kind: Literal["add_constraint"] = Field(description="add_constraint creates a constraint.")
+    constraint: NewConstraintData = Field(
+        description="New constraint with requirement and condition, plus optional id and label. A supplied identifier must be a non-empty string unique among constraints."
+    )
 
 
 class RemoveConstraintData(DataModel):
-    """JSON form of RemoveConstraint."""
+    """Remove an existing constraint by its identifier."""
 
-    kind: Literal["remove_constraint"]
-    constraint_id: ConstraintIdField
-
-
-class HardRequirementData(DataModel):
-    """JSON form of a hard requirement."""
-
-    kind: Literal["hard"]
+    kind: Literal["remove_constraint"] = Field(description="remove_constraint deletes a constraint.")
+    constraint_id: ConstraintIdField = Field(description="Identifier of the existing constraint to remove.")
 
 
-class SoftRequirementData(DataModel):
-    """JSON form of a soft requirement."""
+class ReplaceConstraintData(DataModel):
+    """Replace an existing constraint's complete content."""
 
-    kind: Literal["soft"]
-    strength: Literal["weak", "normal", "strong"]
-
-
-class AddTimeConstraintData(DataModel):
-    """JSON form of AddTimeConstraint."""
-
-    kind: Literal["add_time_constraint"]
-    task_ids: tuple[TaskIdField, ...] = Field(min_length=1)
-    relation: Literal["within", "avoid"]
-    windows: tuple[TimeWindowData, ...]
-    requirement: HardRequirementData | SoftRequirementData
+    kind: Literal["replace_constraint"] = Field(description="replace_constraint edits a constraint with the same identifier.")
+    constraint: ConstraintData = Field(
+        description="Complete replacement with the existing id, requirement, and condition. Include label to retain it; omitting label clears it."
+    )
 
 
 type CommandData = (
@@ -469,16 +503,18 @@ type CommandData = (
     | ReplaceTaskData
     | RemoveTaskData
     | AddConstraintData
-    | AddTimeConstraintData
+    | ReplaceConstraintData
     | RemoveConstraintData
 )
 """JSON form of SchedulingCommand."""
 
 
 class CommandsData(DataModel):
-    """JSON data containing commands of either kind."""
+    """A batch of task and constraint commands applied in order."""
 
-    commands: tuple[Annotated[CommandData, Field(discriminator="kind")], ...]
+    commands: tuple[Annotated[CommandData, Field(discriminator="kind")], ...] = Field(
+        description="Commands executed in order; the entire accepted batch is saved, or rejected without changing state."
+    )
 
 
 class PeopleFilterData(DataModel):
@@ -499,10 +535,14 @@ class TasksFilterData(DataModel):
 
 
 class ConstraintsFilterData(DataModel):
-    """JSON conditions for constraints."""
+    """Filters selecting constraints by identifier and referenced tasks."""
 
-    constraint_ids: tuple[ConstraintIdField, ...] | None = None
-    task_ids: tuple[TaskIdField, ...] | None = None
+    constraint_ids: tuple[ConstraintIdField, ...] | None = Field(
+        default=None, description="Match any listed constraint identifier; omit or use null for all identifiers."
+    )
+    task_ids: tuple[TaskIdField, ...] | None = Field(
+        default=None, description="Match constraints referencing any listed task; omit or use null for all tasks. Each matching constraint appears once."
+    )
 
 
 class PreviousScheduleFilterData(DataModel):
@@ -510,6 +550,39 @@ class PreviousScheduleFilterData(DataModel):
 
     task_ids: tuple[TaskIdField, ...] | None = None
     start_range: TimeIntervalData | None = None
+
+
+class EvaluationFilterData(ConstraintsFilterData):
+    """Filters selecting constraint evaluations."""
+
+    violated_only: bool = Field(
+        default=False,
+        description="Return only constraints with a positive violation, including hard violations. Task filters select complete constraints and do not shorten breakdowns.",
+    )
+
+
+class EvaluationQueryData(DataModel):
+    """Evaluate current constraints against the last saved solution."""
+
+    kind: Literal["evaluation"] = Field(
+        description="Returns has_previous, items, total, and truncated. With no saved solution, has_previous is false and items are empty. Each item has constraint_id, label, requirement, violation (amount and unit: hours or count), cost (null for hard), and breakdown (by task for time_window and time_bound, by date for daily_limit, empty for task_gap). Hard violations come first, then soft costs highest first; satisfied hard constraints come last. Fixed tasks use current intervals rounded outward to slots; missing movable tasks are unscheduled. Saved movable intervals are used even after task edits.",
+    )
+    filter: EvaluationFilterData = Field(
+        default_factory=EvaluationFilterData,
+        description="Optional filters combined with and; omitted filters match all constraints. Each selected constraint and its complete breakdown appears once.",
+    )
+    limit: int = Field(
+        20,
+        description="Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting; truncated indicates omitted items. Only constraints are limited; their breakdowns are complete.",
+    )
+
+
+class ObjectivePolicyQueryData(DataModel):
+    """Read the default solver's current objective coefficients."""
+
+    kind: Literal["objective_policy"] = Field(
+        description="Returns drop_costs by importance, weights by strength, per_count scaling for daily count violations, and stability_drop_cost_ratio. Total cost adds dropped optional task costs, weighted soft violations in hours (counts scaled by per_count), and weighted hours moved capped at stability_drop_cost_ratio times drop cost per task. Required tasks also have capped stability costs. Hard constraints require zero violation; unscheduled tasks have no constraint or stability cost.",
+    )
 
 
 class SummaryQueryData(DataModel):
@@ -541,10 +614,15 @@ class TasksQueryData(DataModel):
 
 
 class ConstraintsQueryData(DataModel):
-    """JSON form of ConstraintsQuery."""
+    """Read complete stored constraints with their entered conditions."""
 
-    kind: Literal["constraints"]
-    filter: ConstraintsFilterData = Field(default_factory=ConstraintsFilterData)
+    kind: Literal["constraints"] = Field(
+        description="constraints returns id, label, requirement, and condition, including windows before rounding."
+    )
+    filter: ConstraintsFilterData = Field(
+        default_factory=ConstraintsFilterData,
+        description="Optional filters combined with and; omitted filters match all constraints."
+    )
     limit: int = Field(
         20, description="Limit from 1 to 100; out-of-range values are rejected."
     )
@@ -581,6 +659,8 @@ type QueryData = (
     | ConstraintsQueryData
     | PreviousScheduleQueryData
     | AvailableStartsQueryData
+    | EvaluationQueryData
+    | ObjectivePolicyQueryData
 )
 """JSON form of SchedulingQuery."""
 
@@ -588,6 +668,15 @@ type QueryData = (
 def convert_query(data: QueryData) -> SchedulingQuery:
     """Convert a structured scheduling query."""
     match data:
+        case EvaluationQueryData():
+            return EvaluationQuery(
+                data.filter.violated_only,
+                frozenset(data.filter.constraint_ids) if data.filter.constraint_ids is not None else None,
+                frozenset(data.filter.task_ids) if data.filter.task_ids is not None else None,
+                data.limit,
+            )
+        case ObjectivePolicyQueryData():
+            return ObjectivePolicyQuery()
         case SummaryQueryData():
             return SummaryQuery()
         case PeopleQueryData():
@@ -674,28 +763,98 @@ def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]
             return {"kind": "replace_task", "task_id": task.id.value}
         case RemoveTask(task_id=task_id):
             return {"kind": "remove_task", "task_id": task_id.value}
-        case AddConstraint(constraint=constraint):
-            return {"kind": "add_constraint", "constraint_id": constraint.id.value}
-        case AddTimeConstraint():
-            expansion: Expansion = expand(command.windows, command.relation, grid)
+        case (
+            AddConstraint(constraint=constraint)
+            | ReplaceConstraint(constraint=constraint)
+        ):
             record: dict[str, str] = {
-                "kind": "add_time_constraint",
-                "constraint_id": command.constraint_id.value,
+                "kind": "add_constraint"
+                if isinstance(command, AddConstraint)
+                else "replace_constraint",
+                "constraint_id": constraint.id.value,
             }
-            if expansion.rounded:
-                direction: str = (
-                    "inward" if command.relation is TimeRelation.WITHIN else "outward"
+            condition: Condition = constraint.condition
+            if isinstance(condition, TimeWindowCondition):
+                expansion: Expansion = expand(
+                    condition.windows, condition.relation, grid
                 )
-                record["note"] = (
-                    f"Window times were rounded {direction} to calendar slots."
-                )
+                if expansion.rounded:
+                    direction: str = (
+                        "inward"
+                        if condition.relation is TimeRelation.WITHIN
+                        else "outward"
+                    )
+                    record["note"] = (
+                        f"Window times were rounded {direction} to calendar slots."
+                    )
             return record
         case RemoveConstraint(constraint_id=constraint_id):
             return {"kind": "remove_constraint", "constraint_id": constraint_id.value}
 
 
+def schedule_summary_record(summary: ScheduleSummary) -> dict[str, object]:
+    """Convert a solved schedule summary to its JSON record."""
+    return {
+        "total_cost": summary.total_cost,
+        "costs": {
+            "dropped_tasks": summary.dropped_tasks_cost,
+            "soft_constraints": summary.soft_constraints_cost,
+            "stability": summary.stability_cost,
+        },
+        "counts": {
+            "scheduled_tasks": summary.scheduled_tasks,
+            "dropped_tasks": summary.dropped_tasks,
+            "violated_soft_constraints": summary.violated_soft_constraints,
+            "moved_tasks": summary.moved_tasks,
+        },
+    }
+
+
+def _violation_record(amount: float, unit: ViolationUnit) -> dict[str, object]:
+    """Describe a violation amount and its unit."""
+    return {"amount": amount, "unit": unit}
+
+
+def _violation_part_record(part: ViolationPart, item: ConstraintEvaluation) -> dict[str, object]:
+    """Describe a task or date's violation and cost."""
+    record: dict[str, object] = {
+        "violation": _violation_record(part.amount, item.violation.unit),
+        "cost": part.amount * item.coefficient if item.coefficient is not None else None,
+    }
+    if part.task_id is not None:
+        return {"task_id": part.task_id.value, **record}
+    assert part.date is not None
+    return {"date": part.date.isoformat(), **record}
+
+
+def _evaluation_record(item: ConstraintEvaluation) -> dict[str, object]:
+    """Describe a constraint evaluation with its breakdown."""
+    constraint: Constraint = item.constraint
+    requirement: dict[str, str] = (
+        {"kind": "soft", "strength": constraint.strength.value}
+        if isinstance(constraint, SoftConstraint)
+        else {"kind": "hard"}
+    )
+    return {
+        "constraint_id": constraint.id.value,
+        "label": constraint.label,
+        "requirement": requirement,
+        "violation": _violation_record(item.violation.amount, item.violation.unit),
+        "cost": item.cost,
+        "breakdown": [_violation_part_record(part, item) for part in item.violation.breakdown],
+    }
+
+
 def answer_record(answer: Answer) -> dict[str, object]:
     """Convert a query answer to its JSON record."""
+    if isinstance(answer, ObjectivePolicyAnswer):
+        return {
+            "kind": "objective_policy",
+            "drop_costs": {key.value: value for key, value in answer.policy.drop_costs.items()},
+            "weights": {key.value: value for key, value in answer.policy.weights.items()},
+            "per_count": answer.policy.per_count,
+            "stability_drop_cost_ratio": answer.policy.stability_drop_cost_ratio,
+        }
     if isinstance(answer, Summary):
         return {
             "kind": "summary",
@@ -717,6 +876,12 @@ def answer_record(answer: Answer) -> dict[str, object]:
         }
     record: dict[str, object] = {"total": answer.total, "truncated": answer.truncated}
     match answer:
+        case EvaluationAnswer():
+            record.update(
+                kind="evaluation",
+                has_previous=answer.has_previous,
+                items=[_evaluation_record(item) for item in answer.items],
+            )
         case PeopleAnswer():
             record.update(
                 kind="people",
@@ -738,31 +903,13 @@ def answer_record(answer: Answer) -> dict[str, object]:
                 ],
             )
         case ConstraintsAnswer():
-            items: list[dict[str, object]] = []
-            constraint: Constraint
-            for constraint in answer.items:
-                item: dict[str, object]
-                if isinstance(constraint.evaluation, Intrusion):
-                    region: tuple[TimeInterval, ...] = constraint.evaluation.region
-                    shortened: Constraint = replace(
-                        constraint, evaluation=Intrusion(region[:3])
-                    )
-                    item = to_constraint_data(shortened).model_dump(mode="json")
-                    item["evaluation"] = {
-                        "kind": "intrusion",
-                        "region": {
-                            "items": [
-                                to_time_interval_data(interval).model_dump(mode="json")
-                                for interval in region[:3]
-                            ],
-                            "total": len(region),
-                            "truncated": len(region) > 3,
-                        },
-                    }
-                else:
-                    item = to_constraint_data(constraint).model_dump(mode="json")
-                items.append(item)
-            record.update(kind="constraints", items=items)
+            record.update(
+                kind="constraints",
+                items=[
+                    to_constraint_data(constraint).model_dump(mode="json")
+                    for constraint in answer.items
+                ],
+            )
         case PreviousScheduleAnswer():
             record.update(
                 kind="previous_schedule",
@@ -786,12 +933,8 @@ def convert_command(data: CommandData) -> SchedulingCommand:
     new_task: NewTaskData | NewFixedTaskData
     task: TaskData | FixedTaskData
     task_id: TaskId
-    task_ids: tuple[TaskId, ...]
-    constraint: NewHardConstraintData | NewSoftConstraintData
+    constraint: NewConstraintData | ConstraintData
     constraint_id: ConstraintId
-    relation: Literal["within", "avoid"]
-    windows: tuple[TimeWindowData, ...]
-    requirement: HardRequirementData | SoftRequirementData
     match data:
         case AddTaskData(task=new_task):
             task_id = new_task.id if new_task.id is not None else TaskId.generate()
@@ -817,18 +960,8 @@ def convert_command(data: CommandData) -> SchedulingCommand:
                     constraint,
                 )
             )
-        case AddTimeConstraintData(
-            task_ids=task_ids, relation=relation, windows=windows, requirement=requirement
-        ):
-            return AddTimeConstraint(
-                ConstraintId.generate(),
-                frozenset(task_ids),
-                TimeRelation(relation),
-                tuple(convert_time_window(window) for window in windows),
-                Strength(requirement.strength)
-                if isinstance(requirement, SoftRequirementData)
-                else None,
-            )
+        case ReplaceConstraintData(constraint=constraint):
+            return ReplaceConstraint(convert_constraint(constraint.id, constraint))
         case RemoveConstraintData(constraint_id=constraint_id):
             return RemoveConstraint(constraint_id)
 
@@ -863,72 +996,44 @@ def convert_fixed_task(task_id: TaskId, data: FixedTaskContentData) -> FixedTask
 
 
 def convert_constraint(
-    constraint_id: ConstraintId, data: HardConstraintContentData | SoftConstraintContentData
+    constraint_id: ConstraintId, data: ConstraintContentData
 ) -> Constraint:
     """Convert a structured constraint value."""
+    condition: Condition = convert_condition(data.condition)
+    if isinstance(data.requirement, SoftRequirementData):
+        return SoftConstraint(
+            constraint_id, condition, Strength(data.requirement.strength), data.label
+        )
+    return HardConstraint(constraint_id, condition, data.label)
+
+
+def convert_condition(data: ConditionData) -> Condition:
+    """Convert a structured condition value."""
     match data:
-        case HardConstraintContentData():
-            return HardConstraint(
-                constraint_id,
-                convert_measure(data.measure),
-                convert_evaluation(data.evaluation),
+        case TimeWindowConditionData():
+            return TimeWindowCondition(
+                frozenset(data.task_ids),
+                TimeRelation(data.relation),
+                tuple(convert_time_window(window) for window in data.windows),
             )
-        case SoftConstraintContentData():
-            return SoftConstraint(
-                constraint_id,
-                convert_measure(data.measure),
-                convert_evaluation(data.evaluation),
-                Strength(data.strength),
+        case TimeBoundConditionData():
+            return TimeBoundCondition(
+                frozenset(data.task_ids),
+                Boundary(data.boundary),
+                TimeBoundRelation(data.relation),
+                data.at,
             )
-
-
-def convert_measure(data: MeasureData) -> Measure:
-    """Convert a structured measure value."""
-    task_id: TaskId
-    from_task_id: TaskId
-    to_task_id: TaskId
-    task_ids: tuple[TaskId, ...]
-    quantity: Literal["count", "total_duration"]
-    match data:
-        case PointMeasureData(task_id=task_id):
-            return PointMeasure(task_id)
-        case IntervalMeasureData(task_ids=task_ids):
-            return IntervalMeasure(frozenset(task_ids))
-        case DependencyMeasureData(from_task_id=from_task_id, to_task_id=to_task_id):
-            return DependencyMeasure(from_task_id, to_task_id)
-        case AggregateMeasureData(task_ids=task_ids, quantity=quantity):
-            return AggregateMeasure(frozenset(task_ids), AggregateQuantity(quantity))
-
-
-def convert_evaluation(data: EvaluationData) -> Evaluation:
-    """Convert a structured evaluation value."""
-    target: QuantityData
-    region: tuple[TimeIntervalData, ...]
-    lower: QuantityData
-    upper: QuantityData
-    match data:
-        case DistanceData(target=target):
-            return Distance(convert_quantity(target))
-        case IntrusionData(region=region):
-            return Intrusion(
-                tuple(TimeInterval(interval.start, interval.end) for interval in region)
+        case TaskGapConditionData():
+            return TaskGapCondition(
+                data.from_task_id,
+                data.to_task_id,
+                TaskGapRelation(data.relation),
+                data.gap,
             )
-        case ShortfallData(lower=lower):
-            return Shortfall(convert_quantity(lower))
-        case ExcessData(upper=upper):
-            return Excess(convert_quantity(upper))
-
-
-def convert_quantity(data: QuantityData) -> datetime | timedelta | int:
-    """Extract a structured quantity value."""
-    value: datetime | timedelta | int
-    match data:
-        case (
-            InstantData(value=value)
-            | DurationData(value=value)
-            | CountData(value=value)
-        ):
-            return value
+        case DailyLimitConditionData():
+            return DailyLimitCondition(
+                frozenset(data.task_ids), AggregateQuantity(data.quantity), data.maximum
+            )
 
 
 def to_time_interval_data(interval: TimeInterval) -> TimeIntervalData:
@@ -958,80 +1063,83 @@ def to_fixed_task_data(task: FixedTask) -> FixedTaskData:
         name=task.name,
         start=task.start,
         duration=task.duration,
-        participant_ids=tuple(sorted(task.participant_ids, key=lambda item: item.value)),
+        participant_ids=tuple(
+            sorted(task.participant_ids, key=lambda item: item.value)
+        ),
     )
 
 
-def to_measure_data(measure: Measure) -> MeasureData:
-    """Convert a domain measure to its data form."""
-    task_id: TaskId
-    task_ids: frozenset[TaskId]
-    from_task_id: TaskId
-    to_task_id: TaskId
-    quantity: AggregateQuantity
-    match measure:
-        case PointMeasure(task_id=task_id):
-            return PointMeasureData(kind="point", task_id=task_id)
-        case IntervalMeasure(task_ids=task_ids):
-            return IntervalMeasureData(
-                kind="interval",
-                task_ids=tuple(sorted(task_ids, key=lambda item: item.value)),
+def to_time_window_data(window: TimeWindow) -> TimeWindowData:
+    """Convert a domain time window to its data form."""
+    return TimeWindowData(
+        date_range=DateRangeData(
+            start=window.date_range.start, end=window.date_range.end
+        )
+        if window.date_range is not None
+        else None,
+        weekdays=tuple(
+            cast(WeekdayField, day.name.lower()) for day in sorted(window.weekdays)
+        )
+        if window.weekdays is not None
+        else None,
+        time_range=TimeRangeData(
+            start=window.time_range.start, end=window.time_range.end
+        )
+        if window.time_range is not None
+        else None,
+    )
+
+
+def to_condition_data(condition: Condition) -> ConditionData:
+    """Convert a domain condition to its data form."""
+    task_ids: tuple[TaskId, ...] = tuple(
+        sorted(condition.task_ids, key=lambda item: item.value)
+    )
+    match condition:
+        case TimeWindowCondition():
+            return TimeWindowConditionData(
+                kind="time_window",
+                task_ids=task_ids,
+                relation=condition.relation.value,
+                windows=tuple(
+                    to_time_window_data(window) for window in condition.windows
+                ),
             )
-        case DependencyMeasure(from_task_id=from_task_id, to_task_id=to_task_id):
-            return DependencyMeasureData(
-                kind="dependency", from_task_id=from_task_id, to_task_id=to_task_id
+        case TimeBoundCondition():
+            return TimeBoundConditionData(
+                kind="time_bound",
+                task_ids=task_ids,
+                boundary=condition.boundary.value,
+                relation=condition.relation.value,
+                at=condition.at,
             )
-        case AggregateMeasure(task_ids=task_ids, quantity=quantity):
-            return AggregateMeasureData(
-                kind="aggregate",
-                task_ids=tuple(sorted(task_ids, key=lambda item: item.value)),
-                quantity=quantity.value,
+        case TaskGapCondition():
+            return TaskGapConditionData(
+                kind="task_gap",
+                from_task_id=condition.from_task_id,
+                to_task_id=condition.to_task_id,
+                relation=condition.relation.value,
+                gap=condition.gap,
+            )
+        case DailyLimitCondition():
+            return DailyLimitConditionData(
+                kind="daily_limit",
+                task_ids=task_ids,
+                quantity=condition.quantity.value,
+                maximum=condition.maximum,
             )
 
 
-def to_quantity_data(value: datetime | timedelta | int) -> QuantityData:
-    """Convert a domain quantity to its data form."""
-    match value:
-        case datetime():
-            return InstantData(kind="instant", value=value)
-        case timedelta():
-            return DurationData(kind="duration", value=value)
-        case int():
-            return CountData(kind="count", value=value)
-
-
-def to_evaluation_data(evaluation: Evaluation) -> EvaluationData:
-    """Convert a domain evaluation to its data form."""
-    match evaluation:
-        case Distance(target=target):
-            return DistanceData(kind="distance", target=to_quantity_data(target))
-        case Intrusion(region=region):
-            return IntrusionData(
-                kind="intrusion",
-                region=tuple(to_time_interval_data(item) for item in region),
-            )
-        case Shortfall(lower=lower):
-            return ShortfallData(kind="shortfall", lower=to_quantity_data(lower))
-        case Excess(upper=upper):
-            return ExcessData(kind="excess", upper=to_quantity_data(upper))
-
-
-def to_constraint_data(
-    constraint: Constraint,
-) -> HardConstraintData | SoftConstraintData:
+def to_constraint_data(constraint: Constraint) -> ConstraintData:
     """Convert a domain constraint to its data form."""
-    measure: MeasureData = to_measure_data(constraint.measure)
-    evaluation: EvaluationData = to_evaluation_data(constraint.evaluation)
-    match constraint:
-        case HardConstraint(id=identifier):
-            return HardConstraintData(
-                id=identifier, kind="hard", measure=measure, evaluation=evaluation
-            )
-        case SoftConstraint(id=identifier, strength=strength):
-            return SoftConstraintData(
-                id=identifier,
-                kind="soft",
-                measure=measure,
-                evaluation=evaluation,
-                strength=strength.value,
-            )
+    requirement: HardRequirementData | SoftRequirementData = (
+        SoftRequirementData(kind="soft", strength=constraint.strength.value)
+        if isinstance(constraint, SoftConstraint)
+        else HardRequirementData(kind="hard")
+    )
+    return ConstraintData(
+        id=constraint.id,
+        label=constraint.label,
+        requirement=requirement,
+        condition=to_condition_data(constraint.condition),
+    )

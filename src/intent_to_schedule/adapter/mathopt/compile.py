@@ -12,8 +12,9 @@ from intent_to_schedule.adapter.mathopt.measure import (
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.domain.availability import available_start_slots, free_slots
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
+from intent_to_schedule.domain.condition import Criterion, DailyLimitCondition
 from intent_to_schedule.domain.constraint import HardConstraint, SoftConstraint
-from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantity
+from intent_to_schedule.domain.measure import AggregateQuantity
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
@@ -32,7 +33,9 @@ class CompiledProblem:
 
 
 def compile_problem(
-    problem: SchedulingProblem, policy: ObjectivePolicy, previous: Schedule | None = None
+    problem: SchedulingProblem,
+    policy: ObjectivePolicy,
+    previous: Schedule | None = None,
 ) -> CompiledProblem:
     """Build a MathOpt model from a SchedulingProblem."""
     grid: TimeGrid = problem.calendar.grid
@@ -42,7 +45,8 @@ def compile_problem(
     presences: dict[TaskId, mathopt.Variable] = {}
     placements: dict[TaskId, dict[int, mathopt.Variable]] = {}
     durations: dict[TaskId, int] = {
-        task.id: grid.index_of(grid.horizon.start + task.duration) for task in problem.tasks
+        task.id: grid.index_of(grid.horizon.start + task.duration)
+        for task in problem.tasks
     }
     participant_ids: set[PersonId] = {
         person_id for task in problem.tasks for person_id in task.participant_ids
@@ -101,8 +105,8 @@ def compile_problem(
         objective_terms.append(policy.drop_cost(task.importance) * (1 - presence))
         if task.id in previous_starts:
             previous_start: datetime = previous_starts[task.id]
-            cap: float = (
-                policy.stability_drop_cost_ratio * policy.drop_cost(task.importance)
+            cap: float = policy.stability_drop_cost_ratio * policy.drop_cost(
+                task.importance
             )
             objective_terms.append(
                 mathopt.LinearSum(
@@ -144,20 +148,24 @@ def compile_problem(
     constraint: HardConstraint | SoftConstraint
     strength: Strength
     for constraint in problem.constraints:
-        expression: MeasureExpression = compile_measure(
-            constraint.measure, problem, model, starts, presences, placements
-        )
-        violation: mathopt.LinearBase = compile_evaluation(
-            expression, constraint.evaluation, model, grid
-        )
+        violations: list[mathopt.LinearBase] = []
+        criterion: Criterion
+        for criterion in constraint.condition.criteria(grid):
+            expression: MeasureExpression = compile_measure(
+                criterion.measure, problem, model, starts, presences, placements
+            )
+            violations.append(
+                compile_evaluation(expression, criterion.evaluation, model, grid)
+            )
+        violation: mathopt.LinearBase = mathopt.LinearSum(violations)
         match constraint:
             case HardConstraint():
-                model.add_linear_constraint(violation <= 0)
+                model.add_linear_constraint(violation == 0)
             case SoftConstraint(strength=strength):
                 scale: float = (
                     policy.per_count
-                    if isinstance(constraint.measure, AggregateMeasure)
-                    and constraint.measure.quantity is AggregateQuantity.COUNT
+                    if isinstance(constraint.condition, DailyLimitCondition)
+                    and constraint.condition.quantity is AggregateQuantity.COUNT
                     else 1.0
                 )
                 objective_terms.append(policy.weight(strength) * scale * violation)

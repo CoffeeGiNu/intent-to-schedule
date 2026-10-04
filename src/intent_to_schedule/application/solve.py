@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from intent_to_schedule.application.objective import ScheduleSummary
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 
@@ -10,6 +11,7 @@ class Solved:
     """Result with a schedule."""
 
     schedule: Schedule
+    summary: ScheduleSummary | None = None
 
 
 @dataclass(frozen=True)

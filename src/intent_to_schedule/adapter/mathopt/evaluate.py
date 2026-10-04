@@ -31,6 +31,7 @@ def compile_evaluation(
     hours_per_slot: float = grid.slot / timedelta(hours=1)
     placements: Mapping[int, mathopt.Variable]
     target: datetime | timedelta
+    offset: timedelta
     occupancy: Mapping[int, mathopt.LinearBase]
     region: tuple[TimeInterval, ...]
     dependency: DependencyExpression
@@ -38,18 +39,35 @@ def compile_evaluation(
     values: Mapping[date, mathopt.LinearBase]
     value: mathopt.LinearBase
     upper: int | timedelta
+    bound: float
+    inactive: mathopt.LinearBase
+    violation: mathopt.Variable
+    violations: list[mathopt.Variable]
 
     match expression, evaluation:
-        case PointExpression(placements=placements), Distance(
+        case PointExpression(placements=placements, offset=offset), Distance(
             target=datetime() as target
         ):
-            target_slot: float = float(grid.index_of(target))
-            return (
-                mathopt.LinearSum(
-                    abs(start - target_slot) * variable
-                    for start, variable in placements.items()
-                )
-                * hours_per_slot
+            return mathopt.LinearSum(
+                abs((grid.time_at(start) + offset - target) / timedelta(hours=1))
+                * variable
+                for start, variable in placements.items()
+            )
+        case PointExpression(placements=placements, offset=offset), Excess(
+            upper=datetime() as target
+        ):
+            return mathopt.LinearSum(
+                max((grid.time_at(start) + offset - target) / timedelta(hours=1), 0.0)
+                * variable
+                for start, variable in placements.items()
+            )
+        case PointExpression(placements=placements, offset=offset), Shortfall(
+            lower=datetime() as target
+        ):
+            return mathopt.LinearSum(
+                max((target - grid.time_at(start) - offset) / timedelta(hours=1), 0.0)
+                * variable
+                for start, variable in placements.items()
             )
         case IntervalExpression(occupancy=occupancy), Intrusion(region=region):
             region_slots: set[int] = {
@@ -60,17 +78,16 @@ def compile_evaluation(
                 and grid.time_at(slot_index + 1) <= interval.end
             }
             return (
-                mathopt.LinearSum(occupancy[slot_index] for slot_index in region_slots) * hours_per_slot
+                mathopt.LinearSum(occupancy[slot_index] for slot_index in region_slots)
+                * hours_per_slot
             )
         case DependencyExpression() as dependency, Distance(
             target=timedelta() as target
         ):
             target_slots: float = target / grid.slot
-            bound: float = dependency.bound + abs(target_slots)
-            inactive: mathopt.LinearBase = bound * (
-                2 - dependency.from_presence - dependency.to_presence
-            )
-            violation: mathopt.Variable = model.add_variable(lb=0.0)
+            bound = dependency.bound + abs(target_slots)
+            inactive = bound * (2 - dependency.from_presence - dependency.to_presence)
+            violation = model.add_variable(lb=0.0)
             model.add_linear_constraint(
                 violation >= (dependency.gap - target_slots - inactive) * hours_per_slot
             )
@@ -82,11 +99,9 @@ def compile_evaluation(
             lower=timedelta() as lower
         ):
             lower_slots: float = lower / grid.slot
-            bound: float = dependency.bound + abs(lower_slots)
-            inactive: mathopt.LinearBase = bound * (
-                2 - dependency.from_presence - dependency.to_presence
-            )
-            violation: mathopt.Variable = model.add_variable(lb=0.0)
+            bound = dependency.bound + abs(lower_slots)
+            inactive = bound * (2 - dependency.from_presence - dependency.to_presence)
+            violation = model.add_variable(lb=0.0)
             model.add_linear_constraint(
                 violation >= (lower_slots - dependency.gap - inactive) * hours_per_slot
             )
@@ -96,9 +111,9 @@ def compile_evaluation(
         ), Excess(upper=int() as upper):
             if isinstance(upper, bool):
                 raise ValueError("Unsupported evaluation")
-            violations: list[mathopt.Variable] = []
+            violations = []
             for value in values.values():
-                violation: mathopt.Variable = model.add_variable(lb=0.0)
+                violation = model.add_variable(lb=0.0)
                 model.add_linear_constraint(violation >= value - upper)
                 violations.append(violation)
             return mathopt.LinearSum(violations)
@@ -106,9 +121,9 @@ def compile_evaluation(
             values=values, quantity=AggregateQuantity.TOTAL_DURATION
         ), Excess(upper=timedelta() as upper):
             upper_hours: float = upper / timedelta(hours=1)
-            violations: list[mathopt.Variable] = []
+            violations = []
             for value in values.values():
-                violation: mathopt.Variable = model.add_variable(lb=0.0)
+                violation = model.add_variable(lb=0.0)
                 model.add_linear_constraint(
                     violation >= value * hours_per_slot - upper_hours
                 )

@@ -3,7 +3,9 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from intent_to_schedule.application.command import Rejected
-from intent_to_schedule.application.time_windows import TimeWindow, window_times
+from intent_to_schedule.application.objective import ConstraintEvaluation, evaluate_constraints
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
+from intent_to_schedule.domain.time_windows import TimeWindow, window_times
 from intent_to_schedule.domain.availability import available_start_slots, free_slots
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.consistency import Violation, Violations
@@ -68,6 +70,20 @@ class AvailableStartsAnswer(Listing[datetime]):
     """Start times where every participant is free."""
 
 
+@dataclass(frozen=True)
+class EvaluationAnswer(Listing[ConstraintEvaluation]):
+    """Current constraint evaluations against the saved schedule."""
+
+    has_previous: bool
+
+
+@dataclass(frozen=True)
+class ObjectivePolicyAnswer:
+    """The objective coefficients used by the default solver."""
+
+    policy: ObjectivePolicy
+
+
 type Answer = (
     Summary
     | PeopleAnswer
@@ -75,6 +91,8 @@ type Answer = (
     | ConstraintsAnswer
     | PreviousScheduleAnswer
     | AvailableStartsAnswer
+    | EvaluationAnswer
+    | ObjectivePolicyAnswer
 )
 """Answer to a query."""
 
@@ -239,13 +257,61 @@ class ConstraintsQuery:
                     )
                     and (
                         self.task_ids is None
-                        or bool(self.task_ids & constraint.measure.task_ids)
+                        or bool(self.task_ids & constraint.condition.task_ids)
                     )
                 ),
                 key=lambda constraint: constraint.id.value,
             )
         )
         return Answered(ConstraintsAnswer(constraints[: self.limit], len(constraints)))
+
+
+@dataclass(frozen=True)
+class EvaluationQuery:
+    """Query for current constraints evaluated against the saved schedule."""
+
+    violated_only: bool
+    constraint_ids: frozenset[ConstraintId] | None
+    task_ids: frozenset[TaskId] | None
+    limit: int
+
+    def answer(
+        self, problem: SchedulingProblem, previous: Schedule | None
+    ) -> AnswerResult:
+        """Answer with filtered constraint evaluations in cost order."""
+        invalid_limit: Rejected | None = _check_limit(self.limit)
+        if invalid_limit is not None:
+            return invalid_limit
+        if previous is None:
+            return Answered(EvaluationAnswer((), 0, False))
+        evaluations: tuple[ConstraintEvaluation, ...] = tuple(
+            sorted(
+                (
+                    item
+                    for item in evaluate_constraints(problem, previous, DEFAULT_POLICY)
+                    if (not self.violated_only or item.violation.amount > 0)
+                    and (self.constraint_ids is None or item.constraint.id in self.constraint_ids)
+                    and (self.task_ids is None or bool(self.task_ids & item.constraint.condition.task_ids))
+                ),
+                key=lambda item: (
+                    0 if item.cost is None and item.violation.amount > 0 else 1 if item.cost is not None else 2,
+                    -(item.cost if item.cost is not None else item.violation.amount),
+                    item.constraint.id.value,
+                ),
+            )
+        )
+        return Answered(EvaluationAnswer(evaluations[: self.limit], len(evaluations), True))
+
+
+@dataclass(frozen=True)
+class ObjectivePolicyQuery:
+    """Query for current objective coefficients."""
+
+    def answer(
+        self, problem: SchedulingProblem, previous: Schedule | None
+    ) -> AnswerResult:
+        """Answer with the default solver's objective policy."""
+        return Answered(ObjectivePolicyAnswer(DEFAULT_POLICY))
 
 
 @dataclass(frozen=True)
@@ -368,7 +434,6 @@ class AvailableStartsQuery:
         return Answered(AvailableStartsAnswer(tuple(items[: self.limit]), len(items)))
 
 
-# TODO: consider a query for the requests as given (e.g. time windows before expansion), separate from ConstraintsQuery which returns expanded constraints; the requests are not stored yet.
 type SchedulingQuery = (
     SummaryQuery
     | PeopleQuery
@@ -376,6 +441,8 @@ type SchedulingQuery = (
     | ConstraintsQuery
     | PreviousScheduleQuery
     | AvailableStartsQuery
+    | EvaluationQuery
+    | ObjectivePolicyQuery
 )
 """Request to read a SchedulingProblem and its previous schedule."""
 
