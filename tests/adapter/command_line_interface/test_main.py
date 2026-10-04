@@ -996,7 +996,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
             assert output == {
                 "summary": solve_summary(
                     scheduled_tasks=2,
-                    stability_cost=5.0 if stability else 0.0,
+                    stability_cost=5 / (1 + 5 / 50) if stability else 0.0,
                     moved_tasks=1 if stability else 0,
                 ),
                 "items": [
@@ -1494,11 +1494,11 @@ def test_command_line_summary_and_queries_use_saved_solution(
     assert main(arguments) == 0
     output: dict[str, object] = json.loads(capsys.readouterr().out)
     assert output["summary"] == {
-        "total_cost": 2.5 if stability else 0.0,
+        "total_cost": 15 / 7 if stability else 0.0,
         "costs": {
             "dropped_tasks": 0.0,
             "soft_constraints": 0.0,
-            "stability": 2.5 if stability else 0.0,
+            "stability": 15 / 7 if stability else 0.0,
         },
         "counts": {
             "scheduled_tasks": 1,

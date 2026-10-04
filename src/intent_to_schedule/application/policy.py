@@ -1,10 +1,11 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from math import isfinite
 from types import MappingProxyType
 
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance
+from intent_to_schedule.domain.task import Importance, Task
 
 
 @dataclass(frozen=True)
@@ -16,7 +17,7 @@ class ObjectivePolicy:
     per_count: float
     """Penalty of one Task counted, relative to one hour."""
     stability_drop_cost_ratio: float
-    """Share of a task's drop cost used as its stability cap."""
+    """Share of a task's drop cost that its stability cost stays below."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "drop_costs", MappingProxyType(dict(self.drop_costs)))
@@ -44,6 +45,12 @@ class ObjectivePolicy:
 
     def weight(self, strength: Strength) -> float:
         return self.weights[strength]
+
+    def stability_cost(self, task: Task, moved: timedelta) -> float:
+        """Cost of moving a task from its previous start by the given time."""
+        weighted: float = self.weight(task.stability) * abs(moved / timedelta(hours=1))
+        limit: float = self.stability_drop_cost_ratio * self.drop_cost(task.importance)
+        return weighted / (1 + weighted / limit)
 
 
 # TODO: tune all values by running the solver.

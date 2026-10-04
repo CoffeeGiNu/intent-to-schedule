@@ -105,18 +105,10 @@ def compile_problem(
         objective_terms.append(policy.drop_cost(task.importance) * (1 - presence))
         if task.id in previous_starts:
             previous_start: datetime = previous_starts[task.id]
-            cap: float = policy.stability_drop_cost_ratio * policy.drop_cost(
-                task.importance
-            )
             objective_terms.append(
                 mathopt.LinearSum(
                     variable
-                    * min(
-                        policy.weight(task.stability)
-                        * abs((grid.time_at(start) - previous_start).total_seconds())
-                        / 3600,
-                        cap,
-                    )
+                    * policy.stability_cost(task, grid.time_at(start) - previous_start)
                     for start, variable in choices.items()
                 )
             )

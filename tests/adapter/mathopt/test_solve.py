@@ -514,6 +514,35 @@ def test_stability_keeps_required_task_at_nearest_free_start() -> None:
     assert starts(result.schedule) == {item.id: target + SLOT}
 
 
+def test_stability_prefers_nearer_of_two_distant_starts() -> None:
+    """Prefer a twelve-hour move over five days despite a weak later preference."""
+    item: Task = replace(task("required", people=PEOPLE), importance=Importance.HIGH)
+    near: datetime = START + timedelta(hours=12)
+    far: datetime = START + timedelta(days=5)
+    availability: Availability = Availability(
+        PERSON,
+        tuple(TimeInterval(start, start + SLOT) for start in (START, near, far)),
+    )
+    previous: Schedule = Schedule(
+        (ScheduledTask(item.id, item.name, START, START + SLOT),), ()
+    )
+    later: SoftConstraint = SoftConstraint(
+        ConstraintId("later"),
+        bound(item, Boundary.START, TimeBoundRelation.AT_OR_AFTER, near + SLOT),
+        Strength.WEAK,
+    )
+    changed: SchedulingProblem = problem(
+        item,
+        constraints=(later,),
+        fixed_tasks=(FixedTask(TaskId("occupied"), "Occupied", START, SLOT, PEOPLE),),
+        end=far + SLOT,
+        availabilities=(availability,),
+    )
+    result: Solved | Infeasible = SOLVER.solve(changed, previous)
+    assert isinstance(result, Solved)
+    assert starts(result.schedule) == {item.id: near}
+
+
 @pytest.mark.parametrize("boundary", list(Boundary))
 def test_hard_deadline_moves_task_before_bound(boundary: Boundary) -> None:
     item: Task = task("deadline", duration=HOUR, people=PEOPLE)
@@ -806,6 +835,8 @@ def test_summary_matches_objective_of_the_same_solve(
         if isinstance(item.constraint, HardConstraint)
     )
     if scenario == "move":
-        assert solved.summary.stability_cost == (1.25 if custom_policy else 2.5)
+        assert solved.summary.stability_cost == pytest.approx(
+            15 / 13 if custom_policy else 15 / 7
+        )
     assert summarize_schedule(value, solved.schedule, policy).moved_tasks == 0
     assert summarize_schedule(value, solved.schedule, policy).stability_cost == 0

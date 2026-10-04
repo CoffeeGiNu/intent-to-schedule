@@ -1003,22 +1003,22 @@ def test_start_candidates_skip_slots_blocked_for_participants(
 @pytest.mark.parametrize(
     ("importance", "strength", "hours", "required", "expected"),
     [
-        (Importance.LOW, Strength.WEAK, 0.25, False, 0.25),
-        (Importance.MEDIUM, Strength.NORMAL, -0.25, True, 1.25),
+        (Importance.LOW, Strength.WEAK, 0.25, False, 3 / 14),
+        (Importance.MEDIUM, Strength.NORMAL, -0.25, True, 30 / 29),
         (Importance.HIGH, Strength.STRONG, 0.0, True, 0.0),
-        (Importance.LOW, Strength.STRONG, 24.0, False, 1.5),
-        (Importance.MEDIUM, Strength.NORMAL, -24.0, True, 6.0),
-        (Importance.HIGH, Strength.STRONG, 24.0, False, 30.0),
+        (Importance.LOW, Strength.STRONG, 24.0, False, 160 / 107),
+        (Importance.MEDIUM, Strength.NORMAL, -24.0, True, 40 / 7),
+        (Importance.HIGH, Strength.STRONG, 24.0, False, 480 / 17),
     ],
 )
-def test_stability_objective_uses_capped_cost(
+def test_stability_objective_uses_bounded_cost(
     importance: Importance,
     strength: Strength,
     hours: float,
     required: bool,
     expected: float,
 ) -> None:
-    """Charge capped stability cost for a task with one available start."""
+    """Charge bounded stability cost for a task with one available start."""
     item: Task = replace(
         task("movable", required=required), importance=importance, stability=strength
     )

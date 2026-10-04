@@ -115,15 +115,9 @@ def summarize_schedule(
     for item in schedule.scheduled:
         if item.task_id not in previous_starts:
             continue
-        task: Task = tasks[item.task_id]
-        moved_hours: float = abs(
-            (item.start - previous_starts[item.task_id]) / timedelta(hours=1)
-        )
-        moved_tasks += int(moved_hours > 0)
-        stability_cost += min(
-            policy.weight(task.stability) * moved_hours,
-            policy.stability_drop_cost_ratio * policy.drop_cost(task.importance),
-        )
+        moved: timedelta = item.start - previous_starts[item.task_id]
+        moved_tasks += int(moved != timedelta(0))
+        stability_cost += policy.stability_cost(tasks[item.task_id], moved)
     return ScheduleSummary(
         sum(
             policy.drop_cost(tasks[item.task_id].importance)

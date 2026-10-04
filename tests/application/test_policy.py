@@ -1,12 +1,14 @@
 from collections.abc import MutableMapping
 from dataclasses import replace
+from datetime import timedelta
+from itertools import pairwise
 from typing import cast
 
 import pytest
 
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import Importance
+from intent_to_schedule.domain.task import Importance, Task, TaskId
 
 
 def test_policy_copies_input_mappings() -> None:
@@ -64,3 +66,46 @@ def test_policy_requires_every_importance_and_strength() -> None:
         ObjectivePolicy({Importance.LOW: 1.0}, DEFAULT_POLICY.weights, 1.0, 0.5)
     with pytest.raises(ValueError):
         ObjectivePolicy(DEFAULT_POLICY.drop_costs, {Strength.WEAK: 1.0}, 1.0, 0.5)
+
+
+def movable(importance: Importance, stability: Strength) -> Task:
+    """Build an optional task with the given importance and stability."""
+    return Task(
+        TaskId("task"),
+        "Task",
+        timedelta(hours=1),
+        frozenset(),
+        importance,
+        False,
+        stability,
+    )
+
+
+@pytest.mark.parametrize(
+    ("hours", "expected"),
+    [(0.0, 0.0), (1.0, 50 / 11), (10.0, 25.0), (24.0, 600 / 17), (120.0, 600 / 13)],
+)
+def test_stability_cost_matches_examples(hours: float, expected: float) -> None:
+    """Charge a normal-stability high-importance task by hours moved, either way."""
+    item: Task = movable(Importance.HIGH, Strength.NORMAL)
+    moved: timedelta = timedelta(hours=hours)
+    assert DEFAULT_POLICY.stability_cost(item, moved) == pytest.approx(expected)
+    assert DEFAULT_POLICY.stability_cost(item, -moved) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("importance", list(Importance))
+@pytest.mark.parametrize("stability", list(Strength))
+def test_stability_cost_increases_below_its_limit(
+    importance: Importance, stability: Strength
+) -> None:
+    """Grow strictly with hours moved while staying below the limit."""
+    item: Task = movable(importance, stability)
+    limit: float = DEFAULT_POLICY.stability_drop_cost_ratio * DEFAULT_POLICY.drop_cost(
+        importance
+    )
+    costs: list[float] = [
+        DEFAULT_POLICY.stability_cost(item, timedelta(hours=hours))
+        for hours in (0.0, 0.5, 1.0, 12.0, 120.0, 1_000.0, 100_000.0)
+    ]
+    assert all(earlier < later for earlier, later in pairwise(costs))
+    assert costs[-1] < limit
