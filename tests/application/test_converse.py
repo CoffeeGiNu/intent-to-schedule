@@ -18,12 +18,15 @@ from intent_to_schedule.application.converse import (
     Exhausted,
     Response,
 )
+from intent_to_schedule.application.objective import ScheduleSummary
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import (
     Answered,
     AnswerResult,
     ObjectivePolicyAnswer,
     ObjectivePolicyQuery,
+    PeopleQuery,
+    SchedulingQuery,
     Summary,
     SummaryQuery,
 )
@@ -69,16 +72,16 @@ class FakeStepTranslator:
 
 
 class FakeSolver:
-    """Return a chosen solve result and capture problems."""
+    """Return a chosen solve result and capture its inputs."""
 
     def __init__(self, result: SolveResult) -> None:
         self.result: SolveResult = result
-        self.problems: list[SchedulingProblem] = []
+        self.calls: list[tuple[SchedulingProblem, Schedule | None]] = []
 
     def solve(
         self, problem: SchedulingProblem, previous: Schedule | None
     ) -> SolveResult:
-        self.problems.append(problem)
+        self.calls.append((problem, previous))
         return self.result
 
 
@@ -141,15 +144,19 @@ def test_message_ends_without_solving() -> None:
     assert translator.calls == [
         (dialogue, Summary(problem.calendar.grid, 0, 0, 0, 0, False), ())
     ]
-    assert solver.problems == []
+    assert solver.calls == []
 
 
 @pytest.mark.parametrize("stability", [True, False])
-@pytest.mark.parametrize("result", [Solved(Schedule((), ())), Infeasible()])
+@pytest.mark.parametrize(
+    "result",
+    [
+        Solved(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+        Infeasible(),
+    ],
+)
 def test_apply_then_solve_uses_working_problem_and_stability(
-    monkeypatch: pytest.MonkeyPatch,
-    stability: bool,
-    result: SolveResult,
+    stability: bool, result: SolveResult
 ) -> None:
     """Pass successful edits and the selected previous schedule to solve."""
     problem: SchedulingProblem = make_problem()
@@ -159,21 +166,14 @@ def test_apply_then_solve_uses_working_problem_and_stability(
     translator: FakeStepTranslator = FakeStepTranslator(
         (step, SolveStep(stability), MessageStep("unused"))
     )
-    service: Scheduling = Scheduling(FakeSolver(result), AllOf())
-    solve_calls: list[tuple[SchedulingProblem, Schedule | None]] = []
-
-    def solve(working: SchedulingProblem, prior: Schedule | None) -> SolveResult:
-        solve_calls.append((working, prior))
-        return result
-
-    monkeypatch.setattr(service, "solve", solve)
-    response: Response = Conversation(translator, service).respond(
+    solver: FakeSolver = FakeSolver(result)
+    response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
         (), problem, previous
     )
     assert response.problem.tasks == (task,)
     assert problem.tasks == ()
     assert response.outcome == result
-    assert solve_calls == [(response.problem, previous if stability else None)]
+    assert solver.calls == [(response.problem, previous if stability else None)]
     assert [call[1] for call in translator.calls] == [
         Summary(problem.calendar.grid, 0, 0, 0, 0, True),
         Summary(problem.calendar.grid, 0, 1, 0, 0, True),
@@ -203,41 +203,35 @@ def test_rejected_batch_is_recorded_and_can_be_corrected() -> None:
     assert len(translator.calls[2][2]) == 2
 
 
-@pytest.mark.parametrize("rejected", [False, True])
+@pytest.mark.parametrize(
+    ("query", "result"),
+    [
+        (
+            SummaryQuery(),
+            Answered(Summary(make_problem().calendar.grid, 0, 1, 0, 0, True)),
+        ),
+        (
+            PeopleQuery(None, None, False, 0),
+            Rejected(
+                Violations(
+                    (Violation("Query limit 0 must be between 1 and 100 inclusive."),)
+                )
+            ),
+        ),
+    ],
+)
 def test_query_uses_working_problem_and_records_result(
-    monkeypatch: pytest.MonkeyPatch, rejected: bool
+    query: SchedulingQuery, result: AnswerResult
 ) -> None:
     """Feed query answers and rejections into the next step."""
     problem: SchedulingProblem = make_problem()
-    previous: Schedule = Schedule((), ())
-    task: Task = make_task()
-    query_step: QueryStep = QueryStep(SummaryQuery())
+    query_step: QueryStep = QueryStep(query)
     translator: FakeStepTranslator = FakeStepTranslator(
-        (ApplyStep((AddTask(task),)), query_step, MessageStep("done"))
+        (ApplyStep((AddTask(make_task()),)), query_step, MessageStep("done"))
     )
-    answer_calls: list[tuple[SchedulingProblem, Schedule | None]] = []
-    result: AnswerResult = (
-        Rejected(Violations((Violation("Try a narrower query."),)))
-        if rejected
-        else Answered(Summary(problem.calendar.grid, 0, 1, 0, 0, True))
-    )
-
-    def answer(
-        self: SummaryQuery,
-        working: SchedulingProblem,
-        prior: Schedule | None,
-        policy: ObjectivePolicy = DEFAULT_POLICY,
-    ) -> AnswerResult:
-        answer_calls.append((working, prior))
-        return result
-
-    monkeypatch.setattr(SummaryQuery, "answer", answer)
     response: Response = Conversation(
         translator, Scheduling(FakeSolver(Infeasible()), AllOf())
-    ).respond((), problem, previous)
-    assert len(answer_calls) == 1
-    assert answer_calls[0][0].tasks == (task,)
-    assert answer_calls[0][1] is previous
+    ).respond((), problem, Schedule((), ()))
     assert response.problem is problem
     assert translator.calls[2][2][1] == QueryRecord(query_step, result)
 
@@ -255,7 +249,7 @@ def test_step_limit_returns_exhausted_after_repeated_rejections() -> None:
     assert response == Response(problem, Exhausted())
     assert len(translator.calls) == STEP_LIMIT
     assert len(translator.calls[-1][2]) == STEP_LIMIT - 1
-    assert solver.problems == []
+    assert solver.calls == []
 
 
 def test_terminal_step_at_limit_is_honored() -> None:

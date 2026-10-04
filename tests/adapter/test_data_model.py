@@ -91,7 +91,6 @@ from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 from intent_to_schedule.domain.time_windows import (
     DateRange,
-    Expansion,
     TimeRange,
     TimeRelation,
     TimeWindow,
@@ -595,14 +594,10 @@ def test_time_window_constraint_conversion_generates_id_once(
                 TimeRange(time(13), None),
             ),
         )
-        with patch(
-            "intent_to_schedule.adapter.data_model.expand",
-            return_value=Expansion((grid.horizon,), False),
-        ):
-            assert command_record(command, grid) == {
-                "kind": "add_constraint",
-                "constraint_id": "created",
-            }
+        assert command_record(command, grid) == {
+            "kind": "add_constraint",
+            "constraint_id": "created",
+        }
         command.execute(SchedulingProblem(Calendar(grid, ()), (), (), (), ()))
     generation.assert_called_once_with()
 

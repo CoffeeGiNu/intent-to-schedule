@@ -1,6 +1,5 @@
 from calendar import Day
 from datetime import date, datetime, time, timedelta, timezone
-from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -132,28 +131,24 @@ def test_empty_expansion_needs_no_rounding(relation: TimeRelation) -> None:
     assert expand((), relation, grid) == Expansion((), False)
 
 
-@pytest.mark.parametrize("relation", list(TimeRelation))
-def test_expansion_merges_before_selecting_grid_slots(relation: TimeRelation) -> None:
-    grid: TimeGrid = TimeGrid(interval(12, 9, 12), timedelta(hours=1))
+@pytest.mark.parametrize(
+    ("relation", "expected"),
+    [
+        (TimeRelation.WITHIN, (interval(12, 10, 11),)),
+        (TimeRelation.AVOID, (interval(12, 9, 12),)),
+    ],
+)
+def test_expansion_merges_before_selecting_grid_slots(
+    relation: TimeRelation, expected: tuple[TimeInterval, ...]
+) -> None:
+    """Find a whole slot that no single window contains."""
+    grid: TimeGrid = TimeGrid(interval(12, 9, 13), timedelta(hours=1))
     windows: tuple[TimeWindow, ...] = (
-        TimeWindow(None, None, TimeRange(time(9, 10), time(9, 30))),
-        TimeWindow(None, None, TimeRange(time(9, 30), time(10, 10))),
-        TimeWindow(None, None, TimeRange(time(9, 20), time(10))),
+        TimeWindow(None, None, TimeRange(time(9, 30), time(10, 15))),
+        TimeWindow(None, None, TimeRange(time(10, 15), time(11, 30))),
+        TimeWindow(None, None, TimeRange(time(10), time(10, 30))),
     )
-    expected: TimeInterval = (
-        interval(12, 9, 11) if relation is TimeRelation.AVOID else interval(12, 10, 10)
-    )
-    rounding: Mock
-    with patch.object(
-        TimeGrid,
-        "slots_touching" if relation is TimeRelation.AVOID else "slots_within",
-        return_value=range(0, 2) if relation is TimeRelation.AVOID else range(0),
-    ) as rounding:
-        result: Expansion = expand(windows, relation, grid)
-    rounding.assert_called_once_with(TimeInterval(at(12, 9, 10), at(12, 10, 10)))
-    assert result == Expansion(
-        (expected,) if expected.start < expected.end else (), True
-    )
+    assert expand(windows, relation, grid) == Expansion(expected, True)
 
 
 def test_avoid_expansion_merges_again_after_selecting_slots() -> None:
@@ -163,42 +158,25 @@ def test_avoid_expansion_merges_again_after_selecting_slots() -> None:
         TimeWindow(None, None, TimeRange(time(10, 10), time(10, 20))),
         TimeWindow(None, None, TimeRange(time(10, 40), time(11, 10))),
     )
-    rounding: Mock
-    with patch.object(
-        TimeGrid,
-        "slots_touching",
-        side_effect=(range(0, 1), range(1, 2), range(1, 3)),
-    ) as rounding:
-        result: Expansion = expand(windows, TimeRelation.AVOID, grid)
-    assert rounding.call_args_list == [
-        call(TimeInterval(at(12, 9, 10), at(12, 9, 20))),
-        call(TimeInterval(at(12, 10, 10), at(12, 10, 20))),
-        call(TimeInterval(at(12, 10, 40), at(12, 11, 10))),
-    ]
+    result: Expansion = expand(windows, TimeRelation.AVOID, grid)
     assert result == Expansion((interval(12, 9, 12),), True)
 
 
 @pytest.mark.parametrize("relation", list(TimeRelation))
 def test_expansion_reports_unchanged_aligned_slot_times(relation: TimeRelation) -> None:
     grid: TimeGrid = TimeGrid(interval(12, 9, 12), timedelta(hours=1))
-    with patch.object(
-        TimeGrid,
-        "slots_touching" if relation is TimeRelation.AVOID else "slots_within",
-        return_value=range(1, 2),
-    ):
-        assert expand(
-            (TimeWindow(None, None, TimeRange(time(10), time(11))),), relation, grid
-        ) == Expansion((interval(12, 10, 11),), False)
+    assert expand(
+        (TimeWindow(None, None, TimeRange(time(10), time(11))),), relation, grid
+    ) == Expansion((interval(12, 10, 11),), False)
 
 
 def test_within_expansion_drops_empty_slot_ranges() -> None:
     grid: TimeGrid = TimeGrid(interval(12, 9, 12), timedelta(hours=1))
-    with patch.object(TimeGrid, "slots_within", return_value=range(0)):
-        assert expand(
-            (TimeWindow(None, None, TimeRange(time(9, 10), time(9, 20))),),
-            TimeRelation.WITHIN,
-            grid,
-        ) == Expansion((), True)
+    assert expand(
+        (TimeWindow(None, None, TimeRange(time(9, 10), time(9, 20))),),
+        TimeRelation.WITHIN,
+        grid,
+    ) == Expansion((), True)
 
 
 @pytest.mark.parametrize(

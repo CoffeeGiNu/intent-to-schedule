@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
-from unittest.mock import MagicMock, patch
 
 import pytest
 from ortools.math_opt.python import mathopt
@@ -19,7 +18,6 @@ from intent_to_schedule.application.query import (
     AvailableStartsAnswer,
     AvailableStartsQuery,
 )
-from intent_to_schedule.domain.availability import available_start_slots, free_slots
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
@@ -967,11 +965,24 @@ def test_multi_task_hard_intrusion_matches_separate_infeasibility() -> None:
         assert result.termination.reason is mathopt.TerminationReason.INFEASIBLE
 
 
-@pytest.mark.parametrize("duration", [SLOT, 2 * SLOT, 7 * SLOT])
-@pytest.mark.parametrize("participant_count", [0, 1, 2])
-def test_solver_start_candidates_match_shared_availability(
-    duration: timedelta, participant_count: int
+@pytest.mark.parametrize(
+    ("participant_count", "duration", "expected"),
+    [
+        (0, SLOT, (0, 1, 2, 3, 4, 5)),
+        (0, 2 * SLOT, (0, 1, 2, 3, 4)),
+        (0, 7 * SLOT, ()),
+        (1, SLOT, (0, 2, 3, 4, 5)),
+        (1, 2 * SLOT, (2, 3, 4)),
+        (1, 7 * SLOT, ()),
+        (2, SLOT, (0, 2, 3, 4, 5)),
+        (2, 2 * SLOT, (2, 3, 4)),
+        (2, 7 * SLOT, ()),
+    ],
+)
+def test_start_candidates_skip_slots_blocked_for_participants(
+    participant_count: int, duration: timedelta, expected: tuple[int, ...]
 ) -> None:
+    """Offer only starts where every participant is free for the whole duration."""
     participants: frozenset[PersonId] = frozenset(
         PersonId(f"person_{index}") for index in range(participant_count)
     )
@@ -983,35 +994,10 @@ def test_solver_start_candidates_match_shared_availability(
         timedelta(minutes=10),
         participants,
     )
-    value: SchedulingProblem = problem(item, fixed_tasks=(fixed,))
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
-    participants_free: tuple[tuple[bool, ...], ...] = tuple(
-        free_slots(value, person_id) for person_id in participants
-    )
-    expected: tuple[int, ...] = available_start_slots(
-        value.calendar.grid, participants_free, duration
+    compiled: CompiledProblem = compile_problem(
+        problem(item, fixed_tasks=(fixed,)), DEFAULT_POLICY
     )
     assert tuple(compiled.placements[item.id]) == expected
-
-
-def test_compile_computes_person_free_slots_once() -> None:
-    person_id: PersonId = PersonId("shared")
-    value: SchedulingProblem = problem(
-        task("first", people=frozenset({person_id})),
-        task("second", people=frozenset({person_id})),
-    )
-    free_slots_mock: MagicMock
-    starts_mock: MagicMock
-    with patch(
-        "intent_to_schedule.adapter.mathopt.compile.free_slots", wraps=free_slots
-    ) as free_slots_mock:
-        with patch(
-            "intent_to_schedule.adapter.mathopt.compile.available_start_slots",
-            wraps=available_start_slots,
-        ) as starts_mock:
-            compile_problem(value, DEFAULT_POLICY)
-    free_slots_mock.assert_called_once_with(value, person_id)
-    assert starts_mock.call_count == 2
 
 
 @pytest.mark.parametrize(
