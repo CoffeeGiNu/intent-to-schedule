@@ -825,9 +825,6 @@ def test_summary_matches_objective_of_the_same_solve(
         if isinstance(item.constraint, HardConstraint)
     )
     if scenario == "move":
-        assert (
-            solved.summary.stability_cost
-            == policy.drop_cost(item.importance) * policy.stability_drop_cost_ratio
-        )
+        assert solved.summary.stability_cost == (1.25 if custom_policy else 2.5)
     assert summarize_schedule(value, solved.schedule, policy).moved_tasks == 0
     assert summarize_schedule(value, solved.schedule, policy).stability_cost == 0

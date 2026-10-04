@@ -20,26 +20,24 @@ FIRST: TaskId = TaskId("first")
 SECOND: TaskId = TaskId("second")
 
 
-@pytest.mark.parametrize("boundary", list(Boundary))
-@pytest.mark.parametrize("relation", list(TimeBoundRelation))
+@pytest.mark.parametrize(
+    ("boundary", "relation", "expected"),
+    [
+        (Boundary.START, TimeBoundRelation.AT_OR_BEFORE, 0.0),
+        (Boundary.START, TimeBoundRelation.AT_OR_AFTER, 0.25),
+        (Boundary.START, TimeBoundRelation.AT, 0.25),
+        (Boundary.END, TimeBoundRelation.AT_OR_BEFORE, 0.75),
+        (Boundary.END, TimeBoundRelation.AT_OR_AFTER, 0.0),
+        (Boundary.END, TimeBoundRelation.AT, 0.75),
+    ],
+)
 def test_criterion_time_bounds_use_exact_hours(
-    boundary: Boundary, relation: TimeBoundRelation
+    boundary: Boundary, relation: TimeBoundRelation, expected: float
 ) -> None:
     """Measure every boundary relation without rounding the bound."""
     interval: TimeInterval = TimeInterval(START, START + HOUR)
-    target: datetime = START + timedelta(minutes=15)
     condition: TimeBoundCondition = TimeBoundCondition(
-        frozenset({FIRST}), boundary, relation, target
-    )
-    difference: float = (
-        (interval.start if boundary is Boundary.START else interval.end) - target
-    ) / HOUR
-    expected: float = (
-        max(difference, 0.0)
-        if relation is TimeBoundRelation.AT_OR_BEFORE
-        else max(-difference, 0.0)
-        if relation is TimeBoundRelation.AT_OR_AFTER
-        else abs(difference)
+        frozenset({FIRST}), boundary, relation, START + timedelta(minutes=15)
     )
     measured: CriterionViolation = measure_criterion(
         condition.criteria(GRID)[0], {FIRST: interval}, GRID

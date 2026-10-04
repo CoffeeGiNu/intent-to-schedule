@@ -216,22 +216,23 @@ def two_tasks() -> SchedulingProblem:
     )
 
 
-@pytest.mark.parametrize("boundary", list(Boundary))
-@pytest.mark.parametrize("relation", list(TimeBoundRelation))
+@pytest.mark.parametrize(
+    ("boundary", "relation", "expected"),
+    [
+        (Boundary.START, TimeBoundRelation.AT_OR_BEFORE, 0.0),
+        (Boundary.START, TimeBoundRelation.AT_OR_AFTER, 1 / 12),
+        (Boundary.START, TimeBoundRelation.AT, 1 / 12),
+        (Boundary.END, TimeBoundRelation.AT_OR_BEFORE, 1 / 6),
+        (Boundary.END, TimeBoundRelation.AT_OR_AFTER, 0.0),
+        (Boundary.END, TimeBoundRelation.AT, 1 / 6),
+    ],
+)
 def test_fixed_time_bound_uses_real_boundary(
-    boundary: Boundary, relation: TimeBoundRelation
+    boundary: Boundary, relation: TimeBoundRelation, expected: float
 ) -> None:
     """Compare fixed starts and ends without rounding."""
     condition: TimeBoundCondition = TimeBoundCondition(
         frozenset({FIXED.id}), boundary, relation, FIXED.start + timedelta(minutes=5)
-    )
-    difference: float = -1 / 12 if boundary is Boundary.START else 1 / 6
-    expected: float = (
-        max(difference, 0.0)
-        if relation is TimeBoundRelation.AT_OR_BEFORE
-        else max(-difference, 0.0)
-        if relation is TimeBoundRelation.AT_OR_AFTER
-        else abs(difference)
     )
     assert_costs(appointment_problem(condition, movable=False), expected)
 
@@ -601,11 +602,34 @@ def test_soft_deadline_prefers_one_hour_late_over_two() -> None:
     assert objective(later) == pytest.approx(2.0)
 
 
-@pytest.mark.parametrize("boundary", list(Boundary))
-@pytest.mark.parametrize("relation", list(TimeBoundRelation))
-@pytest.mark.parametrize("target_minutes", [-75, 75, 375])
+@pytest.mark.parametrize(
+    ("boundary", "relation", "target_minutes", "expected"),
+    [
+        (Boundary.START, TimeBoundRelation.AT_OR_BEFORE, -75, 1.25),
+        (Boundary.START, TimeBoundRelation.AT_OR_AFTER, -75, 0.0),
+        (Boundary.START, TimeBoundRelation.AT, -75, 1.25),
+        (Boundary.END, TimeBoundRelation.AT_OR_BEFORE, -75, 3.25),
+        (Boundary.END, TimeBoundRelation.AT_OR_AFTER, -75, 0.0),
+        (Boundary.END, TimeBoundRelation.AT, -75, 3.25),
+        (Boundary.START, TimeBoundRelation.AT_OR_BEFORE, 75, 0.0),
+        (Boundary.START, TimeBoundRelation.AT_OR_AFTER, 75, 1.25),
+        (Boundary.START, TimeBoundRelation.AT, 75, 1.25),
+        (Boundary.END, TimeBoundRelation.AT_OR_BEFORE, 75, 0.75),
+        (Boundary.END, TimeBoundRelation.AT_OR_AFTER, 75, 0.0),
+        (Boundary.END, TimeBoundRelation.AT, 75, 0.75),
+        (Boundary.START, TimeBoundRelation.AT_OR_BEFORE, 375, 0.0),
+        (Boundary.START, TimeBoundRelation.AT_OR_AFTER, 375, 6.25),
+        (Boundary.START, TimeBoundRelation.AT, 375, 6.25),
+        (Boundary.END, TimeBoundRelation.AT_OR_BEFORE, 375, 0.0),
+        (Boundary.END, TimeBoundRelation.AT_OR_AFTER, 375, 4.25),
+        (Boundary.END, TimeBoundRelation.AT, 375, 4.25),
+    ],
+)
 def test_time_bound_cost_uses_exact_hours(
-    boundary: Boundary, relation: TimeBoundRelation, target_minutes: int
+    boundary: Boundary,
+    relation: TimeBoundRelation,
+    target_minutes: int,
+    expected: float,
 ) -> None:
     item: Task = task("cost", duration=2 * HOUR, people=PEOPLE)
     at: datetime = START + timedelta(minutes=target_minutes)
@@ -614,16 +638,6 @@ def test_time_bound_cost_uses_exact_hours(
         constraints=(soft(bound(item, boundary, relation, at)),),
         end=START + item.duration,
         slot=HOUR,
-    )
-    difference: float = (
-        (START if boundary is Boundary.START else START + item.duration) - at
-    ) / HOUR
-    expected: float = (
-        max(difference, 0.0)
-        if relation is TimeBoundRelation.AT_OR_BEFORE
-        else max(-difference, 0.0)
-        if relation is TimeBoundRelation.AT_OR_AFTER
-        else abs(difference)
     )
     assert objective(value) == pytest.approx(expected)
 
@@ -760,9 +774,17 @@ def test_available_starts_match_compiled_start_candidates() -> None:
     )
 
 
-@pytest.mark.parametrize("strength", [None, *Strength])
+@pytest.mark.parametrize(
+    ("strength", "cost"),
+    [
+        (None, 0.0),
+        (Strength.WEAK, 1.5),
+        (Strength.NORMAL, 7.5),
+        (Strength.STRONG, 30.0),
+    ],
+)
 def test_multi_task_intrusion_matches_separate_constraints(
-    strength: Strength | None,
+    strength: Strength | None, cost: float
 ) -> None:
     """Match separate objectives and placements for every requirement."""
     base: SchedulingProblem = two_tasks()
@@ -807,7 +829,7 @@ def test_multi_task_intrusion_matches_separate_constraints(
         for index, item in enumerate(base.tasks)
     )
     expected: tuple[float, dict[TaskId, int | None]] = (
-        0.0 if strength is None else 1.5 * DEFAULT_POLICY.weight(strength),
+        cost,
         {
             item.id: index + (2 if strength is None else 0)
             for index, item in enumerate(base.tasks)
@@ -1012,18 +1034,22 @@ def test_compile_computes_person_free_slots_once() -> None:
 
 
 @pytest.mark.parametrize(
-    ("importance", "strength", "hours", "required"),
+    ("importance", "strength", "hours", "required", "expected"),
     [
-        (Importance.LOW, Strength.WEAK, 0.25, False),
-        (Importance.MEDIUM, Strength.NORMAL, -0.25, True),
-        (Importance.HIGH, Strength.STRONG, 0.0, True),
-        (Importance.LOW, Strength.STRONG, 24.0, False),
-        (Importance.MEDIUM, Strength.NORMAL, -24.0, True),
-        (Importance.HIGH, Strength.STRONG, 24.0, False),
+        (Importance.LOW, Strength.WEAK, 0.25, False, 0.25),
+        (Importance.MEDIUM, Strength.NORMAL, -0.25, True, 1.25),
+        (Importance.HIGH, Strength.STRONG, 0.0, True, 0.0),
+        (Importance.LOW, Strength.STRONG, 24.0, False, 1.5),
+        (Importance.MEDIUM, Strength.NORMAL, -24.0, True, 6.0),
+        (Importance.HIGH, Strength.STRONG, 24.0, False, 30.0),
     ],
 )
 def test_stability_objective_uses_capped_cost(
-    importance: Importance, strength: Strength, hours: float, required: bool
+    importance: Importance,
+    strength: Strength,
+    hours: float,
+    required: bool,
+    expected: float,
 ) -> None:
     """Charge capped stability cost for a task with one available start."""
     item: Task = replace(
@@ -1046,9 +1072,6 @@ def test_stability_objective_uses_capped_cost(
         compiled.model, mathopt.SolverType.GSCIP
     )
     assert result.variable_values()[compiled.presences[item.id]] == pytest.approx(1.0)
-    expected: float = min(
-        policy.weight(strength) * abs(hours), 0.3 * policy.drop_cost(importance)
-    )
     assert result.objective_value() == pytest.approx(expected)
 
 
