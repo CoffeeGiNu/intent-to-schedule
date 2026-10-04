@@ -3,8 +3,10 @@
 import io
 import json
 import sys
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -16,6 +18,7 @@ from intent_to_schedule.adapter.command_line_interface.state import (
     to_problem,
     to_problem_state,
 )
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import FixedTask
 
@@ -90,6 +93,26 @@ def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
     }
     assert state_path.exists()
     return state_path
+
+
+def test_cli_query_uses_scheduling_policy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Return the same policy configured for command line scheduling."""
+    path: Path = initialized(tmp_path, capsys)
+    query_path: Path = tmp_path / "query.json"
+    query_path.write_text('{"kind":"objective_policy"}', encoding="utf-8")
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
+    with patch(
+        "intent_to_schedule.adapter.command_line_interface.main.DEFAULT_POLICY", policy
+    ):
+        status: int
+        output: dict[str, object]
+        status, output = invoke(
+            capsys, "--state", str(path), "query", "--file", str(query_path)
+        )
+    assert status == 0
+    assert output["per_count"] == 3.0
 
 
 def test_cli_naive_time_bound_returns_validation_error(

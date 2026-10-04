@@ -56,7 +56,9 @@ class Conversation:
             summary: Summary = summarize(working, previous)
             step: Step = self._translator.translate(dialogue, summary, tuple(steps))
             if isinstance(step, QueryStep):
-                answer: AnswerResult = step.query.answer(working, previous)
+                answer: AnswerResult = self._scheduling.answer(
+                    step.query, working, previous
+                )
                 steps.append(QueryRecord(step, answer))
             elif isinstance(step, ApplyStep):
                 result: ExecuteResult = self._scheduling.execute(working, step.commands)

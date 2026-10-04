@@ -1,6 +1,7 @@
 """Tests for the conversation step loop."""
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -18,9 +19,12 @@ from intent_to_schedule.application.converse import (
     Response,
     STEP_LIMIT,
 )
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import (
     Answered,
     AnswerResult,
+    ObjectivePolicyAnswer,
+    ObjectivePolicyQuery,
     Summary,
     SummaryQuery,
 )
@@ -75,6 +79,18 @@ class FakeSolver:
     def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> SolveResult:
         self.problems.append(problem)
         return self.result
+
+
+def test_conversation_queries_use_scheduling_policy() -> None:
+    """Answer conversation queries with the scheduling service policy."""
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
+    step: QueryStep = QueryStep(ObjectivePolicyQuery())
+    translator: FakeStepTranslator = FakeStepTranslator((step, MessageStep("done")))
+    service: Scheduling = Scheduling(FakeSolver(Infeasible()), AllOf(), policy)
+    Conversation(translator, service).respond((), make_problem(), None)
+    assert translator.calls[1][2] == (
+        QueryRecord(step, Answered(ObjectivePolicyAnswer(policy))),
+    )
 
 
 def make_problem() -> SchedulingProblem:
@@ -233,7 +249,10 @@ def test_query_uses_working_problem_and_records_result(
     )
 
     def answer(
-        self: SummaryQuery, working: SchedulingProblem, prior: Schedule | None
+        self: SummaryQuery,
+        working: SchedulingProblem,
+        prior: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         answer_calls.append((working, prior))
         return result

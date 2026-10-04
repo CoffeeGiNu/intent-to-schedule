@@ -42,7 +42,7 @@ from intent_to_schedule.application.command import (
     SchedulingCommand,
 )
 from intent_to_schedule.application.converse import Conversation, Exhausted, Response
-from intent_to_schedule.application.policy import DEFAULT_POLICY
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import AnswerResult, SchedulingQuery, summarize
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import Infeasible, Solved
@@ -242,7 +242,8 @@ def reject(violations: Violations) -> int:
 
 def scheduling(validator: Validator) -> Scheduling:
     """Wire the scheduling use case."""
-    return Scheduling(MathOptSchedulingSolver(DEFAULT_POLICY), validator)
+    policy: ObjectivePolicy = DEFAULT_POLICY
+    return Scheduling(MathOptSchedulingSolver(policy), validator, policy)
 
 
 def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
@@ -308,7 +309,7 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
             return 0
 
 
-def query(path: Path, input_path: Path | None) -> int:
+def query(path: Path, input_path: Path | None, service: Scheduling) -> int:
     """Answer a JSON query about the current problem and previous schedule."""
     state: State = load_state(path)
     source: str = (
@@ -322,7 +323,7 @@ def query(path: Path, input_path: Path | None) -> int:
     request: SchedulingQuery = convert_query(adapter.validate_json(source))
     problem: SchedulingProblem = to_problem(state.problem)
     previous: Schedule | None = to_schedule(state.previous)
-    result: AnswerResult = request.answer(problem, previous)
+    result: AnswerResult = service.answer(request, problem, previous)
     if isinstance(result, Rejected):
         return reject(result.violations)
     emit(answer_record(result.answer))
@@ -448,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             case "apply":
                 return apply(path, args.file, service)
             case "query":
-                return query(path, args.file)
+                return query(path, args.file, service)
             case "solve":
                 return solve(path, service, not args.no_stability)
             case "chat":

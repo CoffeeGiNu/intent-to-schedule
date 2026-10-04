@@ -120,7 +120,10 @@ class SummaryQuery:
     """Query for the Summary of a problem."""
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with the problem summary."""
         return Answered(summarize(problem, previous))
@@ -137,7 +140,10 @@ class PeopleQuery:
     limit: int
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with matching people."""
         invalid_limit: Rejected | None = _check_limit(self.limit)
@@ -181,7 +187,10 @@ class TasksQuery:
     limit: int
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with matching movable and fixed tasks."""
         invalid_limit: Rejected | None = _check_limit(self.limit)
@@ -240,7 +249,10 @@ class ConstraintsQuery:
     limit: int
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with constraints matching identifiers and referenced tasks."""
         invalid_limit: Rejected | None = _check_limit(self.limit)
@@ -276,7 +288,10 @@ class EvaluationQuery:
     limit: int
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with filtered constraint evaluations in cost order."""
         invalid_limit: Rejected | None = _check_limit(self.limit)
@@ -288,7 +303,7 @@ class EvaluationQuery:
             sorted(
                 (
                     item
-                    for item in evaluate_constraints(problem, previous, DEFAULT_POLICY)
+                    for item in evaluate_constraints(problem, previous, policy)
                     if (not self.violated_only or item.violation.amount > 0)
                     and (
                         self.constraint_ids is None
@@ -320,10 +335,13 @@ class ObjectivePolicyQuery:
     """Query for current objective coefficients."""
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
-        """Answer with the default solver's objective policy."""
-        return Answered(ObjectivePolicyAnswer(DEFAULT_POLICY))
+        """Answer with the scheduling objective policy."""
+        return Answered(ObjectivePolicyAnswer(policy))
 
 
 @dataclass(frozen=True)
@@ -335,7 +353,10 @@ class PreviousScheduleQuery:
     limit: int
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with matching entries from the previous schedule."""
         invalid_limit: Rejected | None = _check_limit(self.limit)
@@ -386,7 +407,10 @@ class AvailableStartsQuery:
     limit: int
 
     def answer(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
     ) -> AnswerResult:
         """Answer with shared free starts contained in the requested windows."""
         invalid_limit: Rejected | None = _check_limit(self.limit)

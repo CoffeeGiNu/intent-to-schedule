@@ -8,6 +8,7 @@ from intent_to_schedule.application.command import (
 )
 from intent_to_schedule.application.objective import summarize_schedule
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
+from intent_to_schedule.application.query import AnswerResult, SchedulingQuery
 from intent_to_schedule.application.solve import SchedulingSolver, Solved, SolveResult
 from intent_to_schedule.domain.consistency import Validator, Violations
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -26,6 +27,15 @@ class Scheduling:
         self._solver: SchedulingSolver = solver
         self._validator: Validator = validator
         self._policy: ObjectivePolicy = policy
+
+    def answer(
+        self,
+        query: SchedulingQuery,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+    ) -> AnswerResult:
+        """Answer a query using the scheduling objective policy."""
+        return query.answer(problem, previous, self._policy)
 
     def execute(
         self, problem: SchedulingProblem, commands: Sequence[SchedulingCommand]

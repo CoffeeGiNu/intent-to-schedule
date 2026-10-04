@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 from typing import Annotated
+from unittest.mock import Mock
 
 import pytest
 from pydantic import Field, TypeAdapter
@@ -21,7 +22,7 @@ from intent_to_schedule.adapter.data_model import (
 )
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
 from intent_to_schedule.application.command import Rejected
-from intent_to_schedule.application.policy import DEFAULT_POLICY
+from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import (
     Answered,
     AnswerResult,
@@ -29,6 +30,10 @@ from intent_to_schedule.application.query import (
     AvailableStartsQuery,
     ConstraintsAnswer,
     ConstraintsQuery,
+    EvaluationAnswer,
+    EvaluationQuery,
+    ObjectivePolicyAnswer,
+    ObjectivePolicyQuery,
     PeopleAnswer,
     PeopleQuery,
     PreviousScheduleAnswer,
@@ -41,6 +46,8 @@ from intent_to_schedule.application.query import (
     TaskType,
     summarize,
 )
+from intent_to_schedule.application.schedule import Scheduling
+from intent_to_schedule.application.solve import SchedulingSolver
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
@@ -55,6 +62,7 @@ from intent_to_schedule.domain.condition import (
     TimeBoundRelation,
     TimeWindowCondition,
 )
+from intent_to_schedule.domain.consistency import AllOf
 from intent_to_schedule.domain.constraint import (
     Constraint,
     ConstraintId,
@@ -162,6 +170,81 @@ def test_summary_counts_and_json(problem: SchedulingProblem) -> None:
         "has_previous": True,
     }
     assert not summarize(problem, None).has_previous
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "summary", "people", "tasks", "constraints", "evaluation",
+        "objective_policy", "previous_schedule", "available_starts",
+    ],
+)
+def test_every_query_accepts_objective_policy(
+    problem: SchedulingProblem, kind: str
+) -> None:
+    """Allow every query to receive an explicit objective policy."""
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
+    data: dict[str, object] = {"kind": kind}
+    if kind == "available_starts":
+        data.update(participant_ids=[], duration="PT30M")
+    query: SchedulingQuery = parse_query(data)
+    result: AnswerResult = query.answer(problem, None, policy)
+    assert isinstance(result, Answered)
+    if kind == "objective_policy":
+        assert result.answer == ObjectivePolicyAnswer(policy)
+
+
+def test_scheduling_answers_with_its_objective_policy(
+    problem: SchedulingProblem,
+) -> None:
+    """Return the scheduling service's exact objective policy."""
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
+    solver: SchedulingSolver = Mock(spec=SchedulingSolver)
+    service: Scheduling = Scheduling(solver, AllOf(), policy)
+    result: AnswerResult = service.answer(ObjectivePolicyQuery(), problem, None)
+    assert isinstance(result, Answered)
+    assert isinstance(result.answer, ObjectivePolicyAnswer)
+    assert result.answer.policy is policy
+
+
+def test_scheduling_evaluation_uses_its_objective_policy(
+    problem: SchedulingProblem,
+) -> None:
+    """Compute evaluation weights and count costs from the service policy."""
+    policy: ObjectivePolicy = replace(
+        DEFAULT_POLICY,
+        weights={**DEFAULT_POLICY.weights, Strength.WEAK: 7.0},
+        per_count=3.0,
+    )
+    item: Task = problem.tasks[0]
+    constraints: tuple[Constraint, ...] = (
+        SoftConstraint(
+            ConstraintId("bound"),
+            TimeBoundCondition(
+                frozenset({item.id}), Boundary.START, TimeBoundRelation.AT, at(10)
+            ),
+            Strength.WEAK,
+        ),
+        SoftConstraint(
+            ConstraintId("count"),
+            DailyLimitCondition(frozenset({item.id}), AggregateQuantity.COUNT, 0),
+            Strength.WEAK,
+        ),
+    )
+    value: SchedulingProblem = replace(problem, fixed_tasks=(), constraints=constraints)
+    previous: Schedule = Schedule(
+        (ScheduledTask(item.id, item.name, at(9), at(10)),), ()
+    )
+    solver: SchedulingSolver = Mock(spec=SchedulingSolver)
+    service: Scheduling = Scheduling(solver, AllOf(), policy)
+    query: EvaluationQuery = EvaluationQuery(False, None, None, 20)
+    result: AnswerResult = service.answer(query, value, previous)
+    assert isinstance(result, Answered)
+    assert isinstance(result.answer, EvaluationAnswer)
+    assert {item.constraint.id.value: item.cost for item in result.answer.items} == {
+        "bound": 7.0, "count": 21.0
+    }
+    assert result == query.answer(value, previous, policy)
 
 
 @pytest.mark.parametrize(
