@@ -1,10 +1,23 @@
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import pytest
+from pydantic import ValidationError
+
+from intent_to_schedule.adapter.command_line_interface.state import (
+    CalendarInput,
+    ScheduleState,
+)
 from intent_to_schedule.adapter.data_model import (
     CommandsData,
+    DataModel,
+    DateRangeData,
     FixedTaskData,
     NewFixedTaskData,
+    ScheduledTaskData,
+    TimeBoundConditionData,
+    TimeIntervalData,
     convert_commands_input,
     convert_fixed_task,
     to_fixed_task_data,
@@ -127,3 +140,109 @@ def test_fixed_task_data_converts_with_supplied_id_and_round_trips() -> None:
         output.model_dump_json()
     )
     assert convert_fixed_task(restored.id, restored) == expected
+
+
+@pytest.mark.parametrize(
+    "model, data, field",
+    [
+        (
+            TimeIntervalData,
+            {"start": "2026-10-05T09:00:00Z", "end": "2026-10-05T17:00:00Z"},
+            "start",
+        ),
+        (
+            TimeIntervalData,
+            {"start": "2026-10-05T09:00:00Z", "end": "2026-10-05T17:00:00Z"},
+            "end",
+        ),
+        (
+            NewFixedTaskData,
+            {
+                "name": "Fixed", "start": "2026-10-05T17:00:00Z",
+                "duration": "PT1H", "participant_ids": [],
+            },
+            "start",
+        ),
+        (
+            TimeBoundConditionData,
+            {
+                "kind": "time_bound", "task_ids": ["task"], "boundary": "start",
+                "relation": "at", "at": "2026-10-05T17:00:00Z",
+            },
+            "at",
+        ),
+        (
+            ScheduledTaskData,
+            {
+                "status": "scheduled", "task_id": "task", "name": "Task",
+                "start": "2026-10-05T09:00:00Z", "end": "2026-10-05T17:00:00Z",
+            },
+            "start",
+        ),
+        (
+            ScheduledTaskData,
+            {
+                "status": "scheduled", "task_id": "task", "name": "Task",
+                "start": "2026-10-05T09:00:00Z", "end": "2026-10-05T17:00:00Z",
+            },
+            "end",
+        ),
+    ],
+)
+def test_json_datetimes_require_utc_offsets(
+    model: type[DataModel], data: dict[str, object], field: str
+) -> None:
+    """Reject offset-free datetimes at each JSON field."""
+    invalid: dict[str, object] = {**data, field: "2026-10-05T17:00:00"}
+    with pytest.raises(ValidationError, match="timezone"):
+        model.model_validate_json(json.dumps(invalid))
+    assert model.model_validate_json(json.dumps(data))
+
+
+@pytest.mark.parametrize("model", [CalendarInput, ScheduleState])
+def test_state_json_datetimes_require_utc_offsets(model: type[DataModel]) -> None:
+    """Reject offset-free datetimes in calendar and schedule state."""
+    data: dict[str, object] = (
+        {
+            "horizon": {
+                "start": "2026-10-05T09:00:00", "end": "2026-10-05T17:00:00Z"
+            },
+            "slot": "PT1H", "availabilities": [], "people": [], "fixed_tasks": [],
+        }
+        if model is CalendarInput
+        else {
+            "items": [
+                {
+                    "status": "scheduled", "task_id": "task", "name": "Task",
+                    "start": "2026-10-05T09:00:00Z", "end": "2026-10-05T17:00:00",
+                }
+            ]
+        }
+    )
+    with pytest.raises(ValidationError, match="timezone"):
+        model.model_validate_json(json.dumps(data))
+
+
+def test_time_interval_data_rejects_reversed_range() -> None:
+    """Reject reversed intervals during JSON validation."""
+    with pytest.raises(ValidationError, match="start.*end"):
+        TimeIntervalData.model_validate_json(
+            '{"start":"2026-10-05T17:00:00Z","end":"2026-10-05T09:00:00Z"}'
+        )
+
+
+def test_time_interval_data_allows_zero_length() -> None:
+    """Accept equal interval endpoints in JSON."""
+    interval: TimeIntervalData = TimeIntervalData.model_validate_json(
+        '{"start":"2026-10-05T09:00:00Z","end":"2026-10-05T09:00:00Z"}'
+    )
+    assert interval.start == interval.end
+
+
+@pytest.mark.parametrize("end", ["2026-10-04", "2026-10-05"])
+def test_date_range_data_rejects_nonincreasing_range(end: str) -> None:
+    """Reject reversed or empty date ranges during JSON validation."""
+    with pytest.raises(ValidationError, match="Date range end.*must be after start"):
+        DateRangeData.model_validate_json(
+            json.dumps({"start": "2026-10-05", "end": end})
+        )

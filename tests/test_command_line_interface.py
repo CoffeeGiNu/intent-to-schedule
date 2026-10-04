@@ -92,6 +92,46 @@ def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
     return state_path
 
 
+def test_cli_naive_time_bound_returns_validation_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Report offset-free bounds as JSON errors without changing state."""
+    path: Path = initialized(tmp_path, capsys)
+    before: str = path.read_text(encoding="utf-8")
+    input_path: Path = tmp_path / "commands.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "commands": [
+                    {
+                        "kind": "add_constraint",
+                        "constraint": {
+                            "requirement": {"kind": "hard"},
+                            "condition": {
+                                "kind": "time_bound",
+                                "task_ids": ["missing"],
+                                "boundary": "start",
+                                "relation": "at",
+                                "at": "2026-10-05T17:00:00",
+                            },
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(
+        capsys, "--state", str(path), "apply", "--file", str(input_path)
+    )
+    assert status == 1
+    assert "error" in output
+    assert "timezone" in str(output["error"])
+    assert path.read_text(encoding="utf-8") == before
+
+
 def test_init_show_schema_and_round_trip(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

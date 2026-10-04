@@ -1,6 +1,8 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 
+import pytest
+
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
@@ -22,6 +24,19 @@ from intent_to_schedule.domain.measure import Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
+
+
+def test_time_interval_rejects_reversed_endpoints() -> None:
+    """Reject an interval whose end precedes its start."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    with pytest.raises(ValueError, match="start.*end"):
+        TimeInterval(start, start - timedelta(minutes=1))
+
+
+def test_time_interval_allows_equal_endpoints() -> None:
+    """Allow zero-length domain intervals."""
+    start: datetime = datetime(2026, 10, 5, 9)
+    assert TimeInterval(start, start).end == start
 
 
 def make_problem() -> SchedulingProblem:

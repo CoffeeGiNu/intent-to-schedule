@@ -268,3 +268,10 @@ def test_time_range_rejects_zoned_times_with_values(
         TimeRange(start, end)
     assert "+09:00" in str(error.value)
     assert "without a time zone" in str(error.value)
+
+
+@pytest.mark.parametrize("end", [date(2026, 10, 4), date(2026, 10, 5)])
+def test_date_range_rejects_nonincreasing_endpoints(end: date) -> None:
+    """Reject date ranges whose end is not after their start."""
+    with pytest.raises(ValueError, match="Date range end.*must be after start"):
+        DateRange(date(2026, 10, 5), end)

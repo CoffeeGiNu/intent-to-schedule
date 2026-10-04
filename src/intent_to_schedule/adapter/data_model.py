@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Annotated, Literal, cast
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -140,8 +141,8 @@ class ScheduledTaskData(DataModel):
     status: Literal["scheduled"]
     task_id: TaskIdField
     name: str
-    start: datetime
-    end: datetime
+    start: AwareDatetime
+    end: AwareDatetime
 
     @field_serializer("start", "end", when_used="json")
     def serialize_time(self, value: datetime) -> str:
@@ -179,8 +180,14 @@ def to_schedule_entry_data(item: ScheduledTask | DroppedTask) -> ScheduleEntryDa
 class TimeIntervalData(DataModel):
     """JSON form of TimeInterval."""
 
-    start: datetime
-    end: datetime
+    start: AwareDatetime
+    end: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_times(self) -> "TimeIntervalData":
+        """Validate the interval endpoints."""
+        TimeInterval(self.start, self.end)
+        return self
 
 
 class DateRangeData(DataModel):
@@ -188,6 +195,12 @@ class DateRangeData(DataModel):
 
     start: date = Field(description="First included date, written as YYYY-MM-DD.")
     end: date = Field(description="First excluded date, written as YYYY-MM-DD.")
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> "DateRangeData":
+        """Validate the date range endpoints."""
+        DateRange(self.start, self.end)
+        return self
 
 
 class TimeRangeData(DataModel):
@@ -270,7 +283,7 @@ class FixedTaskContentData(DataModel):
     """Fields shared by the added and stored JSON forms of FixedTask."""
 
     name: str
-    start: datetime
+    start: AwareDatetime
     duration: timedelta
     participant_ids: tuple[PersonIdField, ...]
 
@@ -324,7 +337,7 @@ class TimeBoundConditionData(DataModel):
     relation: Literal["at_or_before", "at_or_after", "at"] = Field(
         description="at_or_before is an inclusive latest time; at_or_after is an inclusive earliest time; at is exact equality. Soft violations are hours late, early, or away from the target, respectively."
     )
-    at: datetime = Field(
+    at: AwareDatetime = Field(
         description="Target date and time, such as 2026-10-19T17:00:00+09:00; include the calendar offset. Compared without rounding; hard at is infeasible for a required movable task if the target is between slot boundaries."
     )
 

@@ -11,6 +11,13 @@ class TimeInterval:
     start: datetime
     end: datetime
 
+    def __post_init__(self) -> None:
+        if self.end < self.start:
+            raise ValueError(
+                f"Time interval start {self.start.isoformat()} must not be "
+                f"after end {self.end.isoformat()}."
+            )
+
 
 @dataclass(frozen=True)
 class TimeGrid:

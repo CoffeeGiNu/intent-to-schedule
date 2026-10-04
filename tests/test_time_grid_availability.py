@@ -36,9 +36,11 @@ def test_grid_rejects_nonpositive_slot(slot: timedelta) -> None:
         TimeGrid(GRID.horizon, slot)
 
 
-@pytest.mark.parametrize("end", [START, START - SLOT])
-def test_grid_rejects_nonpositive_horizon(end: datetime) -> None:
-    with pytest.raises(ValueError, match="horizon.*start.*end"):
+@pytest.mark.parametrize(
+    ("end", "message"), [(START, "horizon.*start.*end"), (START - SLOT, "start.*end")]
+)
+def test_grid_rejects_nonpositive_horizon(end: datetime, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
         TimeGrid(TimeInterval(START, end), SLOT)
 
 

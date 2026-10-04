@@ -21,6 +21,13 @@ class DateRange:
     start: date
     end: date
 
+    def __post_init__(self) -> None:
+        if self.end <= self.start:
+            raise ValueError(
+                f"Date range end {self.end.isoformat()} must be after start "
+                f"{self.start.isoformat()}."
+            )
+
 
 @dataclass(frozen=True)
 class TimeRange:
