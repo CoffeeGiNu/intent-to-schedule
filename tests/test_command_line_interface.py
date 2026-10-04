@@ -690,7 +690,6 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     explicit_now: bool,
 ) -> None:
     """Persist dialogue for every turn and problem changes only after solve."""
-    from typing import cast
     from unittest.mock import MagicMock
 
     import openai
@@ -757,8 +756,8 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     previous: Schedule = Schedule((ScheduledTask(existing.id, existing.name, start, start + existing.duration),), ())
     replacement: Schedule = Schedule(
         (
-            ScheduledTask(existing.id, existing.name, start + timedelta(hours=1), start + timedelta(hours=2)),
             ScheduledTask(added.id, added.name, start + timedelta(hours=2), start + timedelta(hours=3)),
+            ScheduledTask(existing.id, existing.name, start + timedelta(hours=1), start + timedelta(hours=2)),
         ),
         (),
     )
@@ -830,7 +829,14 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
         else:
             assert status == 0
             assert persisted.previous == to_schedule_state(replacement)
-            assert len(cast(list[object], output["items"])) == 2
+            assert output == {"items": [
+                {"status": "scheduled", "task_id": "existing", "name": "Existing",
+                 "start": (start + timedelta(hours=1)).isoformat(),
+                 "end": (start + timedelta(hours=2)).isoformat()},
+                {"status": "scheduled", "task_id": "added", "name": "Added",
+                 "start": (start + timedelta(hours=2)).isoformat(),
+                 "end": (start + timedelta(hours=3)).isoformat()},
+            ]}
             assert persisted.dialogue[-1].text == "Scheduled."
 
 
@@ -874,10 +880,7 @@ def test_schedule_entries_survive_task_changes(
     assert status == 0
     assert output == {"items": expected}
     persisted: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["previous"] == {"items": [
-        {**expected[0], "start": "2026-10-01T09:00:00Z", "end": "2026-10-01T10:00:00Z"},
-        expected[1],
-    ]}
+    assert persisted["previous"] == {"items": expected}
     change: list[dict[str, object]]
     for change in (
         [{"kind": "replace_task", "task": {**task, "name": "Renamed review", "duration": "PT2H"}},
@@ -896,3 +899,34 @@ def test_schedule_entries_survive_task_changes(
             "truncated": False, "has_previous": True,
         }
         assert json.loads(path.read_text(encoding="utf-8"))["previous"] == persisted["previous"]
+
+
+@pytest.mark.parametrize("stability", [False, True])
+def test_solve_option_passes_previous_schedule(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    stability: bool,
+) -> None:
+    """Pass the saved schedule only when stability is enabled."""
+    from unittest.mock import MagicMock
+
+    from intent_to_schedule.adapter.command_line_interface.state import to_schedule, to_schedule_state
+    from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
+    from intent_to_schedule.application.solve import Solved
+    from intent_to_schedule.domain.schedule import Schedule
+
+    path: Path = initialized(tmp_path, capsys)
+    state: State = load_state(path)
+    previous: Schedule = Schedule((), ())
+    save_state(path, state.model_copy(update={"previous": to_schedule_state(previous)}))
+    solver: MagicMock = MagicMock(return_value=Solved(previous))
+    monkeypatch.setattr(MathOptSchedulingSolver, "solve", solver)
+    arguments: tuple[str, ...] = () if stability else ("--no-stability",)
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "solve", *arguments)
+    assert status == 0
+    assert output == {"items": []}
+    solver.assert_called_once_with(to_problem(state.problem), previous if stability else None)
+    assert to_schedule(load_state(path).previous) == previous
