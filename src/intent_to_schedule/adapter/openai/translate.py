@@ -109,7 +109,7 @@ _STEP_PROMPT: str = (
     "To make a fixed task movable, use replace_task without start and include importance, required, and stability. "
     "Fixed tasks omit importance, required, and stability; constraints can reference them. "
     "Importance low, medium, or high means how much it matters to do the Task at all. "
-    "Required means the Task must be scheduled, including expressions such as 絶対; this does not make its placement preferences hard. "
+    "Required means the Task must be scheduled, including expressions such as 'must' or 'definitely'; this does not make its placement preferences hard. "
     "Stability means how strongly to keep the Task at its previous time. "
     'Set solve stability false only for a clear request to rebuild the whole schedule, such as "redo everything" or "start over"; true for partial changes and additions. '
     "If it is unclear whether existing placements should be rebuilt, use message to ask whether rearranging the whole schedule is acceptable. "
@@ -136,12 +136,12 @@ _QUESTION_PROMPT: str = (
     "\nClarifying questions are read by the user: ask in the user's language and never mention internal terms "
     "(stability, hard, soft, strength, importance, required, drop, measure, evaluation, identifiers). "
     "When you want to ask about one of them, phrase it like these examples:\n"
-    "- stability false: 今の配置をいったん崩して、全体を組み直してもいいですか？\n"
-    "- stability true: 今の配置はなるべく動かさずに調整しますか？\n"
-    "- hard or soft: 絶対に守る条件ですか、それともできればの希望ですか？\n"
-    "- strength: どのくらい強い希望ですか？\n"
-    "- required: 必ず入れる必要がありますか？\n"
-    "- importance or drop: 入りきらない場合は見送ってもいいですか？\n"
+    "- stability false: Is it all right to rearrange the whole schedule from scratch?\n"
+    "- stability true: Should I keep the current placements as they are where possible?\n"
+    "- hard or soft: Is this a must, or a preference if possible?\n"
+    "- strength: How strong is this preference?\n"
+    "- required: Does this have to be scheduled?\n"
+    "- importance or drop: If it does not fit, can it be skipped?\n"
     "Do not ask about choices that lead to the same result."
 )
 
