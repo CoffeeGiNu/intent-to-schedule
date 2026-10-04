@@ -1,6 +1,4 @@
 from collections.abc import Sequence
-from dataclasses import replace
-from datetime import datetime
 
 from intent_to_schedule.application.command import (
     ExecuteResult,
@@ -10,12 +8,8 @@ from intent_to_schedule.application.command import (
 )
 from intent_to_schedule.application.solve import SchedulingSolver, SolveResult
 from intent_to_schedule.domain.consistency import Validator, Violations
-from intent_to_schedule.domain.constraint import ConstraintId, SoftConstraint
-from intent_to_schedule.domain.evaluation import Distance
-from intent_to_schedule.domain.measure import PointMeasure
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
-from intent_to_schedule.domain.task import TaskId
 
 
 class Scheduling:
@@ -41,30 +35,4 @@ class Scheduling:
         self, problem: SchedulingProblem, previous: Schedule | None
     ) -> SolveResult:
         """Solve a problem, keeping Tasks near their previous start."""
-        solve_problem: SchedulingProblem = problem
-        if previous is not None:
-            solve_problem = replace(
-                problem,
-                constraints=problem.constraints
-                + stability_constraints(problem, previous),
-            )
-        return self._solver.solve(solve_problem)
-
-
-def stability_constraints(
-    problem: SchedulingProblem, previous: Schedule
-) -> tuple[SoftConstraint, ...]:
-    """Build constraints that keep Tasks near their previous start."""
-    starts: dict[TaskId, datetime] = {
-        scheduled.task_id: scheduled.start for scheduled in previous.scheduled
-    }
-    return tuple(
-        SoftConstraint(
-            ConstraintId.generate(),
-            PointMeasure(task.id),
-            Distance(starts[task.id]),
-            task.stability,
-        )
-        for task in problem.tasks
-        if task.id in starts
-    )
+        return self._solver.solve(problem, previous)

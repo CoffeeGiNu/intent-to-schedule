@@ -24,4 +24,6 @@ type SolveResult = Solved | Infeasible
 class SchedulingSolver(Protocol):
     """Port that solves a SchedulingProblem."""
 
-    def solve(self, problem: SchedulingProblem) -> SolveResult: ...
+    def solve(
+        self, problem: SchedulingProblem, previous: Schedule | None
+    ) -> SolveResult: ...

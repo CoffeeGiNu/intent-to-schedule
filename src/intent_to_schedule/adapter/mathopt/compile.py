@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 
 from ortools.math_opt.python import mathopt
 
@@ -15,6 +16,7 @@ from intent_to_schedule.domain.constraint import HardConstraint, SoftConstraint
 from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantity
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
+from intent_to_schedule.domain.schedule import Schedule
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
@@ -30,7 +32,7 @@ class CompiledProblem:
 
 
 def compile_problem(
-    problem: SchedulingProblem, policy: ObjectivePolicy
+    problem: SchedulingProblem, policy: ObjectivePolicy, previous: Schedule | None = None
 ) -> CompiledProblem:
     """Build a MathOpt model from a SchedulingProblem."""
     grid: TimeGrid = problem.calendar.grid
@@ -49,6 +51,9 @@ def compile_problem(
         person_id: free_slots(problem, person_id) for person_id in participant_ids
     }
     objective_terms: list[mathopt.LinearBase] = []
+    previous_starts: dict[TaskId, datetime] = {
+        item.task_id: item.start for item in previous.scheduled
+    } if previous is not None else {}
     incidence: dict[PersonId, dict[int, list[mathopt.Variable]]] = {
         person_id: {} for person_id in participant_ids
     }
@@ -92,6 +97,17 @@ def compile_problem(
         if task.required:
             model.add_linear_constraint(presence == 1)
         objective_terms.append(policy.drop_cost(task.importance) * (1 - presence))
+        if task.id in previous_starts:
+            previous_start: datetime = previous_starts[task.id]
+            cap: float = policy.stability_drop_cost_ratio * policy.drop_cost(task.importance)
+            objective_terms.append(mathopt.LinearSum(
+                variable * min(
+                    policy.weight(task.stability)
+                    * abs((grid.time_at(start) - previous_start).total_seconds()) / 3600,
+                    cap,
+                )
+                for start, variable in choices.items()
+            ))
 
     fixed_task: FixedTask
     for fixed_task in problem.fixed_tasks:

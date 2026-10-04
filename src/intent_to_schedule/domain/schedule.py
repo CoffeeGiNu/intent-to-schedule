@@ -6,10 +6,20 @@ from intent_to_schedule.domain.task import TaskId
 
 @dataclass(frozen=True)
 class ScheduledTask:
-    """Task scheduled at a start time."""
+    """Task name and scheduled interval recorded at solve time."""
 
     task_id: TaskId
+    name: str
     start: datetime
+    end: datetime
+
+
+@dataclass(frozen=True)
+class DroppedTask:
+    """Dropped task name recorded at solve time."""
+
+    task_id: TaskId
+    name: str
 
 
 @dataclass(frozen=True)
@@ -17,4 +27,4 @@ class Schedule:
     """Scheduled and dropped Tasks."""
 
     scheduled: tuple[ScheduledTask, ...]
-    dropped_task_ids: frozenset[TaskId]
+    dropped: tuple[DroppedTask, ...]

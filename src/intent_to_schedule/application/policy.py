@@ -14,6 +14,8 @@ class ObjectivePolicy:
     weights: Mapping[Strength, float]
     per_count: float
     """Penalty of one Task counted, relative to one hour."""
+    stability_drop_cost_ratio: float
+    """Share of a task's drop cost used as its stability cap."""
 
     def __post_init__(self) -> None:
         if (
@@ -29,6 +31,8 @@ class ObjectivePolicy:
             raise ValueError(
                 "Objective policy coefficients must be finite and positive for every member"
             )
+        if not 0 < self.stability_drop_cost_ratio < 1:
+            raise ValueError("Stability drop cost ratio must be greater than 0 and less than 1")
 
     def drop_cost(self, importance: Importance) -> float:
         return self.drop_costs[importance]
@@ -42,4 +46,5 @@ DEFAULT_POLICY = ObjectivePolicy(
     drop_costs={Importance.LOW: 5.0, Importance.MEDIUM: 20.0, Importance.HIGH: 100.0},
     weights={Strength.WEAK: 1.0, Strength.NORMAL: 5.0, Strength.STRONG: 20.0},
     per_count=1.0,
+    stability_drop_cost_ratio=0.5,
 )

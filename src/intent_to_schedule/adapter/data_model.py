@@ -82,9 +82,9 @@ def _parse_id(
     """Accept a string or an existing domain ID."""
     if isinstance(value, id_type):
         return value
-    if isinstance(value, str):
+    if isinstance(value, str) and value:
         return id_type(value)
-    raise ValueError("ID must be a string")
+    raise ValueError("ID must be a non-empty string")
 
 
 type TaskIdField = Annotated[
@@ -182,8 +182,8 @@ class PersonData(DataModel):
     name: str
 
 
-class NewTaskData(DataModel):
-    """JSON form of a Task to add, before it has an ID."""
+class TaskContentData(DataModel):
+    """Fields shared by the added and stored JSON forms of Task."""
 
     name: str
     duration: timedelta
@@ -193,14 +193,20 @@ class NewTaskData(DataModel):
     stability: Literal["weak", "normal", "strong"]
 
 
-class TaskData(NewTaskData):
+class NewTaskData(TaskContentData):
+    """JSON form of a Task to add, with an optional given ID."""
+
+    id: TaskIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+
+
+class TaskData(TaskContentData):
     """JSON form of Task."""
 
     id: TaskIdField
 
 
-class NewFixedTaskData(DataModel):
-    """JSON form of a FixedTask to add, before it has an ID."""
+class FixedTaskContentData(DataModel):
+    """Fields shared by the added and stored JSON forms of FixedTask."""
 
     name: str
     start: datetime
@@ -208,7 +214,13 @@ class NewFixedTaskData(DataModel):
     participant_ids: tuple[PersonIdField, ...]
 
 
-class FixedTaskData(NewFixedTaskData):
+class NewFixedTaskData(FixedTaskContentData):
+    """JSON form of a FixedTask to add, with an optional given ID."""
+
+    id: TaskIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+
+
+class FixedTaskData(FixedTaskContentData):
     """JSON form of FixedTask."""
 
     id: TaskIdField
@@ -310,22 +322,28 @@ type EvaluationData = DistanceData | IntrusionData | ShortfallData | ExcessData
 """JSON form of Evaluation."""
 
 
-class NewHardConstraintData(DataModel):
-    """JSON form of a HardConstraint to add, before it has an ID."""
+class HardConstraintContentData(DataModel):
+    """Fields shared by the added and stored JSON forms of HardConstraint."""
 
     kind: Literal["hard"]
     measure: MeasureData
     evaluation: EvaluationData
 
 
-class HardConstraintData(NewHardConstraintData):
+class NewHardConstraintData(HardConstraintContentData):
+    """JSON form of a HardConstraint to add, with an optional given ID."""
+
+    id: ConstraintIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+
+
+class HardConstraintData(HardConstraintContentData):
     """JSON form of HardConstraint."""
 
     id: ConstraintIdField
 
 
-class NewSoftConstraintData(DataModel):
-    """JSON form of a SoftConstraint to add, before it has an ID."""
+class SoftConstraintContentData(DataModel):
+    """Fields shared by the added and stored JSON forms of SoftConstraint."""
 
     kind: Literal["soft"]
     measure: MeasureData
@@ -333,7 +351,13 @@ class NewSoftConstraintData(DataModel):
     strength: Literal["weak", "normal", "strong"]
 
 
-class SoftConstraintData(NewSoftConstraintData):
+class NewSoftConstraintData(SoftConstraintContentData):
+    """JSON form of a SoftConstraint to add, with an optional given ID."""
+
+    id: ConstraintIdField | None = Field(None, description="Identifier to use instead of a generated one; later commands in the same batch can reference it.")
+
+
+class SoftConstraintData(SoftConstraintContentData):
     """JSON form of SoftConstraint."""
 
     id: ConstraintIdField
@@ -721,7 +745,7 @@ def answer_record(answer: Answer) -> dict[str, object]:
 
 
 def convert_command(data: CommandData) -> SchedulingCommand:
-    """Convert one structured command, generating an ID for an added object."""
+    """Convert one structured command, generating an ID for an added object without one."""
     new_task: NewTaskData | NewFixedTaskData
     task: TaskData | FixedTaskData
     task_id: TaskId
@@ -733,7 +757,7 @@ def convert_command(data: CommandData) -> SchedulingCommand:
     requirement: HardRequirementData | SoftRequirementData
     match data:
         case AddTaskData(task=new_task):
-            task_id = TaskId.generate()
+            task_id = new_task.id if new_task.id is not None else TaskId.generate()
             return AddTask(
                 convert_fixed_task(task_id, new_task)
                 if isinstance(new_task, NewFixedTaskData)
@@ -748,7 +772,14 @@ def convert_command(data: CommandData) -> SchedulingCommand:
         case RemoveTaskData(task_id=task_id):
             return RemoveTask(task_id)
         case AddConstraintData(constraint=constraint):
-            return AddConstraint(convert_constraint(ConstraintId.generate(), constraint))
+            return AddConstraint(
+                convert_constraint(
+                    constraint.id
+                    if constraint.id is not None
+                    else ConstraintId.generate(),
+                    constraint,
+                )
+            )
         case AddTimeConstraintData(
             task_ids=task_ids, relation=relation, windows=windows, requirement=requirement
         ):
@@ -770,7 +801,7 @@ def convert_commands_input(data: CommandsData) -> tuple[SchedulingCommand, ...]:
     return tuple(convert_command(command) for command in data.commands)
 
 
-def convert_task(task_id: TaskId, data: NewTaskData) -> Task:
+def convert_task(task_id: TaskId, data: TaskContentData) -> Task:
     """Convert a structured Task value."""
     return Task(
         task_id,
@@ -783,7 +814,7 @@ def convert_task(task_id: TaskId, data: NewTaskData) -> Task:
     )
 
 
-def convert_fixed_task(task_id: TaskId, data: NewFixedTaskData) -> FixedTask:
+def convert_fixed_task(task_id: TaskId, data: FixedTaskContentData) -> FixedTask:
     """Convert a structured FixedTask value."""
     return FixedTask(
         task_id,
@@ -795,17 +826,17 @@ def convert_fixed_task(task_id: TaskId, data: NewFixedTaskData) -> FixedTask:
 
 
 def convert_constraint(
-    constraint_id: ConstraintId, data: NewHardConstraintData | NewSoftConstraintData
+    constraint_id: ConstraintId, data: HardConstraintContentData | SoftConstraintContentData
 ) -> Constraint:
     """Convert a structured constraint value."""
     match data:
-        case NewHardConstraintData():
+        case HardConstraintContentData():
             return HardConstraint(
                 constraint_id,
                 convert_measure(data.measure),
                 convert_evaluation(data.evaluation),
             )
-        case NewSoftConstraintData():
+        case SoftConstraintContentData():
             return SoftConstraint(
                 constraint_id,
                 convert_measure(data.measure),

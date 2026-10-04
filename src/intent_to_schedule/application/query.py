@@ -10,7 +10,7 @@ from intent_to_schedule.domain.consistency import Violation, Violations
 from intent_to_schedule.domain.constraint import Constraint, ConstraintId
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
+from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 from intent_to_schedule.domain.task import FixedTask, Task, TaskId
 
 
@@ -56,7 +56,7 @@ class ConstraintsAnswer(Listing[Constraint]):
 
 
 @dataclass(frozen=True)
-class PreviousScheduleAnswer(Listing[ScheduledTask | TaskId]):
+class PreviousScheduleAnswer(Listing[ScheduledTask | DroppedTask]):
     """Scheduled and dropped Tasks of the previous schedule."""
 
     has_previous: bool
@@ -279,21 +279,21 @@ class PreviousScheduleQuery:
                 key=lambda item: (item.start, item.task_id.value),
             )
         )
-        dropped: tuple[TaskId, ...] = (
+        dropped: tuple[DroppedTask, ...] = (
             tuple(
                 sorted(
                     (
-                        task_id
-                        for task_id in previous.dropped_task_ids
-                        if self.task_ids is None or task_id in self.task_ids
+                        item
+                        for item in previous.dropped
+                        if self.task_ids is None or item.task_id in self.task_ids
                     ),
-                    key=lambda task_id: task_id.value,
+                    key=lambda item: item.task_id.value,
                 )
             )
             if self.start_range is None
             else ()
         )
-        items: tuple[ScheduledTask | TaskId, ...] = (*scheduled, *dropped)
+        items: tuple[ScheduledTask | DroppedTask, ...] = (*scheduled, *dropped)
         return Answered(PreviousScheduleAnswer(items[: self.limit], len(items), True))
 
 

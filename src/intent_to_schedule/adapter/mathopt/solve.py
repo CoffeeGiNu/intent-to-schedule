@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from ortools.math_opt.python import mathopt
 
@@ -11,8 +11,8 @@ from intent_to_schedule.application.solve import (
     SolveResult,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
-from intent_to_schedule.domain.task import Task, TaskId
+from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
+from intent_to_schedule.domain.task import Task
 
 
 class MathOptSchedulingSolver(SchedulingSolver):
@@ -28,9 +28,11 @@ class MathOptSchedulingSolver(SchedulingSolver):
         self.solver_type: mathopt.SolverType = solver_type
         self.time_limit: timedelta | None = time_limit
 
-    def solve(self, problem: SchedulingProblem) -> SolveResult:
+    def solve(
+        self, problem: SchedulingProblem, previous: Schedule | None = None
+    ) -> SolveResult:
         """Solve a SchedulingProblem."""
-        compiled: CompiledProblem = compile_problem(problem, self.policy)
+        compiled: CompiledProblem = compile_problem(problem, self.policy, previous)
         parameters: mathopt.SolveParameters = mathopt.SolveParameters(
             time_limit=self.time_limit
         )
@@ -43,7 +45,7 @@ class MathOptSchedulingSolver(SchedulingSolver):
             case mathopt.TerminationReason.OPTIMAL | mathopt.TerminationReason.FEASIBLE:
                 values: dict[mathopt.Variable, float] = result.variable_values()
                 scheduled: list[ScheduledTask] = []
-                dropped: set[TaskId] = set()
+                dropped: list[DroppedTask] = []
                 task: Task
                 for task in problem.tasks:
                     if values[compiled.presences[task.id]] > 0.5:
@@ -52,14 +54,17 @@ class MathOptSchedulingSolver(SchedulingSolver):
                             for slot, variable in compiled.placements[task.id].items()
                             if values[variable] > 0.5
                         )
+                        start_time: datetime = problem.calendar.grid.time_at(start)
                         scheduled.append(
                             ScheduledTask(
                                 task.id,
-                                problem.calendar.grid.time_at(start),
+                                task.name,
+                                start_time,
+                                start_time + task.duration,
                             )
                         )
                     else:
-                        dropped.add(task.id)
-                return Solved(Schedule(tuple(scheduled), frozenset(dropped)))
+                        dropped.append(DroppedTask(task.id, task.name))
+                return Solved(Schedule(tuple(scheduled), tuple(dropped)))
             case _:
                 raise RuntimeError(f"MathOpt solve failed: {result.termination.reason}")

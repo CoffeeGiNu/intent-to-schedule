@@ -41,7 +41,7 @@ from intent_to_schedule.application.command import (
 )
 from intent_to_schedule.application.converse import Conversation, Exhausted, Response
 from intent_to_schedule.application.policy import DEFAULT_POLICY
-from intent_to_schedule.application.query import AnswerResult, SchedulingQuery
+from intent_to_schedule.application.query import AnswerResult, SchedulingQuery, summarize
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import Infeasible, Solved
 from intent_to_schedule.application.translate import MessageStep
@@ -72,7 +72,8 @@ class JsonParser(argparse.ArgumentParser):
 COMMANDS: dict[str, tuple[str, str]] = {
     "init": (
         "Create state from a calendar JSON file",
-        "Initializes the problem and clears the previous schedule and dialogue.",
+        "Initializes the problem and clears the previous schedule and dialogue. "
+        "Prints the summary; use show for the complete state.",
     ),
     "show": (
         "Print the complete state",
@@ -239,7 +240,10 @@ def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
         people=calendar.people,
         tasks=(),
         fixed_tasks=tuple(
-            FixedTaskData(id=TaskId.generate(), **item.model_dump())
+            FixedTaskData(
+                id=item.id if item.id is not None else TaskId.generate(),
+                **item.model_dump(exclude={"id"}),
+            )
             for item in calendar.fixed_tasks
         ),
         constraints=(),
@@ -254,7 +258,7 @@ def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
                 problem=to_problem_state(updated), previous=None, dialogue=()
             )
             save_state(path, state)
-            emit(state.model_dump(mode="json"))
+            emit(answer_record(summarize(updated, None)))
             return 0
 
 
