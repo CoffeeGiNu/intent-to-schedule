@@ -15,7 +15,7 @@ from intent_to_schedule.application.command import (
     execute_commands,
 )
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
-from intent_to_schedule.application.schedule import Scheduling, stability_constraints
+from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import Infeasible
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.consistency import AllOf, Violation, Violations
@@ -23,7 +23,7 @@ from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint, S
 from intent_to_schedule.domain.evaluation import Distance
 from intent_to_schedule.domain.measure import AggregateMeasure, AggregateQuantity, PointMeasure
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
+from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
@@ -46,6 +46,13 @@ def problem(*tasks: Task, constraints: tuple[HardConstraint, ...] = ()) -> Sched
 def test_policy_uses_mappings() -> None:
     assert DEFAULT_POLICY.drop_cost(Importance.HIGH) == 100.0
     assert DEFAULT_POLICY.weight(Strength.WEAK) == 1.0
+    assert DEFAULT_POLICY.stability_drop_cost_ratio == 0.5
+
+
+@pytest.mark.parametrize("ratio", [0.0, 1.0, -0.5, 1.5, float("inf"), float("nan")])
+def test_policy_rejects_invalid_stability_drop_cost_ratio(ratio: float) -> None:
+    with pytest.raises(ValueError):
+        replace(DEFAULT_POLICY, stability_drop_cost_ratio=ratio)
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0, float("inf"), float("nan")])
@@ -60,9 +67,9 @@ def test_policy_rejects_nonpositive_or_nonfinite_coefficients(value: float) -> N
 
 def test_policy_requires_every_importance_and_strength() -> None:
     with pytest.raises(ValueError):
-        ObjectivePolicy({Importance.LOW: 1.0}, DEFAULT_POLICY.weights, 1.0)
+        ObjectivePolicy({Importance.LOW: 1.0}, DEFAULT_POLICY.weights, 1.0, 0.5)
     with pytest.raises(ValueError):
-        ObjectivePolicy(DEFAULT_POLICY.drop_costs, {Strength.WEAK: 1.0}, 1.0)
+        ObjectivePolicy(DEFAULT_POLICY.drop_costs, {Strength.WEAK: 1.0}, 1.0, 0.5)
 
 
 def test_task_commands_keep_input_and_order() -> None:
@@ -161,31 +168,29 @@ def test_replace_fixed_task_makes_it_movable_and_keeps_constraints() -> None:
     assert original.fixed_tasks == (fixed, other)
 
 
-def test_fixed_tasks_get_no_stability_constraints() -> None:
-    fixed: FixedTask = FixedTask(TaskId("fixed"), "Existing", START, timedelta(hours=1), frozenset())
-    previous: Schedule = Schedule((ScheduledTask(fixed.id, START),), frozenset())
-    assert stability_constraints(replace(problem(), fixed_tasks=(fixed,)), previous) == ()
-
-
-def test_stability_constraints_use_previous_starts() -> None:
+@pytest.mark.parametrize("stability", [False, True])
+def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
     first: Task = task("a")
     second: Task = task("b")
-    previous: Schedule = Schedule((ScheduledTask(first.id, START),), frozenset({second.id}))
-    with patch.object(ConstraintId, "generate", return_value=ConstraintId("new")):
-        constraints: tuple[SoftConstraint, ...] = stability_constraints(problem(first, second), previous)
-    assert len(constraints) == 1
-    assert constraints[0].id == ConstraintId("new")
-    assert constraints[0].measure == PointMeasure(first.id)
-    assert constraints[0].evaluation == Distance(START)
-    assert constraints[0].strength == first.stability
+    previous: Schedule | None = Schedule(
+        (ScheduledTask(first.id, first.name, START, START + first.duration),),
+        (DroppedTask(second.id, second.name),),
+    ) if stability else None
+    original: SchedulingProblem = problem(first, second)
+    solver: Solver = Solver()
+    assert Scheduling(solver, Validator()).solve(original, previous) == Infeasible()
+    assert solver.problem is original
+    assert solver.previous is previous
 
 
 class Solver:
     def __init__(self) -> None:
         self.problem: SchedulingProblem | None = None
+        self.previous: Schedule | None = None
 
-    def solve(self, problem: SchedulingProblem) -> Infeasible:
+    def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> Infeasible:
         self.problem = problem
+        self.previous = previous
         return Infeasible()
 
 

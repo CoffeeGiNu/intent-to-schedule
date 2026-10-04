@@ -20,8 +20,10 @@ from intent_to_schedule.adapter.data_model import (
     CommandData,
     CommandsData,
     FixedTaskData,
+    FixedTaskContentData,
     NewFixedTaskData,
     NewTaskData,
+    TaskContentData,
     ReplaceTaskData,
     TaskData,
     command_record,
@@ -227,7 +229,7 @@ def test_replace_task_changes_fixedness_and_keeps_constraints(
     assert released.problem == original
     solution: SolveResult = scheduling.solve(released.problem, None)
     assert isinstance(solution, Solved)
-    assert solution.schedule.scheduled == (ScheduledTask(movable.id, fixed.start),)
+    assert solution.schedule.scheduled == (ScheduledTask(movable.id, movable.name, fixed.start, fixed.start + movable.duration),)
 
 
 def test_replace_fixed_task_preserves_other_tasks_and_order(
@@ -311,7 +313,7 @@ def test_json_task_shape_and_identifier_generation(kind: str, fixed: bool) -> No
             }
         )
     )
-    expected_type: type[NewTaskData | NewFixedTaskData] = (
+    expected_type: type[TaskContentData | FixedTaskContentData] = (
         (FixedTaskData if fixed else TaskData)
         if kind == "replace_task"
         else (NewFixedTaskData if fixed else NewTaskData)

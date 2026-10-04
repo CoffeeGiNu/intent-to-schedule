@@ -64,7 +64,7 @@ from intent_to_schedule.domain.measure import (
 )
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
+from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
@@ -448,11 +448,11 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
     """Return scheduled and dropped identifiers even after tasks disappear."""
     previous: Schedule = Schedule(
         (
-            ScheduledTask(TaskId("old-late"), at(12)),
-            ScheduledTask(TaskId("old-b"), at(10)),
-            ScheduledTask(TaskId("old-a"), at(10)),
+            ScheduledTask(TaskId("old-late"), "Old late", at(12), at(13)),
+            ScheduledTask(TaskId("old-b"), "Old B", at(10), at(11)),
+            ScheduledTask(TaskId("old-a"), "Old A", at(10), at(11)),
         ),
-        frozenset({TaskId("dropped-b"), TaskId("dropped-a")}),
+        (DroppedTask(TaskId("dropped-b"), "Dropped B"), DroppedTask(TaskId("dropped-a"), "Dropped A")),
     )
     result: AnswerResult = parse_query(
         {"kind": "previous_schedule", "limit": 4}
@@ -462,7 +462,7 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
             previous.scheduled[2],
             previous.scheduled[1],
             previous.scheduled[0],
-            TaskId("dropped-a"),
+            DroppedTask(TaskId("dropped-a"), "Dropped A"),
         ),
         5,
         True,
@@ -471,10 +471,10 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
     assert answer_record(expected) == {
         "kind": "previous_schedule",
         "items": [
-            {"status": "scheduled", "task_id": "old-a", "start": at(10).isoformat()},
-            {"status": "scheduled", "task_id": "old-b", "start": at(10).isoformat()},
-            {"status": "scheduled", "task_id": "old-late", "start": at(12).isoformat()},
-            {"status": "dropped", "task_id": "dropped-a"},
+            {"status": "scheduled", "task_id": "old-a", "name": "Old A", "start": at(10).isoformat(), "end": at(11).isoformat()},
+            {"status": "scheduled", "task_id": "old-b", "name": "Old B", "start": at(10).isoformat(), "end": at(11).isoformat()},
+            {"status": "scheduled", "task_id": "old-late", "name": "Old late", "start": at(12).isoformat(), "end": at(13).isoformat()},
+            {"status": "dropped", "task_id": "dropped-a", "name": "Dropped A"},
         ],
         "total": 5,
         "truncated": True,
@@ -495,7 +495,7 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
     assert parse_query(
         {"kind": "previous_schedule", "filter": {"task_ids": ["dropped-a"]}}
     ).answer(problem, previous) == Answered(
-        PreviousScheduleAnswer((TaskId("dropped-a"),), 1, True)
+        PreviousScheduleAnswer((DroppedTask(TaskId("dropped-a"), "Dropped A"),), 1, True)
     )
 
 
@@ -867,7 +867,7 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
         IntervalMeasure(frozenset({task.id})),
         Intrusion((problem.calendar.grid.horizon,)),
     )
-    previous: Schedule = Schedule((ScheduledTask(task.id, at(9)),), frozenset())
+    previous: Schedule = Schedule((ScheduledTask(task.id, task.name, at(9), at(9) + task.duration),), ())
     given: SchedulingProblem = replace(
         problem, tasks=(task,), fixed_tasks=(), constraints=(constraint,)
     )

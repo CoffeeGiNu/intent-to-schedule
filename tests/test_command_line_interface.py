@@ -44,8 +44,12 @@ def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(state_path), "init", "--calendar", str(calendar_path))
     assert status == 0
-    assert output["previous"] is None
-    assert output["problem"]["people"] == [{"id": "alice", "name": "Alice"}]
+    assert output == {
+        "kind": "summary",
+        "grid": {"horizon": {"start": "2026-10-01T09:00:00Z", "end": "2026-10-01T12:00:00Z"}, "slot": "PT1H"},
+        "counts": {"people": 1, "tasks": 0, "fixed_tasks": 0, "constraints": 0},
+        "has_previous": False,
+    }
     assert state_path.exists()
     return state_path
 
@@ -93,9 +97,9 @@ def test_init_fixed_tasks_persists_ids_and_round_trips(tmp_path: Path, capsys: p
     output: dict[str, object]
     status, output = invoke(capsys, "init", "--state", str(path), "--calendar", str(calendar_path))
     assert status == 0
-    assert output["problem"]["fixed_tasks"][0]["id"]
-    assert set(output["problem"]["calendar"]) == {"horizon", "slot", "availabilities"}
+    assert output["counts"]["fixed_tasks"] == 1
     state: State = load_state(path)
+    assert state.problem.fixed_tasks[0].id.value
     problem: SchedulingProblem = to_problem(state.problem)
     fixed: FixedTask = problem.fixed_tasks[0]
     assert fixed.start == datetime(2026, 10, 1, 9, 15, tzinfo=timezone.utc)
@@ -103,7 +107,7 @@ def test_init_fixed_tasks_persists_ids_and_round_trips(tmp_path: Path, capsys: p
     assert to_problem(to_problem_state(problem)) == problem
     status, output = invoke(capsys, "solve", "--state", str(path))
     assert status == 0
-    assert output == {"scheduled": [], "dropped": []}
+    assert output == {"items": []}
 
 
 def test_init_rejects_fixed_task_with_unknown_participant(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -163,15 +167,73 @@ def test_apply_reject_and_solve(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
     status, output = invoke(capsys, "--state", str(path), "solve")
     assert status == 0
-    assert output == {"scheduled": [{
-        "task_id": task_id, "name": "Review", "start": "2026-10-01T09:00:00+00:00",
+    assert output == {"items": [{
+        "status": "scheduled", "task_id": task_id, "name": "Review", "start": "2026-10-01T09:00:00+00:00",
         "end": "2026-10-01T10:00:00+00:00",
-    }], "dropped": []}
+    }]}
     assert load_state(path).previous is not None
     second: dict[str, object]
     status, second = invoke(capsys, "--state", str(path), "solve")
     assert status == 0
     assert second == output
+
+
+def test_apply_uses_given_ids_within_the_same_batch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Add a task and a constraint with given IDs and reference the task in the same batch."""
+    path: Path = initialized(tmp_path, capsys)
+    commands_file: Path = tmp_path / "commands.json"
+    commands_file.write_text(json.dumps({"commands": [
+        {"kind": "add_task", "task": {
+            "id": "review", "name": "Review", "duration": "PT1H", "participant_ids": ["alice"],
+            "importance": "high", "required": True, "stability": "normal",
+        }},
+        {"kind": "add_constraint", "constraint": {
+            "id": "review-at-ten", "kind": "soft", "strength": "normal",
+            "measure": {"kind": "point", "task_id": "review"},
+            "evaluation": {"kind": "distance", "target": {"kind": "instant", "value": "2026-10-01T10:00:00+00:00"}},
+        }},
+    ]}), encoding="utf-8")
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply", "--file", str(commands_file))
+    assert status == 0
+    assert output == {"executed": [
+        {"kind": "add_task", "task_id": "review", "name": "Review"},
+        {"kind": "add_constraint", "constraint_id": "review-at-ten"},
+    ]}
+    status, output = invoke(capsys, "--state", str(path), "solve")
+    assert status == 0
+    assert output["items"][0]["task_id"] == "review"
+    assert output["items"][0]["start"] == "2026-10-01T10:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "commands,message",
+    [
+        (
+            [{"kind": "add_task", "task": {"id": "review", "name": "Review", "duration": "PT1H", "participant_ids": ["alice"], "importance": "high", "required": True, "stability": "normal"}}] * 2,
+            "Task review already exists",
+        ),
+        (
+            [{"kind": "add_task", "task": {"id": "", "name": "Review", "duration": "PT1H", "participant_ids": ["alice"], "importance": "high", "required": True, "stability": "normal"}}],
+            "ID must be a non-empty string",
+        ),
+    ],
+)
+def test_apply_rejects_duplicate_or_empty_given_id_without_saving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], commands: list[dict[str, object]], message: str
+) -> None:
+    """Reject a given ID that already exists or is empty, leaving the state unchanged."""
+    path: Path = initialized(tmp_path, capsys)
+    unchanged: str = path.read_text(encoding="utf-8")
+    commands_file: Path = tmp_path / "commands.json"
+    commands_file.write_text(json.dumps({"commands": commands}), encoding="utf-8")
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply", "--file", str(commands_file))
+    assert status == 1
+    assert message in json.dumps(output)
+    assert path.read_text(encoding="utf-8") == unchanged
 
 
 @pytest.mark.parametrize(
@@ -692,13 +754,13 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
         (),
         (),
     )
-    previous: Schedule = Schedule((ScheduledTask(existing.id, start),), frozenset())
+    previous: Schedule = Schedule((ScheduledTask(existing.id, existing.name, start, start + existing.duration),), ())
     replacement: Schedule = Schedule(
         (
-            ScheduledTask(existing.id, start + timedelta(hours=1)),
-            ScheduledTask(added.id, start + timedelta(hours=2)),
+            ScheduledTask(existing.id, existing.name, start + timedelta(hours=1), start + timedelta(hours=2)),
+            ScheduledTask(added.id, added.name, start + timedelta(hours=2), start + timedelta(hours=3)),
         ),
-        frozenset(),
+        (),
     )
     path: Path = tmp_path / "state.json"
     state: State = State(
@@ -768,5 +830,69 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
         else:
             assert status == 0
             assert persisted.previous == to_schedule_state(replacement)
-            assert len(cast(list[object], output["scheduled"])) == 2
+            assert len(cast(list[object], output["items"])) == 2
             assert persisted.dialogue[-1].text == "Scheduled."
+
+
+def test_schedule_entries_survive_task_changes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve solved names and times after tasks change or disappear."""
+    path: Path = initialized(tmp_path, capsys)
+    task: dict[str, object] = {
+        "id": "review", "name": "Original review", "duration": "PT1H",
+        "participant_ids": ["alice"], "importance": "low",
+        "required": True, "stability": "normal",
+    }
+    dropped_task: dict[str, object] = {
+        **task, "id": "dropped", "name": "Original dropped", "duration": "PT4H",
+        "required": False,
+    }
+    commands: list[dict[str, object]] = [
+        {"kind": "add_task", "task": task},
+        {"kind": "add_task", "task": dropped_task},
+        {"kind": "add_constraint", "constraint": {
+            "kind": "hard", "measure": {"kind": "point", "task_id": "review"},
+            "evaluation": {"kind": "distance", "target": {
+                "kind": "instant", "value": "2026-10-01T09:00:00+00:00",
+            }},
+        }},
+    ]
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": commands})))
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    status, output = invoke(capsys, "--state", str(path), "solve")
+    expected: list[dict[str, str]] = [
+        {"status": "scheduled", "task_id": "review", "name": "Original review",
+         "start": "2026-10-01T09:00:00+00:00", "end": "2026-10-01T10:00:00+00:00"},
+        {"status": "dropped", "task_id": "dropped", "name": "Original dropped"},
+    ]
+    assert status == 0
+    assert output == {"items": expected}
+    persisted: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["previous"] == {"items": [
+        {**expected[0], "start": "2026-10-01T09:00:00Z", "end": "2026-10-01T10:00:00Z"},
+        expected[1],
+    ]}
+    change: list[dict[str, object]]
+    for change in (
+        [{"kind": "replace_task", "task": {**task, "name": "Renamed review", "duration": "PT2H"}},
+         {"kind": "replace_task", "task": {**dropped_task, "name": "Renamed dropped"}}],
+        [{"kind": "remove_task", "task_id": "review"},
+         {"kind": "remove_task", "task_id": "dropped"}],
+    ):
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": change})))
+        status, output = invoke(capsys, "--state", str(path), "apply")
+        assert status == 0
+        monkeypatch.setattr(sys, "stdin", io.StringIO('{"kind":"previous_schedule"}'))
+        status, output = invoke(capsys, "--state", str(path), "query")
+        assert status == 0
+        assert output == {
+            "kind": "previous_schedule", "items": expected, "total": 2,
+            "truncated": False, "has_previous": True,
+        }
+        assert json.loads(path.read_text(encoding="utf-8"))["previous"] == persisted["previous"]

@@ -72,7 +72,7 @@ class FakeSolver:
         self.result: SolveResult = result
         self.problems: list[SchedulingProblem] = []
 
-    def solve(self, problem: SchedulingProblem) -> SolveResult:
+    def solve(self, problem: SchedulingProblem, previous: Schedule | None) -> SolveResult:
         self.problems.append(problem)
         return self.result
 
@@ -150,7 +150,7 @@ def test_message_ends_without_solving(
 
 
 @pytest.mark.parametrize("stability", [True, False])
-@pytest.mark.parametrize("result", [Solved(Schedule((), frozenset())), Infeasible()])
+@pytest.mark.parametrize("result", [Solved(Schedule((), ())), Infeasible()])
 def test_apply_then_solve_uses_working_problem_and_stability(
     summary_calls: list[tuple[SchedulingProblem, Schedule | None]],
     monkeypatch: pytest.MonkeyPatch,
@@ -159,7 +159,7 @@ def test_apply_then_solve_uses_working_problem_and_stability(
 ) -> None:
     """Pass successful edits and the selected previous schedule to solve."""
     problem: SchedulingProblem = make_problem()
-    previous: Schedule = Schedule((), frozenset())
+    previous: Schedule = Schedule((), ())
     task: Task = make_task()
     step: ApplyStep = ApplyStep((AddTask(task),))
     translator: FakeStepTranslator = FakeStepTranslator(
@@ -196,7 +196,7 @@ def test_rejected_batch_is_recorded_and_can_be_corrected(
     translator: FakeStepTranslator = FakeStepTranslator(
         (rejected, corrected, SolveStep(True))
     )
-    solver: FakeSolver = FakeSolver(Solved(Schedule((), frozenset())))
+    solver: FakeSolver = FakeSolver(Solved(Schedule((), ())))
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
         (), problem, None
     )
@@ -219,7 +219,7 @@ def test_query_uses_working_problem_and_records_result(
     from intent_to_schedule.domain.consistency import Violation, Violations
 
     problem: SchedulingProblem = make_problem()
-    previous: Schedule = Schedule((), frozenset())
+    previous: Schedule = Schedule((), ())
     task: Task = make_task()
     query_step: QueryStep = QueryStep(SummaryQuery())
     translator: FakeStepTranslator = FakeStepTranslator(
