@@ -32,7 +32,9 @@ class ObjectivePolicy:
                 "Objective policy coefficients must be finite and positive for every member"
             )
         if not 0 < self.stability_drop_cost_ratio < 1:
-            raise ValueError("Stability drop cost ratio must be greater than 0 and less than 1")
+            raise ValueError(
+                "Stability drop cost ratio must be greater than 0 and less than 1"
+            )
 
     def drop_cost(self, importance: Importance) -> float:
         return self.drop_costs[importance]

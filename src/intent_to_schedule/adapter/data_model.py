@@ -11,6 +11,7 @@ from pydantic import (
     PlainValidator,
     TypeAdapter,
     WithJsonSchema,
+    field_serializer,
     model_validator,
 )
 
@@ -71,7 +72,7 @@ from intent_to_schedule.domain.measure import (
     PointMeasure,
 )
 from intent_to_schedule.domain.person import PersonId
-from intent_to_schedule.domain.schedule import ScheduledTask
+from intent_to_schedule.domain.schedule import DroppedTask, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
@@ -124,6 +125,48 @@ class DataModel(BaseModel):
     """Base of the JSON data models."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ScheduledTaskData(DataModel):
+    """JSON form of a scheduled task."""
+
+    status: Literal["scheduled"]
+    task_id: TaskIdField
+    name: str
+    start: datetime
+    end: datetime
+
+    @field_serializer("start", "end", when_used="json")
+    def serialize_time(self, value: datetime) -> str:
+        """Encode a scheduled time with its offset."""
+        return value.isoformat()
+
+
+class DroppedTaskData(DataModel):
+    """JSON form of a dropped task."""
+
+    status: Literal["dropped"]
+    task_id: TaskIdField
+    name: str
+
+
+type ScheduleEntryData = Annotated[
+    ScheduledTaskData | DroppedTaskData, Field(discriminator="status")
+]
+"""JSON form of a schedule entry."""
+
+
+def to_schedule_entry_data(item: ScheduledTask | DroppedTask) -> ScheduleEntryData:
+    """Convert a schedule entry to its JSON form."""
+    if isinstance(item, ScheduledTask):
+        return ScheduledTaskData(
+            status="scheduled",
+            task_id=item.task_id,
+            name=item.name,
+            start=item.start,
+            end=item.end,
+        )
+    return DroppedTaskData(status="dropped", task_id=item.task_id, name=item.name)
 
 
 class TimeIntervalData(DataModel):
@@ -725,13 +768,7 @@ def answer_record(answer: Answer) -> dict[str, object]:
                 kind="previous_schedule",
                 has_previous=answer.has_previous,
                 items=[
-                    {
-                        "status": "scheduled",
-                        "task_id": item.task_id.value,
-                        "start": item.start.isoformat(),
-                    }
-                    if isinstance(item, ScheduledTask)
-                    else {"status": "dropped", "task_id": item.value}
+                    to_schedule_entry_data(item).model_dump(mode="json")
                     for item in answer.items
                 ],
             )

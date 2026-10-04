@@ -1,6 +1,6 @@
 """Forms and conversions for the persisted command line state."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -13,15 +13,17 @@ from intent_to_schedule.adapter.data_model import (
     NewFixedTaskData,
     PersonData,
     PersonIdField,
+    ScheduleEntryData,
+    ScheduledTaskData,
     SoftConstraintData,
     TaskData,
-    TaskIdField,
     TimeIntervalData,
     convert_constraint,
     convert_fixed_task,
     convert_task,
     to_constraint_data,
     to_fixed_task_data,
+    to_schedule_entry_data,
     to_task_data,
     to_time_interval_data,
 )
@@ -34,7 +36,7 @@ from intent_to_schedule.domain.calendar import (
 )
 from intent_to_schedule.domain.person import Person
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
+from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 
 
 class AvailabilityState(DataModel):
@@ -72,18 +74,10 @@ class ProblemState(DataModel):
     ]
 
 
-class ScheduledTaskState(DataModel):
-    """A persisted scheduled task."""
-
-    task_id: TaskIdField
-    start: datetime
-
-
 class ScheduleState(DataModel):
     """A persisted schedule."""
 
-    scheduled: tuple[ScheduledTaskState, ...]
-    dropped_task_ids: tuple[TaskIdField, ...]
+    items: tuple[ScheduleEntryData, ...]
 
 
 class UtteranceState(DataModel):
@@ -156,8 +150,16 @@ def to_schedule(form: ScheduleState | None) -> Schedule | None:
     if form is None:
         return None
     return Schedule(
-        tuple(ScheduledTask(item.task_id, item.start) for item in form.scheduled),
-        frozenset(form.dropped_task_ids),
+        tuple(
+            ScheduledTask(item.task_id, item.name, item.start, item.end)
+            for item in form.items
+            if isinstance(item, ScheduledTaskData)
+        ),
+        tuple(
+            DroppedTask(item.task_id, item.name)
+            for item in form.items
+            if not isinstance(item, ScheduledTaskData)
+        ),
     )
 
 
@@ -166,12 +168,15 @@ def to_schedule_state(schedule: Schedule | None) -> ScheduleState | None:
     if schedule is None:
         return None
     return ScheduleState(
-        scheduled=tuple(
-            ScheduledTaskState(task_id=item.task_id, start=item.start)
-            for item in schedule.scheduled
-        ),
-        dropped_task_ids=tuple(
-            sorted(schedule.dropped_task_ids, key=lambda identifier: identifier.value)
+        items=tuple(
+            to_schedule_entry_data(item)
+            for item in (
+                *sorted(
+                    schedule.scheduled,
+                    key=lambda item: (item.start, item.task_id.value),
+                ),
+                *sorted(schedule.dropped, key=lambda item: item.task_id.value),
+            )
         ),
     )
 

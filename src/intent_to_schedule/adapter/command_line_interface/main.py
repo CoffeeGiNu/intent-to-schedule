@@ -13,6 +13,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from intent_to_schedule.adapter.command_line_interface.state import (
     CalendarInput,
     ProblemState,
+    ScheduleState,
     State,
     UtteranceState,
     load_state,
@@ -58,7 +59,7 @@ from intent_to_schedule.domain.consistency import (
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
-from intent_to_schedule.domain.task import Task, TaskId
+from intent_to_schedule.domain.task import TaskId
 
 
 class JsonParser(argparse.ArgumentParser):
@@ -314,25 +315,11 @@ def query(path: Path, input_path: Path | None) -> int:
     return 0
 
 
-def schedule_output(
-    problem: SchedulingProblem, schedule: Schedule
-) -> dict[str, object]:
-    """Describe a solved schedule with task names and end times."""
-    tasks: dict[TaskId, Task] = {task.id: task for task in problem.tasks}
-    scheduled: list[dict[str, str]] = [
-        {
-            "task_id": item.task_id.value,
-            "name": tasks[item.task_id].name,
-            "start": item.start.isoformat(),
-            "end": (item.start + tasks[item.task_id].duration).isoformat(),
-        }
-        for item in schedule.scheduled
-    ]
-    dropped: list[dict[str, str]] = [
-        {"task_id": identifier.value, "name": tasks[identifier].name}
-        for identifier in sorted(schedule.dropped_task_ids, key=lambda item: item.value)
-    ]
-    return {"scheduled": scheduled, "dropped": dropped}
+def schedule_output(schedule: Schedule) -> dict[str, object]:
+    """Describe a solved schedule with its saved entries."""
+    form: ScheduleState | None = to_schedule_state(schedule)
+    assert form is not None
+    return form.model_dump(mode="json")
 
 
 def solve(path: Path, service: Scheduling, stability: bool) -> int:
@@ -349,7 +336,7 @@ def solve(path: Path, service: Scheduling, stability: bool) -> int:
             save_state(
                 path, state.model_copy(update={"previous": to_schedule_state(schedule)})
             )
-            emit(schedule_output(problem, schedule))
+            emit(schedule_output(schedule))
             return 0
 
 
@@ -398,7 +385,7 @@ def chat(
             updates["problem"] = to_problem_state(response.problem)
             updates["previous"] = to_schedule_state(schedule)
             assistant_text = "Scheduled."
-            output = schedule_output(response.problem, schedule)
+            output = schedule_output(schedule)
             status = 0
     updates["dialogue"] = (
         *dialogue,
