@@ -1,5 +1,7 @@
+from collections.abc import MutableMapping
 from dataclasses import replace
 from datetime import datetime, timedelta
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -54,6 +56,35 @@ def test_policy_uses_mappings() -> None:
     assert DEFAULT_POLICY.drop_cost(Importance.HIGH) == 100.0
     assert DEFAULT_POLICY.weight(Strength.WEAK) == 1.0
     assert DEFAULT_POLICY.stability_drop_cost_ratio == 0.5
+
+
+def test_policy_copies_input_mappings() -> None:
+    """Preserve validated coefficients when the original dictionaries change."""
+    drop_costs: dict[Importance, float] = dict(DEFAULT_POLICY.drop_costs)
+    weights: dict[Strength, float] = dict(DEFAULT_POLICY.weights)
+    policy: ObjectivePolicy = replace(
+        DEFAULT_POLICY, drop_costs=drop_costs, weights=weights
+    )
+    drop_costs[Importance.HIGH] = -1.0
+    weights[Strength.WEAK] = -1.0
+    assert policy == DEFAULT_POLICY
+    assert replace(policy) == policy
+
+
+@pytest.mark.parametrize("use_default", [False, True])
+def test_policy_mappings_are_read_only(use_default: bool) -> None:
+    """Reject direct coefficient mutations in default and replaced policies."""
+    policy: ObjectivePolicy = DEFAULT_POLICY if use_default else replace(DEFAULT_POLICY)
+    drop_costs: MutableMapping[Importance, float] = cast(
+        MutableMapping[Importance, float], policy.drop_costs
+    )
+    weights: MutableMapping[Strength, float] = cast(
+        MutableMapping[Strength, float], policy.weights
+    )
+    with pytest.raises(TypeError):
+        drop_costs[Importance.HIGH] = 100.0
+    with pytest.raises(TypeError):
+        weights[Strength.WEAK] = 1.0
 
 
 @pytest.mark.parametrize("ratio", [0.0, 1.0, -0.5, 1.5, float("inf"), float("nan")])

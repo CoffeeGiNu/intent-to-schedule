@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
+from types import MappingProxyType
 
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance
@@ -18,6 +19,8 @@ class ObjectivePolicy:
     """Share of a task's drop cost used as its stability cap."""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "drop_costs", MappingProxyType(dict(self.drop_costs)))
+        object.__setattr__(self, "weights", MappingProxyType(dict(self.weights)))
         if (
             set(self.drop_costs) != set(Importance)
             or set(self.weights) != set(Strength)
