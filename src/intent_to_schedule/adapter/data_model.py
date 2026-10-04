@@ -594,7 +594,7 @@ class ObjectivePolicyQueryData(DataModel):
     """Read the default solver's current objective coefficients."""
 
     kind: Literal["objective_policy"] = Field(
-        description="Returns drop_costs by importance, weights by strength, per_count scaling for daily count violations, and stability_drop_cost_ratio. Total cost adds dropped optional task costs, weighted soft violations in hours (counts scaled by per_count), and weighted hours moved capped at stability_drop_cost_ratio times drop cost per task. Required tasks also have capped stability costs. Hard constraints require zero violation; unscheduled tasks have no constraint or stability cost.",
+        description="Returns drop_costs by importance, weights by strength, per_count scaling for daily count violations, and stability_drop_cost_ratio. Total cost adds dropped optional task costs, weighted soft violations in hours (counts scaled by per_count), and per moved task weight * hours / (1 + weight * hours / limit), with its stability strength weight and limit = stability_drop_cost_ratio times its drop cost, growing with hours moved but staying below limit. Required tasks also have stability costs. Hard constraints require zero violation; unscheduled tasks have no constraint or stability cost.",
     )
 
 

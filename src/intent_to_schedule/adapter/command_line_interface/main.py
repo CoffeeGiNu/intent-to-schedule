@@ -104,7 +104,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "Prints {summary, items}. summary contains total_cost, costs (dropped_tasks, soft_constraints, stability), "
         "and counts (scheduled_tasks, dropped_tasks, violated_soft_constraints, moved_tasks). "
         "The objective adds importance-based optional drop costs, weighted soft violations in hours (daily counts scaled by per_count), "
-        "and capped stability costs from previous starts. Hard constraints require zero violation. "
+        "and stability costs from previous starts, weight * hours / (1 + weight * hours / limit) with the stability strength weight and limit = stability_drop_cost_ratio times the drop cost; "
+        "they grow with every hour moved but stay below limit. Hard constraints require zero violation. "
         "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
         "Use query evaluation for constraint breakdowns and query objective_policy for current weights. Exits 2 if infeasible.",
     ),
