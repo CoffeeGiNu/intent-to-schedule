@@ -8,7 +8,7 @@ from intent_to_schedule.domain.schedule import Schedule
 
 @dataclass(frozen=True)
 class Solved:
-    """Result with a schedule."""
+    """Result with a schedule and its objective summary."""
 
     schedule: Schedule
     summary: ScheduleSummary | None = None

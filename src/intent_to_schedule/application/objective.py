@@ -9,7 +9,7 @@ from intent_to_schedule.domain.condition import DailyLimitCondition
 from intent_to_schedule.domain.constraint import Constraint, SoftConstraint
 from intent_to_schedule.domain.measure import AggregateQuantity
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule
+from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.task import Task, TaskId
 from intent_to_schedule.domain.violation import CriterionViolation, measure_criterion
 
@@ -39,7 +39,9 @@ class ScheduleSummary:
     @property
     def total_cost(self) -> float:
         """Total objective cost of the schedule."""
-        return self.dropped_tasks_cost + self.soft_constraints_cost + self.stability_cost
+        return (
+            self.dropped_tasks_cost + self.soft_constraints_cost + self.stability_cost
+        )
 
 
 def evaluate_constraints(
@@ -55,7 +57,9 @@ def evaluate_constraints(
     }
     placements.update(
         {
-            task.id: grid.round_outward(TimeInterval(task.start, task.start + task.duration))
+            task.id: grid.round_outward(
+                TimeInterval(task.start, task.start + task.duration)
+            )
             for task in problem.fixed_tasks
         }
     )
@@ -81,7 +85,12 @@ def evaluate_constraints(
             )
             coefficient = policy.weight(constraint.strength) * scale
         evaluations.append(
-            ConstraintEvaluation(constraint, violation, coefficient * violation.amount if coefficient is not None else None, coefficient)
+            ConstraintEvaluation(
+                constraint,
+                violation,
+                coefficient * violation.amount if coefficient is not None else None,
+                coefficient,
+            )
         )
     return tuple(evaluations)
 
@@ -93,7 +102,9 @@ def summarize_schedule(
     previous: Schedule | None = None,
 ) -> ScheduleSummary:
     """Compute objective costs and counts from a solved schedule."""
-    evaluations: tuple[ConstraintEvaluation, ...] = evaluate_constraints(problem, schedule, policy)
+    evaluations: tuple[ConstraintEvaluation, ...] = evaluate_constraints(
+        problem, schedule, policy
+    )
     tasks: dict[TaskId, Task] = {task.id: task for task in problem.tasks}
     previous_starts: dict[TaskId, datetime] = (
         {item.task_id: item.start for item in previous.scheduled}
@@ -102,19 +113,30 @@ def summarize_schedule(
     )
     stability_cost: float = 0.0
     moved_tasks: int = 0
+    item: ScheduledTask
     for item in schedule.scheduled:
         if item.task_id not in previous_starts:
             continue
         task: Task = tasks[item.task_id]
-        moved_hours: float = abs((item.start - previous_starts[item.task_id]) / timedelta(hours=1))
+        moved_hours: float = abs(
+            (item.start - previous_starts[item.task_id]) / timedelta(hours=1)
+        )
         moved_tasks += int(moved_hours > 0)
-        stability_cost += min(policy.weight(task.stability) * moved_hours, policy.stability_drop_cost_ratio * policy.drop_cost(task.importance))
+        stability_cost += min(
+            policy.weight(task.stability) * moved_hours,
+            policy.stability_drop_cost_ratio * policy.drop_cost(task.importance),
+        )
     return ScheduleSummary(
-        sum(policy.drop_cost(tasks[item.task_id].importance) for item in schedule.dropped),
+        sum(
+            policy.drop_cost(tasks[item.task_id].importance)
+            for item in schedule.dropped
+        ),
         sum(item.cost for item in evaluations if item.cost is not None),
         stability_cost,
         len(schedule.scheduled),
         len(schedule.dropped),
-        sum(item.cost is not None and item.violation.amount > 0 for item in evaluations),
+        sum(
+            item.cost is not None and item.violation.amount > 0 for item in evaluations
+        ),
         moved_tasks,
     )

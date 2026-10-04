@@ -290,17 +290,29 @@ class EvaluationQuery:
                     item
                     for item in evaluate_constraints(problem, previous, DEFAULT_POLICY)
                     if (not self.violated_only or item.violation.amount > 0)
-                    and (self.constraint_ids is None or item.constraint.id in self.constraint_ids)
-                    and (self.task_ids is None or bool(self.task_ids & item.constraint.condition.task_ids))
+                    and (
+                        self.constraint_ids is None
+                        or item.constraint.id in self.constraint_ids
+                    )
+                    and (
+                        self.task_ids is None
+                        or bool(self.task_ids & item.constraint.condition.task_ids)
+                    )
                 ),
                 key=lambda item: (
-                    0 if item.cost is None and item.violation.amount > 0 else 1 if item.cost is not None else 2,
+                    0
+                    if item.cost is None and item.violation.amount > 0
+                    else 1
+                    if item.cost is not None
+                    else 2,
                     -(item.cost if item.cost is not None else item.violation.amount),
                     item.constraint.id.value,
                 ),
             )
         )
-        return Answered(EvaluationAnswer(evaluations[: self.limit], len(evaluations), True))
+        return Answered(
+            EvaluationAnswer(evaluations[: self.limit], len(evaluations), True)
+        )
 
 
 @dataclass(frozen=True)

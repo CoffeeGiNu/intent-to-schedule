@@ -671,8 +671,12 @@ def convert_query(data: QueryData) -> SchedulingQuery:
         case EvaluationQueryData():
             return EvaluationQuery(
                 data.filter.violated_only,
-                frozenset(data.filter.constraint_ids) if data.filter.constraint_ids is not None else None,
-                frozenset(data.filter.task_ids) if data.filter.task_ids is not None else None,
+                frozenset(data.filter.constraint_ids)
+                if data.filter.constraint_ids is not None
+                else None,
+                frozenset(data.filter.task_ids)
+                if data.filter.task_ids is not None
+                else None,
                 data.limit,
             )
         case ObjectivePolicyQueryData():
@@ -815,7 +819,9 @@ def _violation_record(amount: float, unit: ViolationUnit) -> dict[str, object]:
     return {"amount": amount, "unit": unit}
 
 
-def _violation_part_record(part: ViolationPart, item: ConstraintEvaluation) -> dict[str, object]:
+def _violation_part_record(
+    part: ViolationPart, item: ConstraintEvaluation
+) -> dict[str, object]:
     """Describe a task or date's violation and cost."""
     record: dict[str, object] = {
         "violation": _violation_record(part.amount, item.violation.unit),
@@ -823,8 +829,8 @@ def _violation_part_record(part: ViolationPart, item: ConstraintEvaluation) -> d
     }
     if part.task_id is not None:
         return {"task_id": part.task_id.value, **record}
-    assert part.date is not None
-    return {"date": part.date.isoformat(), **record}
+    assert part.calendar_date is not None
+    return {"date": part.calendar_date.isoformat(), **record}
 
 
 def _evaluation_record(item: ConstraintEvaluation) -> dict[str, object]:
@@ -841,7 +847,9 @@ def _evaluation_record(item: ConstraintEvaluation) -> dict[str, object]:
         "requirement": requirement,
         "violation": _violation_record(item.violation.amount, item.violation.unit),
         "cost": item.cost,
-        "breakdown": [_violation_part_record(part, item) for part in item.violation.breakdown],
+        "breakdown": [
+            _violation_part_record(part, item) for part in item.violation.breakdown
+        ],
     }
 
 
@@ -850,7 +858,9 @@ def answer_record(answer: Answer) -> dict[str, object]:
     if isinstance(answer, ObjectivePolicyAnswer):
         return {
             "kind": "objective_policy",
-            "drop_costs": {key.value: value for key, value in answer.policy.drop_costs.items()},
+            "drop_costs": {
+                key.value: value for key, value in answer.policy.drop_costs.items()
+            },
             "weights": {key.value: value for key, value in answer.policy.weights.items()},
             "per_count": answer.policy.per_count,
             "stability_drop_cost_ratio": answer.policy.stability_drop_cost_ratio,

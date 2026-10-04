@@ -334,7 +334,10 @@ def schedule_output(result: Solved) -> dict[str, object]:
     form: ScheduleState | None = to_schedule_state(result.schedule)
     assert form is not None
     assert result.summary is not None
-    return {"summary": schedule_summary_record(result.summary), **form.model_dump(mode="json")}
+    return {
+        "summary": schedule_summary_record(result.summary),
+        **form.model_dump(mode="json"),
+    }
 
 
 def solve(path: Path, service: Scheduling, stability: bool) -> int:

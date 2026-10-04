@@ -7,13 +7,20 @@ from typing import Literal
 
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import Criterion
-from intent_to_schedule.domain.evaluation import Distance, Excess, Intrusion, Shortfall
+from intent_to_schedule.domain.evaluation import (
+    Distance,
+    Excess,
+    Intrusion,
+    Quantity,
+    Shortfall,
+)
 from intent_to_schedule.domain.measure import (
     AggregateMeasure,
     AggregateQuantity,
     Boundary,
     DependencyMeasure,
     IntervalMeasure,
+    Measure,
     PointMeasure,
 )
 from intent_to_schedule.domain.task import TaskId
@@ -28,7 +35,7 @@ class ViolationPart:
 
     amount: float
     task_id: TaskId | None = None
-    date: date | None = None
+    calendar_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -40,7 +47,9 @@ class CriterionViolation:
     breakdown: tuple[ViolationPart, ...]
 
 
-def _difference(value: datetime | timedelta | int, target: datetime | timedelta | int) -> float:
+def _difference(
+    value: datetime | timedelta | int, target: datetime | timedelta | int
+) -> float:
     """Measure a difference in hours or counts."""
     match value, target:
         case datetime(), datetime():
@@ -55,6 +64,9 @@ def _difference(value: datetime | timedelta | int, target: datetime | timedelta 
 
 def _evaluate(value: datetime | timedelta | int, criterion: Criterion) -> float:
     """Measure a scalar criterion's violation."""
+    target: Quantity
+    upper: Quantity
+    lower: Quantity
     match criterion.evaluation:
         case Distance(target=target):
             return abs(_difference(value, target))
@@ -72,7 +84,7 @@ def measure_criterion(
     grid: TimeGrid,
 ) -> CriterionViolation:
     """Measure a criterion against scheduled task intervals."""
-    measure = criterion.measure
+    measure: Measure = criterion.measure
     parts: list[ViolationPart] = []
     task_id: TaskId
     interval: TimeInterval | None
@@ -81,7 +93,12 @@ def measure_criterion(
         case PointMeasure():
             interval = placements.get(measure.task_id)
             amount = (
-                _evaluate(interval.start if measure.boundary is Boundary.START else interval.end, criterion)
+                _evaluate(
+                    interval.start
+                    if measure.boundary is Boundary.START
+                    else interval.end,
+                    criterion,
+                )
                 if interval is not None
                 else 0.0
             )
@@ -102,7 +119,11 @@ def measure_criterion(
                 interval = placements.get(task_id)
                 amount = (
                     sum(
-                        max(min(interval.end, slot.end) - max(interval.start, slot.start), timedelta(0))
+                        max(
+                            min(interval.end, slot.end)
+                            - max(interval.start, slot.start),
+                            timedelta(0),
+                        )
                         / timedelta(hours=1)
                         for slot in region_slots
                     )
@@ -120,7 +141,9 @@ def measure_criterion(
             )
             return CriterionViolation(amount, "hours", ())
         case AggregateMeasure():
-            dates: set[date] = {grid.time_at(slot).date() for slot in range(grid.slot_count)}
+            dates: set[date] = {
+                grid.time_at(slot).date() for slot in range(grid.slot_count)
+            }
             totals: dict[date, int | timedelta] = {
                 day: 0 if measure.quantity is AggregateQuantity.COUNT else timedelta(0)
                 for day in dates
@@ -137,10 +160,14 @@ def measure_criterion(
                     totals[day] = current + 1
                 else:
                     totals[day] = current + interval.end - interval.start
-            parts = [ViolationPart(_evaluate(totals[day], criterion), date=day) for day in sorted(dates)]
+            parts = [
+                ViolationPart(_evaluate(totals[day], criterion), calendar_date=day)
+                for day in sorted(dates)
+            ]
     unit: ViolationUnit = (
         "count"
-        if isinstance(measure, AggregateMeasure) and measure.quantity is AggregateQuantity.COUNT
+        if isinstance(measure, AggregateMeasure)
+        and measure.quantity is AggregateQuantity.COUNT
         else "hours"
     )
     return CriterionViolation(sum(part.amount for part in parts), unit, tuple(parts))
