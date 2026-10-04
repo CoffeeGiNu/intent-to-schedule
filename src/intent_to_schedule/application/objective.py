@@ -57,7 +57,7 @@ def evaluate_constraints(
     }
     placements.update(
         {
-            task.id: grid.round_outward(task.interval)
+            task.id: task.interval
             for task in problem.fixed_tasks
         }
     )

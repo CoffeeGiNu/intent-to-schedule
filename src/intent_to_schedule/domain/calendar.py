@@ -38,6 +38,9 @@ class TimeInterval:
         )
 
 
+# TODO: decide how to handle daylight saving time. Datetimes sharing a zone subtract by
+# wall clock, so the solver and the plain evaluation can disagree; consider detecting
+# such zones and asking the user back.
 @dataclass(frozen=True)
 class TimeGrid:
     """Planning horizon divided into slots."""
@@ -98,28 +101,17 @@ class TimeGrid:
 
     @property
     def dates(self) -> tuple[date, ...]:
-        """Sorted calendar dates on which slots start."""
+        """Sorted calendar dates intersecting the half-open horizon."""
+        first: date = self.date_of(self.horizon.start)
+        last: date = self.date_of(self.horizon.end - datetime.resolution)
+        index: int
         return tuple(
-            sorted({self.time_at(slot).date() for slot in range(self.slot_count)})
+            first + timedelta(days=index) for index in range((last - first).days + 1)
         )
-
-    def index_of(self, at: datetime) -> int:
-        """Slot index of a time on a slot boundary."""
-        if not self.is_aligned(at):
-            raise ValueError(f"Time {at.isoformat()} is not aligned to the time grid.")
-        return (at - self.horizon.start) // self.slot
 
     def time_at(self, index: int) -> datetime:
         """Start time of a slot index."""
         return self.horizon.start + index * self.slot
-
-    def round_outward(self, interval: TimeInterval) -> TimeInterval:
-        """Smallest slot-aligned interval that contains the interval."""
-        first: int = (interval.start - self.horizon.start) // self.slot
-        if interval.start == interval.end:
-            return TimeInterval(self.time_at(first), self.time_at(first))
-        last: int = -((self.horizon.start - interval.end) // self.slot)
-        return TimeInterval(self.time_at(first), self.time_at(last))
 
     def is_aligned(self, at: datetime) -> bool:
         """Whether a time falls on a slot boundary."""

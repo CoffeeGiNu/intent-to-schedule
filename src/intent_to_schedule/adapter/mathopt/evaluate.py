@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.measure import (
+    ConstantPointExpression,
     DailyVectorExpression,
     DependencyExpression,
     IntervalExpression,
@@ -21,6 +22,20 @@ from intent_to_schedule.domain.evaluation import (
 from intent_to_schedule.domain.measure import AggregateQuantity
 
 
+def _datetime_penalty(at: datetime, evaluation: Evaluation) -> float:
+    """Measure a datetime point's penalty in hours."""
+    target: datetime
+    match evaluation:
+        case Distance(target=datetime() as target):
+            return abs((at - target) / timedelta(hours=1))
+        case Excess(upper=datetime() as target):
+            return max((at - target) / timedelta(hours=1), 0.0)
+        case Shortfall(lower=datetime() as target):
+            return max((target - at) / timedelta(hours=1), 0.0)
+        case _:
+            raise ValueError("Unsupported evaluation")
+
+
 def compile_evaluation(
     expression: MeasureExpression,
     evaluation: Evaluation,
@@ -29,44 +44,38 @@ def compile_evaluation(
 ) -> mathopt.LinearBase:
     """Build an evaluation expression from a measure expression and Evaluation."""
     hours_per_slot: float = grid.slot / timedelta(hours=1)
+    at: datetime
     placements: Mapping[int, mathopt.Variable]
-    target: datetime | timedelta
     offset: timedelta
-    occupancy: Mapping[int, mathopt.LinearBase]
+    target: timedelta
+    start: int
+    variable: mathopt.Variable
+    occupancy: Mapping[int, mathopt.LinearBase | float]
     region: tuple[TimeInterval, ...]
     dependency: DependencyExpression
     lower: timedelta
-    values: Mapping[date, mathopt.LinearBase]
-    value: mathopt.LinearBase
+    values: Mapping[date, mathopt.LinearBase | float]
+    value: mathopt.LinearBase | float
     upper: int | timedelta
     bound: float
-    inactive: mathopt.LinearBase
+    inactive: mathopt.LinearBase | float
     violation: mathopt.Variable
     violations: list[mathopt.Variable]
 
     match expression, evaluation:
-        case PointExpression(placements=placements, offset=offset), Distance(
-            target=datetime() as target
+        case ConstantPointExpression(value=at), (
+            Distance(target=datetime())
+            | Excess(upper=datetime())
+            | Shortfall(lower=datetime())
+        ):
+            return mathopt.LinearSum((_datetime_penalty(at, evaluation),))
+        case PointExpression(placements=placements, offset=offset), (
+            Distance(target=datetime())
+            | Excess(upper=datetime())
+            | Shortfall(lower=datetime())
         ):
             return mathopt.LinearSum(
-                abs((grid.time_at(start) + offset - target) / timedelta(hours=1))
-                * variable
-                for start, variable in placements.items()
-            )
-        case PointExpression(placements=placements, offset=offset), Excess(
-            upper=datetime() as target
-        ):
-            return mathopt.LinearSum(
-                max((grid.time_at(start) + offset - target) / timedelta(hours=1), 0.0)
-                * variable
-                for start, variable in placements.items()
-            )
-        case PointExpression(placements=placements, offset=offset), Shortfall(
-            lower=datetime() as target
-        ):
-            return mathopt.LinearSum(
-                max((target - grid.time_at(start) - offset) / timedelta(hours=1), 0.0)
-                * variable
+                _datetime_penalty(grid.time_at(start) + offset, evaluation) * variable
                 for start, variable in placements.items()
             )
         case IntervalExpression(occupancy=occupancy), Intrusion(region=region):

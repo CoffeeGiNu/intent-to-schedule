@@ -11,7 +11,7 @@ from intent_to_schedule.adapter.mathopt.measure import (
 )
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.domain.availability import available_start_slots, free_slots
-from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
+from intent_to_schedule.domain.calendar import TimeGrid
 from intent_to_schedule.domain.condition import Criterion, DailyLimitCondition
 from intent_to_schedule.domain.constraint import HardConstraint, SoftConstraint
 from intent_to_schedule.domain.measure import AggregateQuantity
@@ -19,12 +19,12 @@ from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 from intent_to_schedule.domain.strength import Strength
-from intent_to_schedule.domain.task import FixedTask, Task, TaskId
+from intent_to_schedule.domain.task import Task, TaskId
 
 
 @dataclass(frozen=True)
 class CompiledProblem:
-    """MathOpt model with the start and presence variables of each Task."""
+    """MathOpt model with variables for movable tasks."""
 
     model: mathopt.Model
     starts: Mapping[TaskId, mathopt.Variable]
@@ -120,21 +120,6 @@ def compile_problem(
                     for start, variable in choices.items()
                 )
             )
-
-    fixed_task: FixedTask
-    for fixed_task in problem.fixed_tasks:
-        rounded: TimeInterval = grid.round_outward(fixed_task.interval)
-        start = grid.index_of(rounded.start)
-        variable = model.add_variable(
-            lb=1.0, ub=1.0, is_integer=True, name=f"place_{fixed_task.id.value}_{start}"
-        )
-        placements[fixed_task.id] = {start: variable}
-        presences[fixed_task.id] = model.add_variable(
-            lb=1.0, ub=1.0, is_integer=True, name=f"presence_{fixed_task.id.value}"
-        )
-        starts[fixed_task.id] = model.add_variable(
-            lb=float(start), ub=float(start), name=f"start_{fixed_task.id.value}"
-        )
 
     occupied: dict[int, list[mathopt.Variable]]
     competing: list[mathopt.Variable]

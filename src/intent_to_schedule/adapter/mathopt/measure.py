@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from ortools.math_opt.python import mathopt
 
@@ -15,31 +15,38 @@ from intent_to_schedule.domain.measure import (
     PointMeasure,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import FixedTask, TaskId
+from intent_to_schedule.domain.task import TaskId
 
 
 @dataclass(frozen=True)
 class PointExpression:
-    """Placement choices and the offset of a Task boundary."""
+    """Placement choices and the offset of a task boundary."""
 
     placements: Mapping[int, mathopt.Variable]
     offset: timedelta = timedelta(0)
 
 
 @dataclass(frozen=True)
-class IntervalExpression:
-    """Summed Task occupancy for each slot."""
+class ConstantPointExpression:
+    """Real constant time of a fixed task boundary."""
 
-    occupancy: Mapping[int, mathopt.LinearBase]
+    value: datetime
+
+
+@dataclass(frozen=True)
+class IntervalExpression:
+    """Variable and constant task occupancy for each slot."""
+
+    occupancy: Mapping[int, mathopt.LinearBase | float]
 
 
 @dataclass(frozen=True)
 class DependencyExpression:
     """Task gap and the presences that activate it."""
 
-    gap: mathopt.LinearBase
-    from_presence: mathopt.Variable
-    to_presence: mathopt.Variable
+    gap: mathopt.LinearBase | float
+    from_presence: mathopt.Variable | float
+    to_presence: mathopt.Variable | float
     bound: float
 
 
@@ -47,12 +54,16 @@ class DependencyExpression:
 class DailyVectorExpression:
     """Measured value for each calendar date."""
 
-    values: Mapping[date, mathopt.LinearBase]
+    values: Mapping[date, mathopt.LinearBase | float]
     quantity: AggregateQuantity
 
 
 type MeasureExpression = (
-    PointExpression | IntervalExpression | DependencyExpression | DailyVectorExpression
+    PointExpression
+    | ConstantPointExpression
+    | IntervalExpression
+    | DependencyExpression
+    | DailyVectorExpression
 )
 """Measure built as MathOpt expressions."""
 
@@ -71,14 +82,17 @@ def compile_measure(
     durations: dict[TaskId, int] = {
         task.id: grid.slots_of(task.duration) for task in problem.tasks
     }
-    task: FixedTask
-    rounded: TimeInterval
-    for task in problem.fixed_tasks:
-        rounded = grid.round_outward(task.interval)
-        durations[task.id] = grid.index_of(rounded.end) - grid.index_of(rounded.start)
+    fixed_intervals: dict[TaskId, TimeInterval] = {
+        task.id: task.interval for task in problem.fixed_tasks
+    }
 
     match measure:
         case PointMeasure():
+            fixed: TimeInterval | None = fixed_intervals.get(measure.task_id)
+            if fixed is not None:
+                return ConstantPointExpression(
+                    fixed.end if measure.boundary is Boundary.END else fixed.start
+                )
             offset: timedelta = (
                 durations[measure.task_id] * grid.slot
                 if measure.boundary is Boundary.END
@@ -93,43 +107,71 @@ def compile_measure(
             variable: mathopt.Variable
             slot_index: int
             for task_id in sorted(measure.task_ids, key=lambda item: item.value):
+                if task_id in fixed_intervals:
+                    continue
                 duration = durations[task_id]
                 for start, variable in placements[task_id].items():
                     for slot_index in range(start, start + duration):
                         occupied.setdefault(slot_index, []).append(variable)
-            occupancy: dict[int, mathopt.LinearBase] = {
+            occupancy: dict[int, mathopt.LinearBase | float] = {
                 slot_index: mathopt.LinearSum(occupied.get(slot_index, ()))
+                + sum(
+                    fixed_intervals[task_id].overlap(
+                        TimeInterval(
+                            grid.time_at(slot_index), grid.time_at(slot_index + 1)
+                        )
+                    )
+                    / grid.slot
+                    for task_id in measure.task_ids
+                    if task_id in fixed_intervals
+                )
                 for slot_index in range(grid.slot_count)
             }
             return IntervalExpression(occupancy)
         case DependencyMeasure():
-            from_duration: int = durations[measure.from_task_id]
-            gap: mathopt.LinearBase = (
-                starts[measure.to_task_id]
-                - starts[measure.from_task_id]
-                - from_duration * presences[measure.from_task_id]
-            )
-            from_start: mathopt.Variable = starts[measure.from_task_id]
-            to_start: mathopt.Variable = starts[measure.to_task_id]
-            from_presence: mathopt.Variable = presences[measure.from_task_id]
+            from_fixed: TimeInterval | None = fixed_intervals.get(measure.from_task_id)
+            to_fixed: TimeInterval | None = fixed_intervals.get(measure.to_task_id)
+            from_end: mathopt.LinearBase | float
+            from_presence: mathopt.Variable | float
+            from_lower: float
+            from_upper: float
+            if from_fixed is not None:
+                from_end = (from_fixed.end - grid.horizon.start) / grid.slot
+                from_presence = 1.0
+                from_lower = from_upper = from_end
+            else:
+                from_start: mathopt.Variable = starts[measure.from_task_id]
+                from_duration: int = durations[measure.from_task_id]
+                from_presence = presences[measure.from_task_id]
+                from_end = from_start + from_duration * from_presence
+                from_lower = (
+                    from_start.lower_bound + from_duration * from_presence.lower_bound
+                )
+                from_upper = (
+                    from_start.upper_bound + from_duration * from_presence.upper_bound
+                )
+            to_start: mathopt.Variable | float
+            to_presence: mathopt.Variable | float
+            to_lower: float
+            to_upper: float
+            if to_fixed is not None:
+                to_start = (to_fixed.start - grid.horizon.start) / grid.slot
+                to_presence = 1.0
+                to_lower = to_upper = to_start
+            else:
+                to_start = starts[measure.to_task_id]
+                to_presence = presences[measure.to_task_id]
+                to_lower = to_start.lower_bound
+                to_upper = to_start.upper_bound
+            gap: mathopt.LinearBase | float = to_start - from_end
             bound: float = max(
-                abs(
-                    to_start.lower_bound
-                    - from_start.upper_bound
-                    - from_duration * from_presence.upper_bound
-                ),
-                abs(
-                    to_start.upper_bound
-                    - from_start.lower_bound
-                    - from_duration * from_presence.lower_bound
-                ),
+                abs(to_lower - from_upper),
+                abs(to_upper - from_lower),
             )
-            return DependencyExpression(
-                gap, from_presence, presences[measure.to_task_id], bound
-            )
+            return DependencyExpression(gap, from_presence, to_presence, bound)
         case AggregateMeasure():
             dates: tuple[date, ...] = grid.dates
-            values: dict[date, mathopt.LinearBase] = {
+            values: dict[date, mathopt.LinearBase | float] = {
                 day: mathopt.LinearSum(
                     (
                         1
@@ -138,8 +180,17 @@ def compile_measure(
                     )
                     * variable
                     for task_id in measure.task_ids
+                    if task_id not in fixed_intervals
                     for start, variable in placements[task_id].items()
                     if grid.date_of(grid.time_at(start)) == day
+                )
+                + sum(
+                    1.0
+                    if measure.quantity is AggregateQuantity.COUNT
+                    else fixed_intervals[task_id].duration / grid.slot
+                    for task_id in measure.task_ids
+                    if task_id in fixed_intervals
+                    and grid.date_of(fixed_intervals[task_id].start) == day
                 )
                 for day in dates
             }

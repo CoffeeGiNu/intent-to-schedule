@@ -332,7 +332,7 @@ class TimeBoundConditionData(DataModel):
         description="Existing movable or fixed task identifiers sharing this bound. Unscheduled tasks have no violation; soft violations sum across scheduled tasks."
     )
     boundary: Literal["start", "end"] = Field(
-        description="start is when the task begins; end is when it finishes. Fixed tasks use their occupied interval rounded outward to slots."
+        description="start is when the task begins; end is when it finishes. Fixed tasks use their real interval without rounding."
     )
     relation: Literal["at_or_before", "at_or_after", "at"] = Field(
         description="at_or_before is an inclusive latest time; at_or_after is an inclusive earliest time; at is exact equality. Soft violations are hours late, early, or away from the target, respectively."
@@ -349,10 +349,10 @@ class TaskGapConditionData(DataModel):
         description="task_gap applies only when both tasks are scheduled; otherwise it has no violation."
     )
     from_task_id: TaskIdField = Field(
-        description="Existing task that comes first; its end starts the gap. Fixed tasks use their occupied interval rounded outward to slots."
+        description="Existing task that comes first; its end starts the gap. Fixed tasks use their real interval without rounding."
     )
     to_task_id: TaskIdField = Field(
-        description="Existing task that comes second; its start ends the gap. Fixed tasks use their occupied interval rounded outward to slots."
+        description="Existing task that comes second; its start ends the gap. Fixed tasks use their real interval without rounding."
     )
     relation: Literal["at_least", "exactly"] = Field(
         description="at_least sets an inclusive minimum gap; exactly sets an equal gap. Soft violations are hours short of the minimum or hours away from the exact gap, respectively."
@@ -367,14 +367,14 @@ class DailyLimitConditionData(DataModel):
     """Inclusive daily maximum over the listed scheduled tasks."""
 
     kind: Literal["daily_limit"] = Field(
-        description="daily_limit caps each start date in the calendar horizon's starting offset. Soft violations sum daily excess counts or hours."
+        description="daily_limit caps every calendar date intersecting the half-open horizon in its starting offset, even dates without slot starts. An end exactly at midnight excludes that following date. Tasks starting on other dates contribute zero. Soft violations sum daily excess counts or hours."
     )
     task_ids: tuple[TaskIdField, ...] = Field(
         min_length=1,
         description="Existing movable or fixed tasks to count; unscheduled tasks contribute zero. Only these tasks are included; list a person's meeting tasks to cap that person's new meetings."
     )
     quantity: Literal["count", "total_duration"] = Field(
-        description="count counts tasks; total_duration sums their whole durations on their start date, even across midnight. Fixed tasks use their occupied intervals rounded outward to slots, including for the start date."
+        description="count counts tasks; total_duration sums their whole durations on their start date, even across midnight. Fixed tasks use their real durations and start dates without rounding. A fixed task counts when its start date is covered, even if its start time is outside the horizon; durations are not clipped."
     )
     maximum: StrictInt | timedelta = Field(
         description="Inclusive non-negative maximum: a JSON integer for count, or a duration string such as PT4H for total_duration. Zero is allowed; duration maxima need not align to slots."
@@ -578,7 +578,7 @@ class EvaluationQueryData(DataModel):
     """Evaluate current constraints against the last saved solution."""
 
     kind: Literal["evaluation"] = Field(
-        description="Returns has_previous, items, total, and truncated. With no saved solution, has_previous is false and items are empty. Each item has constraint_id, label, requirement, violation (amount and unit: hours or count), cost (null for hard), and breakdown (by task for time_window and time_bound, by date for daily_limit, empty for task_gap). Hard violations come first, then soft costs highest first; satisfied hard constraints come last. Fixed tasks use current intervals rounded outward to slots; missing movable tasks are unscheduled. Saved movable intervals are used even after task edits.",
+        description="Returns has_previous, items, total, and truncated. With no saved solution, has_previous is false and items are empty. Each item has constraint_id, label, requirement, violation (amount and unit: hours or count), cost (null for hard), and breakdown (by task for time_window and time_bound, by date for daily_limit, empty for task_gap). Daily breakdowns include every calendar date intersecting the half-open horizon, even dates without slot starts and dates with zero violation. Hard violations come first, then soft costs highest first; satisfied hard constraints come last. Fixed tasks use current real intervals without rounding; missing movable tasks are unscheduled. Saved movable intervals are used even after task edits.",
     )
     filter: EvaluationFilterData = Field(
         default_factory=EvaluationFilterData,
