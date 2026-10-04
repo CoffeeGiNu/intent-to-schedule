@@ -166,6 +166,14 @@ class AlignedToSlots:
                     Violation(f"Task {task.id.value} duration must be positive.")
                 )
             check_duration(task.duration, f"Task {task.id.value} duration")
+        fixed_task: FixedTask
+        for fixed_task in problem.fixed_tasks:
+            if fixed_task.duration < timedelta(0):
+                violations.append(
+                    Violation(
+                        f"Fixed task {fixed_task.id.value} duration must not be negative."
+                    )
+                )
         for availability in problem.calendar.availabilities:
             for interval in availability.intervals:
                 check_time(

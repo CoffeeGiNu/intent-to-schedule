@@ -12,8 +12,11 @@ from pydantic import ValidationError
 
 from intent_to_schedule.adapter.command_line_interface.main import main
 from intent_to_schedule.adapter.command_line_interface.state import (
+    State,
     load_state,
+    save_state,
     to_problem,
+    to_problem_state,
 )
 from intent_to_schedule.adapter.data_model import (
     AddTaskData,
@@ -61,6 +64,8 @@ from intent_to_schedule.domain.consistency import (
     NonemptyTimeWindows,
     ReferencesExist,
     UniqueIds,
+    Violation,
+    Violations,
 )
 from intent_to_schedule.domain.constraint import ConstraintId, HardConstraint
 from intent_to_schedule.domain.measure import Boundary
@@ -446,3 +451,72 @@ def test_apply_fixed_task_persists_and_reports_generated_identifier(
     assert fixed.start == appointment().start
     assert fixed.duration == appointment().duration
     assert problem.tasks == ()
+
+
+@pytest.mark.parametrize("kind", ["add_task", "replace_task"])
+def test_fixed_task_commands_reject_negative_duration(
+    problem: SchedulingProblem, scheduling: Scheduling, kind: str
+) -> None:
+    """Reject negative fixed durations through consistency validation."""
+    fixed: FixedTask = replace(appointment(), duration=timedelta(minutes=-1))
+    command: SchedulingCommand = AddTask(fixed)
+    if kind == "replace_task":
+        fixed = replace(fixed, id=problem.tasks[0].id)
+        command = ReplaceTask(fixed)
+    assert scheduling.execute(problem, (command,)) == Rejected(
+        Violations(
+            (Violation(f"Fixed task {fixed.id.value} duration must not be negative."),)
+        )
+    )
+
+
+def test_zero_duration_fixed_task_occupies_nothing(
+    problem: SchedulingProblem, scheduling: Scheduling
+) -> None:
+    """Accept zero-duration fixed tasks without occupying slots."""
+    fixed: FixedTask = replace(appointment(), duration=timedelta(0))
+    result: Executed | Rejected = scheduling.execute(problem, (AddTask(fixed),))
+    assert isinstance(result, Executed)
+    assert free_slots(result.problem, PARTICIPANT) == free_slots(problem, PARTICIPANT)
+
+
+@pytest.mark.parametrize("command", ["init", "apply"])
+@pytest.mark.parametrize("duration", ["-PT1M", "PT0S"])
+def test_cli_fixed_duration_uses_consistency_channel(
+    problem: SchedulingProblem,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    duration: str,
+) -> None:
+    """Reject negative durations and accept zero through both commands."""
+    state_path: Path = tmp_path / "state.json"
+    input_path: Path = tmp_path / "input.json"
+    form: State = State(problem=to_problem_state(problem), previous=None, dialogue=())
+    fixed: dict[str, Any] = {
+        **task_input(True), "id": "fixed", "duration": duration
+    }
+    data: dict[str, Any]
+    arguments: list[str]
+    if command == "init":
+        data = {
+            **form.problem.calendar.model_dump(mode="json"),
+            "people": [item.model_dump(mode="json") for item in form.problem.people],
+            "fixed_tasks": [fixed],
+        }
+        arguments = ["init", "--calendar", str(input_path)]
+    else:
+        save_state(state_path, form)
+        data = {"commands": [{"kind": "add_task", "task": fixed}]}
+        arguments = ["apply", "--file", str(input_path)]
+    input_path.write_text(json.dumps(data), encoding="utf-8")
+    assert main(["--state", str(state_path), *arguments]) == (
+        1 if duration == "-PT1M" else 0
+    )
+    output: dict[str, Any] = json.loads(capsys.readouterr().out)
+    if duration == "-PT1M":
+        assert output == {"rejected": ["Fixed task fixed duration must not be negative."]}
+        if command == "init":
+            assert not state_path.exists()
+        else:
+            assert load_state(state_path) == form
