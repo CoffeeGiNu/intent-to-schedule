@@ -49,6 +49,7 @@ from intent_to_schedule.application.query import (
     TasksQuery,
     TaskType,
 )
+from intent_to_schedule.application.solve import Conflicts
 from intent_to_schedule.domain.availability import tasks_without_satisfying_start
 from intent_to_schedule.domain.calendar import TimeInterval
 from intent_to_schedule.domain.condition import (
@@ -654,7 +655,7 @@ class ObjectivePolicyQueryData(DataModel):
     """Read the default solver's current objective coefficients."""
 
     kind: Literal["objective_policy"] = Field(
-        description="Returns drop_costs by importance, weights by strength, per_count scaling for daily count violations, and stability_drop_cost_ratio. Total cost adds dropped optional task costs, weighted soft violations in hours (counts scaled by per_count), and per moved task weight * hours / (1 + weight * hours / limit), with its stability strength weight and limit = stability_drop_cost_ratio times its drop cost, growing with hours moved but staying below limit. Required tasks also have stability costs. Hard constraints require zero violation; unscheduled tasks have no constraint or stability cost.",
+        description="Returns drop_costs by importance, weights by strength, per_count scaling for daily count violations, stability_drop_cost_ratio, and the relaxed solve costs hard_violation_weight (per hour or count of hard violation) and required_drop_cost (per dropped required task), which exceed every soft cost and apply only to explain an infeasible solve. Total cost adds dropped optional task costs, weighted soft violations in hours (counts scaled by per_count), and per moved task weight * hours / (1 + weight * hours / limit), with its stability strength weight and limit = stability_drop_cost_ratio times its drop cost, growing with hours moved but staying below limit. Required tasks also have stability costs. Hard constraints require zero violation; unscheduled tasks have no constraint or stability cost.",
     )
 
 
@@ -985,6 +986,29 @@ def _evaluation_record(item: ConstraintEvaluation) -> dict[str, object]:
     }
 
 
+def conflicts_record(conflicts: Conflicts) -> dict[str, object]:
+    """Convert the conflicts of an infeasible solve to their JSON record."""
+    return {
+        "constraints": [
+            {
+                **_evaluation_record(item.evaluation),
+                "related_constraint_ids": [
+                    constraint_id.value for constraint_id in item.related_constraint_ids
+                ],
+            }
+            for item in conflicts.constraints
+        ],
+        "dropped_required_tasks": [
+            {
+                "task_id": item.task_id.value,
+                "name": item.name,
+                "reason": item.reason.value,
+            }
+            for item in conflicts.dropped_required_tasks
+        ],
+    }
+
+
 def answer_record(answer: Answer) -> dict[str, object]:
     """Convert a query answer to its JSON record."""
     if isinstance(answer, ObjectivePolicyAnswer):
@@ -996,6 +1020,8 @@ def answer_record(answer: Answer) -> dict[str, object]:
             "weights": {key.value: value for key, value in answer.policy.weights.items()},
             "per_count": answer.policy.per_count,
             "stability_drop_cost_ratio": answer.policy.stability_drop_cost_ratio,
+            "hard_violation_weight": answer.policy.hard_violation_weight,
+            "required_drop_cost": answer.policy.required_drop_cost,
         }
     if isinstance(answer, Summary):
         return {

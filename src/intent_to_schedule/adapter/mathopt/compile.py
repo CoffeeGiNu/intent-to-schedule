@@ -36,8 +36,9 @@ def compile_problem(
     problem: SchedulingProblem,
     policy: ObjectivePolicy,
     previous: Schedule | None = None,
+    relaxed: bool = False,
 ) -> CompiledProblem:
-    """Build a MathOpt model from a SchedulingProblem."""
+    """Build a MathOpt model, penalizing hard violations and required drops if relaxed."""
     grid: TimeGrid = problem.calendar.grid
     slot_count: int = grid.slot_count
     model: mathopt.Model = mathopt.Model()
@@ -100,7 +101,9 @@ def compile_problem(
                 start * variable for start, variable in choices.items()
             )
         )
-        if task.required:
+        if task.required and relaxed:
+            objective_terms.append(policy.required_drop_cost * (1 - presence))
+        elif task.required:
             model.add_linear_constraint(presence == 1)
         objective_terms.append(policy.drop_cost(task.importance) * (1 - presence))
         if task.id in previous_starts:
@@ -134,6 +137,8 @@ def compile_problem(
             )
         violation: mathopt.LinearBase = mathopt.LinearSum(violations)
         match constraint:
+            case HardConstraint() if relaxed:
+                objective_terms.append(policy.hard_violation_weight * violation)
             case HardConstraint():
                 model.add_linear_constraint(violation == 0)
             case SoftConstraint(strength=strength):

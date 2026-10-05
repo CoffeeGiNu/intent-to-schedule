@@ -30,6 +30,7 @@ from intent_to_schedule.adapter.data_model import (
     QueryData,
     answer_record,
     command_record,
+    conflicts_record,
     convert_commands_input,
     convert_query,
     schedule_summary_record,
@@ -98,7 +99,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "evaluation measures current constraints against the last saved solution, with violation amounts, units, costs, and task or date breakdowns. "
         "Filters are violated_only (default false), constraint_ids, and task_ids, combined with and. "
         "Hard violations come first, then highest soft costs. Without a saved solution, has_previous is false and items are empty. "
-        "objective_policy returns the current drop_costs, weights, per_count, and stability_drop_cost_ratio. "
+        "objective_policy returns the current drop_costs, weights, per_count, stability_drop_cost_ratio, hard_violation_weight, and required_drop_cost. "
         "Listing limit defaults to 20, with a maximum of 100; total counts matches before limiting and truncated indicates omitted items. Exits 1 on rejection.",
     ),
     "solve": (
@@ -109,7 +110,12 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "and stability costs from previous starts, weight * hours / (1 + weight * hours / limit) with the stability strength weight and limit = stability_drop_cost_ratio times the drop cost; "
         "they grow with every hour moved but stay below limit. Hard constraints require zero violation. "
         "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
-        "Use query evaluation for constraint breakdowns and query objective_policy for current weights. Exits 2 if infeasible.",
+        "Use query evaluation for constraint breakdowns and query objective_policy for current weights. "
+        "If infeasible, exits 2 and prints {infeasible: true, conflicts} from a relaxed solve that permits hard violations and required drops at costs above every soft cost. "
+        "conflicts.constraints lists broken hard constraints in the evaluation item shape plus related_constraint_ids, the other hard constraints referencing the same tasks; "
+        "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
+        "This is one least-breaking way and may not name every party to a conflict, so check related_constraint_ids. "
+        "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. The previous schedule is kept.",
     ),
     "chat": (
         "Run a demonstration conversation turn with OpenAI",
@@ -344,6 +350,11 @@ def schedule_output(result: Solved) -> dict[str, object]:
     }
 
 
+def infeasible_output(result: Infeasible) -> dict[str, object]:
+    """Describe an infeasible solve with its conflicts."""
+    return {"infeasible": True, "conflicts": conflicts_record(result.conflicts)}
+
+
 def solve(path: Path, service: Scheduling, stability: bool) -> int:
     """Solve the current problem and persist the result."""
     state: State = load_state(path)
@@ -352,7 +363,7 @@ def solve(path: Path, service: Scheduling, stability: bool) -> int:
     result: Solved | Infeasible = service.solve(problem, previous)
     match result:
         case Infeasible():
-            emit({"infeasible": True})
+            emit(infeasible_output(result))
             return 2
         case Solved(schedule=schedule):
             save_state(
@@ -401,7 +412,7 @@ def chat(
         case Infeasible():
             updates["problem"] = to_problem_state(response.problem)
             assistant_text = "Infeasible."
-            output = {"infeasible": True}
+            output = infeasible_output(response.outcome)
             status = 2
         case Solved(schedule=schedule):
             updates["problem"] = to_problem_state(response.problem)

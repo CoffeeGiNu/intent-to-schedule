@@ -18,6 +18,10 @@ class ObjectivePolicy:
     """Penalty of one Task counted, relative to one hour."""
     stability_drop_cost_ratio: float
     """Share of a task's drop cost that its stability cost stays below."""
+    hard_violation_weight: float
+    """Cost of one hour or count of hard violation when explaining infeasibility."""
+    required_drop_cost: float
+    """Cost of dropping a required task when explaining infeasibility."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "drop_costs", MappingProxyType(dict(self.drop_costs)))
@@ -39,6 +43,17 @@ class ObjectivePolicy:
             raise ValueError(
                 "Stability drop cost ratio must be greater than 0 and less than 1"
             )
+        soft_maximum: float = max(
+            *self.drop_costs.values(),
+            *(weight * max(1.0, self.per_count) for weight in self.weights.values()),
+        )
+        if not all(
+            isfinite(value) and value > soft_maximum
+            for value in (self.hard_violation_weight, self.required_drop_cost)
+        ):
+            raise ValueError(
+                "Relaxation costs must be finite and greater than every soft cost"
+            )
 
     def drop_cost(self, importance: Importance) -> float:
         return self.drop_costs[importance]
@@ -59,4 +74,6 @@ DEFAULT_POLICY = ObjectivePolicy(
     weights={Strength.WEAK: 1.0, Strength.NORMAL: 5.0, Strength.STRONG: 20.0},
     per_count=1.0,
     stability_drop_cost_ratio=0.5,
+    hard_violation_weight=1000.0,
+    required_drop_cost=1000000.0,
 )

@@ -63,9 +63,13 @@ def test_policy_rejects_nonpositive_or_nonfinite_coefficients(value: float) -> N
 
 def test_policy_requires_every_importance_and_strength() -> None:
     with pytest.raises(ValueError):
-        ObjectivePolicy({Importance.LOW: 1.0}, DEFAULT_POLICY.weights, 1.0, 0.5)
+        ObjectivePolicy(
+            {Importance.LOW: 1.0}, DEFAULT_POLICY.weights, 1.0, 0.5, 1e3, 1e6
+        )
     with pytest.raises(ValueError):
-        ObjectivePolicy(DEFAULT_POLICY.drop_costs, {Strength.WEAK: 1.0}, 1.0, 0.5)
+        ObjectivePolicy(
+            DEFAULT_POLICY.drop_costs, {Strength.WEAK: 1.0}, 1.0, 0.5, 1e3, 1e6
+        )
 
 
 def movable(importance: Importance, stability: Strength) -> Task:
