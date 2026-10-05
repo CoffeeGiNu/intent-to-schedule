@@ -415,6 +415,12 @@ def test_shared_person_tasks_do_not_overlap() -> None:
     assert abs(result[first.id] - result[second.id]) == timedelta(hours=1)
 
 
+def test_scheduled_entries_record_participants() -> None:
+    """Record each scheduled task's participants at solve time."""
+    item: Task = task("recorded", people=PEOPLE)
+    assert schedule_for(problem(item)).scheduled[0].participant_ids == PEOPLE
+
+
 def test_unavailable_optional_drops_and_required_is_infeasible() -> None:
     person_id: PersonId = PersonId("unavailable")
     optional: Task = task("optional", people=frozenset({person_id}), required=False)

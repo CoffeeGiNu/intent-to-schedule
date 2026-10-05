@@ -1,12 +1,16 @@
 """Tests for scheduling queries."""
 
 from dataclasses import replace
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
 from intent_to_schedule.application.command import Rejected
 from intent_to_schedule.application.query import (
+    AgendaAnswer,
+    AgendaDay,
+    AgendaItem,
+    AgendaQuery,
     Answered,
     AnswerResult,
     AvailableStartsAnswer,
@@ -624,3 +628,258 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
         frozenset({PersonId("alice")}), timedelta(hours=1), None, 2
     ).answer(given, previous)
     assert result == Answered(AvailableStartsAnswer((at(9), at(9, 30)), 7))
+
+
+ALICE: PersonId = PersonId("alice")
+BOB: PersonId = PersonId("bob")
+
+
+def on(day: int, hour: int, minute: int = 0) -> datetime:
+    """Build a time on an October 2026 date of the agenda calendar."""
+    return datetime(2026, 10, day, hour, minute, tzinfo=timezone(timedelta(hours=9)))
+
+
+def agenda_item(
+    fixed: bool,
+    identifier: str,
+    start: datetime,
+    end: datetime,
+    *participants: PersonId,
+) -> AgendaItem:
+    """Build an agenda item named after its identifier."""
+    return AgendaItem(
+        fixed,
+        TaskId(identifier),
+        identifier.title(),
+        TimeInterval(start, end),
+        frozenset(participants),
+    )
+
+
+@pytest.fixture
+def agenda_problem() -> SchedulingProblem:
+    """Build a three-date problem where alice works on the first and last dates."""
+    grid: TimeGrid = TimeGrid(TimeInterval(on(5, 9), on(8, 0)), timedelta(minutes=30))
+    return SchedulingProblem(
+        Calendar(
+            grid,
+            (
+                Availability(
+                    ALICE,
+                    (
+                        TimeInterval(on(7, 9), on(7, 12)),
+                        TimeInterval(on(5, 13), on(5, 17)),
+                        TimeInterval(on(5, 9), on(5, 12)),
+                    ),
+                ),
+                Availability(BOB, (grid.horizon,)),
+            ),
+        ),
+        (Person(ALICE, "Alice"), Person(BOB, "Bob")),
+        (),
+        (
+            FixedTask(
+                TaskId("talk"),
+                "Talk",
+                on(5, 13, 15),
+                timedelta(minutes=30),
+                frozenset({ALICE}),
+            ),
+            FixedTask(
+                TaskId("standup"),
+                "Standup",
+                on(5, 9),
+                timedelta(minutes=30),
+                frozenset({ALICE, BOB}),
+            ),
+            FixedTask(
+                TaskId("bob-only"),
+                "Bob-Only",
+                on(5, 9, 30),
+                timedelta(hours=1),
+                frozenset({BOB}),
+            ),
+            FixedTask(
+                TaskId("overnight"),
+                "Overnight",
+                on(6, 23, 30),
+                timedelta(hours=1),
+                frozenset({ALICE}),
+            ),
+            FixedTask(
+                TaskId("late"),
+                "Late",
+                on(7, 11),
+                timedelta(minutes=30),
+                frozenset({ALICE}),
+            ),
+        ),
+        (),
+    )
+
+
+AGENDA_PREVIOUS: Schedule = Schedule(
+    (
+        ScheduledTask(
+            TaskId("planning"),
+            "Planning",
+            on(7, 9, 30),
+            on(7, 10, 30),
+            frozenset({ALICE, BOB}),
+        ),
+        ScheduledTask(TaskId("review"), "Review", on(5, 10), on(5, 11), frozenset({ALICE})),
+        ScheduledTask(
+            TaskId("bob-task"), "Bob-Task", on(5, 11), on(5, 12), frozenset({BOB})
+        ),
+    ),
+    (DroppedTask(TaskId("dropped"), "Dropped"),),
+)
+
+
+def test_agenda_orders_items_and_subtracts_them_from_working_time(
+    agenda_problem: SchedulingProblem,
+) -> None:
+    """List fixed and previous items in time order with the remaining free time."""
+    assert AgendaQuery(ALICE, None).answer(agenda_problem, AGENDA_PREVIOUS) == Answered(
+        AgendaAnswer(
+            ALICE,
+            True,
+            (
+                AgendaDay(
+                    date(2026, 10, 5),
+                    (
+                        TimeInterval(on(5, 9), on(5, 12)),
+                        TimeInterval(on(5, 13), on(5, 17)),
+                    ),
+                    (
+                        agenda_item(True, "standup", on(5, 9), on(5, 9, 30), ALICE, BOB),
+                        agenda_item(False, "review", on(5, 10), on(5, 11), ALICE),
+                        agenda_item(True, "talk", on(5, 13, 15), on(5, 13, 45), ALICE),
+                    ),
+                    (
+                        TimeInterval(on(5, 9, 30), on(5, 10)),
+                        TimeInterval(on(5, 11), on(5, 12)),
+                        TimeInterval(on(5, 13), on(5, 13, 15)),
+                        TimeInterval(on(5, 13, 45), on(5, 17)),
+                    ),
+                ),
+                AgendaDay(
+                    date(2026, 10, 6),
+                    (),
+                    (agenda_item(True, "overnight", on(6, 23, 30), on(7, 0, 30), ALICE),),
+                    (),
+                ),
+                AgendaDay(
+                    date(2026, 10, 7),
+                    (TimeInterval(on(7, 9), on(7, 12)),),
+                    (
+                        agenda_item(True, "overnight", on(6, 23, 30), on(7, 0, 30), ALICE),
+                        agenda_item(
+                            False, "planning", on(7, 9, 30), on(7, 10, 30), ALICE, BOB
+                        ),
+                        agenda_item(True, "late", on(7, 11), on(7, 11, 30), ALICE),
+                    ),
+                    (
+                        TimeInterval(on(7, 9), on(7, 9, 30)),
+                        TimeInterval(on(7, 10, 30), on(7, 11)),
+                        TimeInterval(on(7, 11, 30), on(7, 12)),
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+def test_agenda_without_previous_lists_only_fixed_tasks(
+    agenda_problem: SchedulingProblem,
+) -> None:
+    """Report a missing previous schedule and list fixed tasks alone."""
+    result: AnswerResult = AgendaQuery(
+        ALICE, DateRange(date(2026, 10, 5), date(2026, 10, 6))
+    ).answer(agenda_problem, None)
+    assert result == Answered(
+        AgendaAnswer(
+            ALICE,
+            False,
+            (
+                AgendaDay(
+                    date(2026, 10, 5),
+                    (
+                        TimeInterval(on(5, 9), on(5, 12)),
+                        TimeInterval(on(5, 13), on(5, 17)),
+                    ),
+                    (
+                        agenda_item(True, "standup", on(5, 9), on(5, 9, 30), ALICE, BOB),
+                        agenda_item(True, "talk", on(5, 13, 15), on(5, 13, 45), ALICE),
+                    ),
+                    (
+                        TimeInterval(on(5, 9, 30), on(5, 12)),
+                        TimeInterval(on(5, 13), on(5, 13, 15)),
+                        TimeInterval(on(5, 13, 45), on(5, 17)),
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "start, end, expected",
+    [
+        (6, 7, [6]),
+        (6, 8, [6, 7]),
+        (1, 6, [5]),
+        (7, 20, [7]),
+        (8, 9, []),
+    ],
+)
+def test_agenda_date_range_includes_start_and_excludes_end(
+    agenda_problem: SchedulingProblem, start: int, end: int, expected: list[int]
+) -> None:
+    """Keep horizon dates from the included start to the excluded end."""
+    result: AnswerResult = AgendaQuery(
+        ALICE, DateRange(date(2026, 10, start), date(2026, 10, end))
+    ).answer(agenda_problem, AGENDA_PREVIOUS)
+    assert isinstance(result, Answered) and isinstance(result.answer, AgendaAnswer)
+    assert [day.date.day for day in result.answer.days] == expected
+
+
+def test_agenda_uses_participants_recorded_in_the_previous_schedule(
+    agenda_problem: SchedulingProblem,
+) -> None:
+    """Show previous items by their recorded participants after tasks change."""
+    changed: SchedulingProblem = replace(
+        agenda_problem,
+        tasks=(
+            Task(
+                TaskId("review"),
+                "Renamed",
+                timedelta(hours=2),
+                frozenset({BOB}),
+                Importance.LOW,
+                True,
+            ),
+        ),
+    )
+    result: AnswerResult = AgendaQuery(
+        BOB, DateRange(date(2026, 10, 5), date(2026, 10, 6))
+    ).answer(changed, AGENDA_PREVIOUS)
+    assert isinstance(result, Answered) and isinstance(result.answer, AgendaAnswer)
+    assert [item.task_id.value for item in result.answer.days[0].items] == [
+        "standup",
+        "bob-only",
+        "bob-task",
+    ]
+    result = AgendaQuery(ALICE, None).answer(changed, AGENDA_PREVIOUS)
+    assert isinstance(result, Answered) and isinstance(result.answer, AgendaAnswer)
+    assert agenda_item(
+        False, "review", on(5, 10), on(5, 11), ALICE
+    ) in result.answer.days[0].items
+
+
+def test_agenda_rejects_unknown_person(agenda_problem: SchedulingProblem) -> None:
+    """Reject a person identifier missing from the problem."""
+    message: str = rejection(
+        AgendaQuery(PersonId("missing"), None).answer(agenda_problem, None)
+    )
+    assert "missing" in message and "agenda" in message

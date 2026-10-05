@@ -48,6 +48,10 @@ from intent_to_schedule.application.command import (
 )
 from intent_to_schedule.application.policy import DEFAULT_POLICY
 from intent_to_schedule.application.query import (
+    AgendaAnswer,
+    AgendaDay,
+    AgendaItem,
+    AgendaQuery,
     Answered,
     AnswerResult,
     AvailableStartsAnswer,
@@ -915,7 +919,13 @@ def test_previous_schedule_record_lists_scheduled_then_dropped() -> None:
     """Serialize scheduled and dropped entries and whether a schedule exists."""
     answer: PreviousScheduleAnswer = PreviousScheduleAnswer(
         (
-            ScheduledTask(TaskId("old-a"), "Old A", at(10), at(11)),
+            ScheduledTask(
+                TaskId("old-a"),
+                "Old A",
+                at(10),
+                at(11),
+                frozenset({PersonId("bob"), PersonId("alice")}),
+            ),
             ScheduledTask(TaskId("old-late"), "Old late", at(12), at(13)),
             DroppedTask(TaskId("dropped-a"), "Dropped A"),
         ),
@@ -931,6 +941,7 @@ def test_previous_schedule_record_lists_scheduled_then_dropped() -> None:
                 "name": "Old A",
                 "start": at(10).isoformat(),
                 "end": at(11).isoformat(),
+                "participant_ids": ["alice", "bob"],
             },
             {
                 "status": "scheduled",
@@ -938,6 +949,7 @@ def test_previous_schedule_record_lists_scheduled_then_dropped() -> None:
                 "name": "Old late",
                 "start": at(12).isoformat(),
                 "end": at(13).isoformat(),
+                "participant_ids": [],
             },
             {"status": "dropped", "task_id": "dropped-a", "name": "Dropped A"},
         ],
@@ -1000,6 +1012,84 @@ def test_objective_policy_record_lists_every_coefficient() -> None:
         "stability_drop_cost_ratio": 0.5,
         "hard_violation_weight": 1000.0,
         "required_drop_cost": 1000000.0,
+    }
+
+
+def test_agenda_query_conversion_and_record() -> None:
+    """Convert an agenda query and serialize dates, intervals, and items."""
+    assert parse_query({"kind": "agenda", "person_id": "alice"}) == AgendaQuery(
+        PersonId("alice"), None
+    )
+    assert parse_query(
+        {
+            "kind": "agenda",
+            "person_id": "alice",
+            "date_range": {"start": "2026-10-01", "end": "2026-10-03"},
+        }
+    ) == AgendaQuery(PersonId("alice"), DateRange(date(2026, 10, 1), date(2026, 10, 3)))
+    with pytest.raises(ValidationError):
+        parse_query({"kind": "agenda"})
+    answer: AgendaAnswer = AgendaAnswer(
+        PersonId("alice"),
+        True,
+        (
+            AgendaDay(
+                date(2026, 10, 1),
+                (TimeInterval(at(9), at(12)),),
+                (
+                    AgendaItem(
+                        True,
+                        TaskId("standup"),
+                        "Standup",
+                        TimeInterval(at(9), at(9, 30)),
+                        frozenset({PersonId("bob"), PersonId("alice")}),
+                    ),
+                    AgendaItem(
+                        False,
+                        TaskId("review"),
+                        "Review",
+                        TimeInterval(at(10), at(11)),
+                        frozenset({PersonId("alice")}),
+                    ),
+                ),
+                (TimeInterval(at(9, 30), at(10)), TimeInterval(at(11), at(12))),
+            ),
+            AgendaDay(date(2026, 10, 2), (), (), ()),
+        ),
+    )
+    assert answer_record(answer) == {
+        "kind": "agenda",
+        "person_id": "alice",
+        "has_previous": True,
+        "days": [
+            {
+                "date": "2026-10-01",
+                "working": [{"start": at(9).isoformat(), "end": at(12).isoformat()}],
+                "items": [
+                    {
+                        "type": "fixed",
+                        "task_id": "standup",
+                        "name": "Standup",
+                        "start": at(9).isoformat(),
+                        "end": at(9, 30).isoformat(),
+                        "participant_ids": ["alice", "bob"],
+                    },
+                    {
+                        "type": "scheduled",
+                        "task_id": "review",
+                        "name": "Review",
+                        "start": at(10).isoformat(),
+                        "end": at(11).isoformat(),
+                        "participant_ids": ["alice"],
+                    },
+                ],
+                "free": [
+                    {"start": at(9, 30).isoformat(), "end": at(10).isoformat()},
+                    {"start": at(11).isoformat(), "end": at(12).isoformat()},
+                ],
+            },
+            {"date": "2026-10-02", "working": [], "items": [], "free": []},
+        ],
     }
 
 

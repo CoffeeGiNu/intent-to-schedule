@@ -13,6 +13,8 @@ from intent_to_schedule.adapter.command_line_interface.state import (
     save_state,
     to_problem,
     to_problem_state,
+    to_schedule,
+    to_schedule_state,
 )
 from intent_to_schedule.adapter.data_model import DataModel
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
@@ -32,7 +34,9 @@ from intent_to_schedule.domain.constraint import (
     SoftConstraint,
 )
 from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
+from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
+from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance, Task, TaskId
 from intent_to_schedule.domain.time_windows import TimeRange, TimeRelation, TimeWindow
@@ -123,3 +127,36 @@ def test_state_json_datetimes_require_utc_offsets(model: type[DataModel]) -> Non
     )
     with pytest.raises(ValidationError, match="timezone"):
         model.model_validate_json(json.dumps(data))
+
+
+def test_schedule_state_keeps_participants_and_reads_entries_without_them() -> None:
+    """Round-trip recorded participants and read scheduled entries saved without them."""
+    end: datetime = START + timedelta(hours=1)
+    schedule: Schedule = Schedule(
+        (
+            ScheduledTask(
+                TaskId("a"), "A", START, end, frozenset({PersonId("bob"), PersonId("alice")})
+            ),
+        ),
+        (),
+    )
+    form: ScheduleState | None = to_schedule_state(schedule)
+    assert form is not None
+    assert form.model_dump(mode="json")["items"][0]["participant_ids"] == ["alice", "bob"]
+    assert to_schedule(ScheduleState.model_validate_json(form.model_dump_json())) == schedule
+    older: ScheduleState = ScheduleState.model_validate(
+        {
+            "items": [
+                {
+                    "status": "scheduled",
+                    "task_id": "a",
+                    "name": "A",
+                    "start": START.isoformat(),
+                    "end": end.isoformat(),
+                }
+            ]
+        }
+    )
+    assert to_schedule(older) == Schedule(
+        (ScheduledTask(TaskId("a"), "A", START, end, frozenset()),), ()
+    )

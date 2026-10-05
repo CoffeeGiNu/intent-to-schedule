@@ -991,6 +991,7 @@ def test_query_file_and_standard_input_preserve_state(
             "participant_ids": ["missing"],
             "duration": "PT1H",
         },
+        {"kind": "agenda", "person_id": "missing"},
     ],
 )
 def test_query_rejection_exits_one(
@@ -1055,6 +1056,7 @@ def test_query_previous_schedule_and_schema(
             "available_starts": "#/$defs/AvailableStartsQueryData",
             "evaluation": "#/$defs/EvaluationQueryData",
             "objective_policy": "#/$defs/ObjectivePolicyQueryData",
+            "agenda": "#/$defs/AgendaQueryData",
         },
     }
 
@@ -1245,7 +1247,7 @@ def test_schedule_entries_survive_task_changes(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Preserve solved names and times after tasks change or disappear."""
+    """Preserve solved names, times, and participants after tasks change or disappear."""
     path: Path = initialized(tmp_path, capsys)
     task: dict[str, object] = {
         "id": "review",
@@ -1293,6 +1295,7 @@ def test_schedule_entries_survive_task_changes(
             "name": "Original review",
             "start": "2026-10-01T09:00:00+00:00",
             "end": "2026-10-01T10:00:00+00:00",
+            "participant_ids": ["alice"],
         },
         {"status": "dropped", "task_id": "dropped", "name": "Original dropped"},
     ]
@@ -1307,7 +1310,12 @@ def test_schedule_entries_survive_task_changes(
         [
             {
                 "kind": "replace_task",
-                "task": {**task, "name": "Renamed review", "duration": "PT2H"},
+                "task": {
+                    **task,
+                    "name": "Renamed review",
+                    "duration": "PT2H",
+                    "participant_ids": [],
+                },
             },
             {
                 "kind": "replace_task",
@@ -1333,6 +1341,43 @@ def test_schedule_entries_survive_task_changes(
             "total": 2,
             "truncated": False,
             "has_previous": True,
+        }
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO('{"kind":"agenda","person_id":"alice"}')
+        )
+        status, output = invoke(capsys, "--state", str(path), "query")
+        assert status == 0
+        assert output == {
+            "kind": "agenda",
+            "person_id": "alice",
+            "has_previous": True,
+            "days": [
+                {
+                    "date": "2026-10-01",
+                    "working": [
+                        {
+                            "start": "2026-10-01T09:00:00+00:00",
+                            "end": "2026-10-01T12:00:00+00:00",
+                        }
+                    ],
+                    "items": [
+                        {
+                            "type": "scheduled",
+                            "task_id": "review",
+                            "name": "Original review",
+                            "start": "2026-10-01T09:00:00+00:00",
+                            "end": "2026-10-01T10:00:00+00:00",
+                            "participant_ids": ["alice"],
+                        }
+                    ],
+                    "free": [
+                        {
+                            "start": "2026-10-01T10:00:00+00:00",
+                            "end": "2026-10-01T12:00:00+00:00",
+                        }
+                    ],
+                }
+            ],
         }
         assert (
             json.loads(path.read_text(encoding="utf-8"))["previous"]
