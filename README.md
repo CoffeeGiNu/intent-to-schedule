@@ -187,7 +187,7 @@ For a small trade-off using the current default policy, dropping a low-importanc
 
 `solve --no-stability` solves from scratch. Stability cost and moved count are zero with this option or without a previous schedule. Dropped tasks do not count as moved. An infeasible solve leaves the previous schedule intact. Use `evaluation` after solving to inspect the constraints behind the reported soft cost.
 
-An infeasible solve exits with status 2 and solves again with relaxed rules: each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so this solve always succeeds. Its schedule is neither printed nor saved; the output lists what it gave up:
+An infeasible solve exits with status 2 and solves again with relaxed rules: each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so this solve always has a solution; if a solver time limit stops it before finding one, `conflicts` is `null`. Its schedule is neither printed nor saved; the output lists what it gave up:
 
 ```json
 {

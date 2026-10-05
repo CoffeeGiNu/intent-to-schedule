@@ -118,7 +118,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "conflicts.constraints lists broken hard constraints in the evaluation item shape plus related_constraint_ids, the other hard constraints referencing the same tasks; "
         "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
         "This is one least-breaking way and may not name every party to a conflict, so check related_constraint_ids. "
-        "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. The previous schedule is kept.",
+        "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. "
+        "conflicts is null if the relaxed solve found no solution within the time limit. The previous schedule is kept.",
     ),
     "chat": (
         "Run a demonstration conversation turn with OpenAI",
@@ -355,7 +356,12 @@ def schedule_output(result: Solved) -> dict[str, object]:
 
 def infeasible_output(result: Infeasible) -> dict[str, object]:
     """Describe an infeasible solve with its conflicts."""
-    return {"infeasible": True, "conflicts": conflicts_record(result.conflicts)}
+    return {
+        "infeasible": True,
+        "conflicts": conflicts_record(result.conflicts)
+        if result.conflicts is not None
+        else None,
+    }
 
 
 def solve(path: Path, service: Scheduling, stability: bool) -> int:

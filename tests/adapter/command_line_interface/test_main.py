@@ -1955,3 +1955,20 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
         },
     }
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_infeasible_solve_without_relaxed_solution_prints_null_conflicts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exit 2 with null conflicts when the relaxed solve found no solution."""
+    path: Path = initialized(tmp_path, capsys)
+    before: str = path.read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        MathOptSchedulingSolver, "solve", MagicMock(return_value=Infeasible(None))
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "solve")
+    assert status == 2
+    assert output == {"infeasible": True, "conflicts": None}
+    assert path.read_text(encoding="utf-8") == before

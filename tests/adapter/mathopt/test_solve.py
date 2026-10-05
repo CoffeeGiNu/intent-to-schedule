@@ -942,3 +942,33 @@ def test_solver_relaxes_only_after_infeasible(feasible: bool) -> None:
     assert [
         call.kwargs["params"].time_limit for call in solve_mock.call_args_list
     ] == [limit] * (1 if feasible else 2)
+
+
+def test_infeasible_without_relaxed_solution_has_no_conflicts() -> None:
+    """Return infeasible without conflicts when the relaxed solve finds nothing."""
+    unsolved: MagicMock = MagicMock()
+    unsolved.termination.reason = mathopt.TerminationReason.NO_SOLUTION_FOUND
+    results: list[mathopt.SolveResult] = []
+    original_solve: Callable[..., mathopt.SolveResult] = mathopt.solve
+
+    def first_only(
+        model: mathopt.Model,
+        solver_type: mathopt.SolverType,
+        *,
+        params: mathopt.SolveParameters,
+    ) -> mathopt.SolveResult:
+        result: mathopt.SolveResult = (
+            unsolved if results else original_solve(model, solver_type, params=params)
+        )
+        results.append(result)
+        return result
+
+    item: Task = task("item", people=PEOPLE)
+    with patch(
+        "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", side_effect=first_only
+    ):
+        result: SolveResult = SOLVER.solve(
+            problem(item, availabilities=(Availability(PERSON, ()),))
+        )
+    assert result == Infeasible(None)
+    assert len(results) == 2

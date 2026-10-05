@@ -34,19 +34,26 @@ class MathOptSchedulingSolver(SchedulingSolver):
         self, problem: SchedulingProblem, previous: Schedule | None = None
     ) -> SolveResult:
         """Solve a SchedulingProblem, explaining infeasibility with a relaxed solve."""
-        schedule: Schedule | None = self._schedule(problem, previous, False)
+        reason: mathopt.TerminationReason
+        schedule: Schedule | None
+        reason, schedule = self._schedule(problem, previous, False)
         if schedule is not None:
             return Solved(
                 schedule, summarize_schedule(problem, schedule, self.policy, previous)
             )
-        relaxed: Schedule | None = self._schedule(problem, previous, True)
-        assert relaxed is not None
-        return Infeasible(find_conflicts(problem, relaxed, self.policy))
+        if reason is not mathopt.TerminationReason.INFEASIBLE:
+            raise RuntimeError(f"MathOpt solve failed: {reason}")
+        relaxed: Schedule | None = self._schedule(problem, previous, True)[1]
+        return Infeasible(
+            find_conflicts(problem, relaxed, self.policy)
+            if relaxed is not None
+            else None
+        )
 
     def _schedule(
         self, problem: SchedulingProblem, previous: Schedule | None, relaxed: bool
-    ) -> Schedule | None:
-        """Solve the compiled problem and read its schedule, or None if infeasible."""
+    ) -> tuple[mathopt.TerminationReason, Schedule | None]:
+        """Solve the compiled problem and read its termination and any schedule found."""
         compiled: CompiledProblem = compile_problem(
             problem, self.policy, previous, relaxed
         )
@@ -57,8 +64,6 @@ class MathOptSchedulingSolver(SchedulingSolver):
             compiled.model, self.solver_type, params=parameters
         )
         match result.termination.reason:
-            case mathopt.TerminationReason.INFEASIBLE:
-                return None
             case mathopt.TerminationReason.OPTIMAL | mathopt.TerminationReason.FEASIBLE:
                 values: dict[mathopt.Variable, float] = result.variable_values()
                 scheduled: list[ScheduledTask] = []
@@ -83,6 +88,8 @@ class MathOptSchedulingSolver(SchedulingSolver):
                         )
                     else:
                         dropped.append(DroppedTask(task.id, task.name))
-                return Schedule(tuple(scheduled), tuple(dropped))
+                return result.termination.reason, Schedule(
+                    tuple(scheduled), tuple(dropped)
+                )
             case _:
-                raise RuntimeError(f"MathOpt solve failed: {result.termination.reason}")
+                return result.termination.reason, None

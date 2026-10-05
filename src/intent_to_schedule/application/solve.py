@@ -60,7 +60,8 @@ class Conflicts:
 class Infeasible:
     """Result indicating that no feasible schedule exists."""
 
-    conflicts: Conflicts
+    conflicts: Conflicts | None
+    """What a relaxed solve gave up, or None if it found no solution in time."""
 
 
 type SolveResult = Solved | Infeasible
