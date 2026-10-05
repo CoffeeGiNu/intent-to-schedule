@@ -537,7 +537,12 @@ def test_stability_prefers_nearer_of_two_distant_starts() -> None:
         tuple(TimeInterval(start, start + SLOT) for start in (START, near, far)),
     )
     previous: Schedule = Schedule(
-        (ScheduledTask(item.id, item.name, START, START + SLOT),), ()
+        (
+            ScheduledTask(
+                item.id, item.name, START, START + SLOT, item.participant_ids
+            ),
+        ),
+        (),
     )
     later: SoftConstraint = SoftConstraint(
         ConstraintId("later"),
