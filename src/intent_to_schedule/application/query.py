@@ -1,11 +1,16 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 
 from intent_to_schedule.application.command import Rejected
 from intent_to_schedule.application.objective import ConstraintEvaluation, evaluate_constraints
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
-from intent_to_schedule.domain.time_windows import TimeWindow, window_times
+from intent_to_schedule.domain.time_windows import (
+    DateRange,
+    TimeWindow,
+    complement,
+    window_times,
+)
 from intent_to_schedule.domain.availability import available_start_slots, free_slots
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.consistency import Violation, Violations
@@ -78,6 +83,40 @@ class EvaluationAnswer(Listing[ConstraintEvaluation]):
 
 
 @dataclass(frozen=True)
+class AgendaItem:
+    """Fixed task or previously scheduled task taking a person's time."""
+
+    fixed: bool
+    """Whether the item is a fixed task rather than a previously scheduled task."""
+    task_id: TaskId
+    name: str
+    interval: TimeInterval
+    participant_ids: frozenset[PersonId]
+
+
+@dataclass(frozen=True)
+class AgendaDay:
+    """A person's working time, items, and free time on one date."""
+
+    date: date
+    working: tuple[TimeInterval, ...]
+    items: tuple[AgendaItem, ...]
+    """Items overlapping the date in start order."""
+    free: tuple[TimeInterval, ...]
+    """Working time not covered by any item."""
+
+
+@dataclass(frozen=True)
+class AgendaAnswer:
+    """A person's agenda for each requested date."""
+
+    person_id: PersonId
+    has_previous: bool
+    """Whether a previous schedule exists."""
+    days: tuple[AgendaDay, ...]
+
+
+@dataclass(frozen=True)
 class ObjectivePolicyAnswer:
     """The objective coefficients used by the default solver."""
 
@@ -93,6 +132,7 @@ type Answer = (
     | AvailableStartsAnswer
     | EvaluationAnswer
     | ObjectivePolicyAnswer
+    | AgendaAnswer
 )
 """Answer to a query."""
 
@@ -468,6 +508,101 @@ class AvailableStartsQuery:
         return Answered(AvailableStartsAnswer(tuple(items[: self.limit]), len(items)))
 
 
+@dataclass(frozen=True)
+class AgendaQuery:
+    """Query for a person's working time, items, and free time on each date."""
+
+    person_id: PersonId
+    date_range: DateRange | None
+    """Dates to include, or None for every date of the horizon."""
+
+    def answer(
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        policy: ObjectivePolicy = DEFAULT_POLICY,
+    ) -> AnswerResult:
+        """Answer with the person's agenda for each date of the horizon in range."""
+        if all(person.id != self.person_id for person in problem.people):
+            return Rejected(
+                Violations(
+                    (
+                        Violation(
+                            f"agenda person ID {self.person_id.value} does not exist."
+                        ),
+                    )
+                )
+            )
+        grid: TimeGrid = problem.calendar.grid
+        working: tuple[TimeInterval, ...] = tuple(
+            interval
+            for availability in problem.calendar.availabilities
+            if availability.person_id == self.person_id
+            for interval in availability.intervals
+        )
+        items: tuple[AgendaItem, ...] = (
+            *(
+                AgendaItem(True, task.id, task.name, task.interval, task.participant_ids)
+                for task in problem.fixed_tasks
+                if self.person_id in task.participant_ids
+            ),
+            *(
+                AgendaItem(
+                    False,
+                    item.task_id,
+                    item.name,
+                    TimeInterval(item.start, item.end),
+                    item.participant_ids,
+                )
+                for item in (previous.scheduled if previous is not None else ())
+                if self.person_id in item.participant_ids
+            ),
+        )
+        days: list[AgendaDay] = []
+        day: date
+        for day in grid.dates:
+            if self.date_range is not None and not (
+                self.date_range.start <= day < self.date_range.end
+            ):
+                continue
+            midnight: datetime = datetime.combine(
+                day, time.min, grid.horizon.start.tzinfo
+            )
+            span: TimeInterval = TimeInterval(midnight, midnight + timedelta(days=1))
+            day_working: tuple[TimeInterval, ...] = tuple(
+                sorted(
+                    (
+                        TimeInterval(
+                            max(interval.start, span.start), min(interval.end, span.end)
+                        )
+                        for interval in working
+                        if interval.overlap(span) > timedelta(0)
+                    ),
+                    key=lambda interval: interval.start,
+                )
+            )
+            day_items: tuple[AgendaItem, ...] = tuple(
+                sorted(
+                    (
+                        item
+                        for item in items
+                        if span.includes(item.interval.start)
+                        or item.interval.start < span.start < item.interval.end
+                    ),
+                    key=lambda item: (item.interval.start, item.task_id.value),
+                )
+            )
+            free: tuple[TimeInterval, ...] = tuple(
+                gap
+                for interval in day_working
+                for gap in complement(
+                    tuple(item.interval for item in day_items), interval
+                )
+            )
+            days.append(AgendaDay(day, day_working, day_items, free))
+        return Answered(AgendaAnswer(self.person_id, previous is not None, tuple(days)))
+
+
 type SchedulingQuery = (
     SummaryQuery
     | PeopleQuery
@@ -477,6 +612,7 @@ type SchedulingQuery = (
     | AvailableStartsQuery
     | EvaluationQuery
     | ObjectivePolicyQuery
+    | AgendaQuery
 )
 """Request to read a SchedulingProblem and its previous schedule."""
 

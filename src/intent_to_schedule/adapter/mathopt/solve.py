@@ -78,6 +78,7 @@ class MathOptSchedulingSolver(SchedulingSolver):
                                 task.name,
                                 start_time,
                                 start_time + task.duration,
+                                task.participant_ids,
                             )
                         )
                     else:

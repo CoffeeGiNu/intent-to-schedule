@@ -483,6 +483,7 @@ def test_apply_reject_and_solve(
                 "name": "Review",
                 "start": "2026-10-01T09:00:00+00:00",
                 "end": "2026-10-01T10:00:00+00:00",
+                "participant_ids": ["alice"],
             }
         ],
     }
@@ -555,6 +556,7 @@ def test_apply_uses_given_ids_within_the_same_batch(
             "name": "Review",
             "start": "2026-10-01T10:00:00+00:00",
             "end": "2026-10-01T11:00:00+00:00",
+            "participant_ids": ["alice"],
         }
     ]
 
@@ -1121,12 +1123,14 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
                 added.name,
                 start + timedelta(hours=2),
                 start + timedelta(hours=3),
+                added.participant_ids,
             ),
             ScheduledTask(
                 existing.id,
                 existing.name,
                 start + timedelta(hours=1),
                 start + timedelta(hours=2),
+                existing.participant_ids,
             ),
         ),
         (),
@@ -1229,6 +1233,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
                         "name": "Existing",
                         "start": (start + timedelta(hours=1)).isoformat(),
                         "end": (start + timedelta(hours=2)).isoformat(),
+                        "participant_ids": ["alice"],
                     },
                     {
                         "status": "scheduled",
@@ -1236,6 +1241,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
                         "name": "Added",
                         "start": (start + timedelta(hours=2)).isoformat(),
                         "end": (start + timedelta(hours=3)).isoformat(),
+                        "participant_ids": ["alice"],
                     },
                 ],
             }
@@ -1524,6 +1530,7 @@ def test_command_line_add_solve_replace_solve(
             "name": "Review",
             "start": START.isoformat(),
             "end": (START + timedelta(hours=1)).isoformat(),
+            "participant_ids": [],
         }
     ]
     monkeypatch.setattr(
@@ -1559,6 +1566,7 @@ def test_command_line_add_solve_replace_solve(
             "name": "Review",
             "start": (START + timedelta(hours=2)).isoformat(),
             "end": (START + timedelta(hours=3)).isoformat(),
+            "participant_ids": [],
         }
     ]
 

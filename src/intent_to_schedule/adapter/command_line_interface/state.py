@@ -145,7 +145,13 @@ def to_schedule(form: ScheduleState | None) -> Schedule | None:
         return None
     return Schedule(
         tuple(
-            ScheduledTask(item.task_id, item.name, item.start, item.end)
+            ScheduledTask(
+                item.task_id,
+                item.name,
+                item.start,
+                item.end,
+                frozenset(item.participant_ids),
+            )
             for item in form.items
             if isinstance(item, ScheduledTaskData)
         ),

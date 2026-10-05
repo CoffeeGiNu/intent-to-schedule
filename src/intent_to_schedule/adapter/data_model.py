@@ -29,6 +29,10 @@ from intent_to_schedule.application.command import (
 )
 from intent_to_schedule.application.objective import ConstraintEvaluation, ScheduleSummary
 from intent_to_schedule.application.query import (
+    AgendaAnswer,
+    AgendaDay,
+    AgendaItem,
+    AgendaQuery,
     Answer,
     AvailableStartsAnswer,
     AvailableStartsQuery,
@@ -152,6 +156,10 @@ class ScheduledTaskData(DataModel):
     name: str
     start: AwareDatetime
     end: AwareDatetime
+    participant_ids: tuple[PersonIdField, ...] = Field(
+        default=(),
+        description="Participants recorded at solve time, unchanged after the task is edited or removed. Empty for entries saved before participants were recorded.",
+    )
 
     @field_serializer("start", "end", when_used="json")
     def serialize_time(self, value: datetime) -> str:
@@ -182,6 +190,9 @@ def to_schedule_entry_data(item: ScheduledTask | DroppedTask) -> ScheduleEntryDa
             name=item.name,
             start=item.start,
             end=item.end,
+            participant_ids=tuple(
+                sorted(item.participant_ids, key=lambda person_id: person_id.value)
+            ),
         )
     return DroppedTaskData(status="dropped", task_id=item.task_id, name=item.name)
 
@@ -659,6 +670,21 @@ class ObjectivePolicyQueryData(DataModel):
     )
 
 
+class AgendaQueryData(DataModel):
+    """Read one person's working time, items, and free time for each date."""
+
+    kind: Literal["agenda"] = Field(
+        description="Returns person_id, has_previous, and days in date order, including dates without working time. Each day has date, working intervals, items, and free intervals. items are the person's fixed tasks (type fixed) and tasks placed for the person in the last saved solution (type scheduled), in start order, each with task_id, name, start, end, and participant_ids. Scheduled items keep the names, times, and participants recorded at solve time, so they may differ from current tasks. An item crossing midnight appears on both dates. free is working time minus items, using real times without slot rounding; it ignores movable tasks not in the saved solution and constraints.",
+    )
+    person_id: PersonIdField = Field(
+        description="Existing person identifier; an unknown identifier is rejected."
+    )
+    date_range: DateRangeData | None = Field(
+        default=None,
+        description="Included start date and excluded end date in the calendar horizon's starting offset. Omit or use null for every date of the horizon; dates outside the horizon are omitted.",
+    )
+
+
 class SummaryQueryData(DataModel):
     """Read the time grid and element counts."""
 
@@ -765,6 +791,7 @@ type QueryData = (
     | AvailableStartsQueryData
     | EvaluationQueryData
     | ObjectivePolicyQueryData
+    | AgendaQueryData
 )
 """JSON form of SchedulingQuery."""
 
@@ -785,6 +812,13 @@ def convert_query(data: QueryData) -> SchedulingQuery:
             )
         case ObjectivePolicyQueryData():
             return ObjectivePolicyQuery()
+        case AgendaQueryData():
+            return AgendaQuery(
+                data.person_id,
+                DateRange(data.date_range.start, data.date_range.end)
+                if data.date_range is not None
+                else None,
+            )
         case SummaryQueryData():
             return SummaryQuery()
         case PeopleQueryData():
@@ -1009,8 +1043,41 @@ def conflicts_record(conflicts: Conflicts) -> dict[str, object]:
     }
 
 
+def _interval_record(interval: TimeInterval) -> dict[str, str]:
+    """Describe a time interval with offsets."""
+    return {"start": interval.start.isoformat(), "end": interval.end.isoformat()}
+
+
+def _agenda_item_record(item: AgendaItem) -> dict[str, object]:
+    """Describe a fixed or previously scheduled agenda item."""
+    return {
+        "type": "fixed" if item.fixed else "scheduled",
+        "task_id": item.task_id.value,
+        "name": item.name,
+        **_interval_record(item.interval),
+        "participant_ids": sorted(person_id.value for person_id in item.participant_ids),
+    }
+
+
+def _agenda_day_record(day: AgendaDay) -> dict[str, object]:
+    """Describe a person's working time, items, and free time on one date."""
+    return {
+        "date": day.date.isoformat(),
+        "working": [_interval_record(interval) for interval in day.working],
+        "items": [_agenda_item_record(item) for item in day.items],
+        "free": [_interval_record(interval) for interval in day.free],
+    }
+
+
 def answer_record(answer: Answer) -> dict[str, object]:
     """Convert a query answer to its JSON record."""
+    if isinstance(answer, AgendaAnswer):
+        return {
+            "kind": "agenda",
+            "person_id": answer.person_id.value,
+            "has_previous": answer.has_previous,
+            "days": [_agenda_day_record(day) for day in answer.days],
+        }
     if isinstance(answer, ObjectivePolicyAnswer):
         return {
             "kind": "objective_policy",
