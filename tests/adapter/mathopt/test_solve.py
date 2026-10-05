@@ -787,7 +787,16 @@ def test_summary_matches_objective_of_the_same_solve(
         )
     else:
         previous = Schedule(
-            (ScheduledTask(item.id, item.name, START, START + item.duration),), ()
+            (
+                ScheduledTask(
+                    item.id,
+                    item.name,
+                    START,
+                    START + item.duration,
+                    item.participant_ids,
+                ),
+            ),
+            (),
         )
         constraints = (
             HardConstraint(

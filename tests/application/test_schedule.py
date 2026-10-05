@@ -88,7 +88,15 @@ def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
     second: Task = task("b")
     previous: Schedule | None = (
         Schedule(
-            (ScheduledTask(first.id, first.name, START, START + first.duration),),
+            (
+                ScheduledTask(
+                    first.id,
+                    first.name,
+                    START,
+                    START + first.duration,
+                    first.participant_ids,
+                ),
+            ),
             (DroppedTask(second.id, second.name),),
         )
         if stability
@@ -170,7 +178,12 @@ def test_scheduling_evaluation_uses_its_objective_policy() -> None:
     )
     value: SchedulingProblem = problem(item, constraints=constraints)
     previous: Schedule = Schedule(
-        (ScheduledTask(item.id, item.name, START, START + item.duration),), ()
+        (
+            ScheduledTask(
+                item.id, item.name, START, START + item.duration, item.participant_ids
+            ),
+        ),
+        (),
     )
     service: Scheduling = Scheduling(Solver(), AllOf(), policy)
     query: EvaluationQuery = EvaluationQuery(False, None, None, 20)

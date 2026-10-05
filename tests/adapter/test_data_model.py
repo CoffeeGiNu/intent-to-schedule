@@ -715,6 +715,7 @@ def test_convert_query_shared_time_window() -> None:
                 "name": "Task",
                 "start": "2026-10-05T09:00:00Z",
                 "end": "2026-10-05T17:00:00Z",
+                "participant_ids": [],
             },
             "start",
         ),
@@ -726,6 +727,7 @@ def test_convert_query_shared_time_window() -> None:
                 "name": "Task",
                 "start": "2026-10-05T09:00:00Z",
                 "end": "2026-10-05T17:00:00Z",
+                "participant_ids": [],
             },
             "end",
         ),
@@ -926,7 +928,7 @@ def test_previous_schedule_record_lists_scheduled_then_dropped() -> None:
                 at(11),
                 frozenset({PersonId("bob"), PersonId("alice")}),
             ),
-            ScheduledTask(TaskId("old-late"), "Old late", at(12), at(13)),
+            ScheduledTask(TaskId("old-late"), "Old late", at(12), at(13), frozenset()),
             DroppedTask(TaskId("dropped-a"), "Dropped A"),
         ),
         5,
@@ -1168,8 +1170,14 @@ def evaluation_problem() -> tuple[SchedulingProblem, Schedule]:
     )
     previous: Schedule = Schedule(
         (
-            ScheduledTask(first.id, first.name, START + HOUR, START + 2 * HOUR),
-            ScheduledTask(TaskId("removed"), "Removed", START, START + HOUR),
+            ScheduledTask(
+                first.id,
+                first.name,
+                START + HOUR,
+                START + 2 * HOUR,
+                first.participant_ids,
+            ),
+            ScheduledTask(TaskId("removed"), "Removed", START, START + HOUR, frozenset()),
         ),
         (DroppedTask(dropped.id, dropped.name),),
     )

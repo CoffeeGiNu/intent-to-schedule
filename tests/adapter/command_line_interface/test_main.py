@@ -1167,7 +1167,15 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
         (),
     )
     previous: Schedule = Schedule(
-        (ScheduledTask(existing.id, existing.name, start, start + existing.duration),),
+        (
+            ScheduledTask(
+                existing.id,
+                existing.name,
+                start,
+                start + existing.duration,
+                existing.participant_ids,
+            ),
+        ),
         (),
     )
     replacement: Schedule = Schedule(
@@ -1827,7 +1835,12 @@ def test_command_line_summary_and_queries_use_saved_solution(
     """Expose measured summaries and queries through the command line."""
     item: Task = replace(task("task"), participant_ids=frozenset({PERSON}))
     previous: Schedule = Schedule(
-        (ScheduledTask(item.id, item.name, START, START + item.duration),), ()
+        (
+            ScheduledTask(
+                item.id, item.name, START, START + item.duration, item.participant_ids
+            ),
+        ),
+        (),
     )
     condition: TimeBoundCondition = TimeBoundCondition(
         frozenset({item.id}), Boundary.START, TimeBoundRelation.AT, START + 3 * HOUR

@@ -190,7 +190,9 @@ def assert_costs(value: SchedulingProblem, expected: float) -> Schedule:
             )
         )
         scheduled.append(
-            ScheduledTask(item.id, item.name, start, start + item.duration)
+            ScheduledTask(
+                item.id, item.name, start, start + item.duration, item.participant_ids
+            )
         )
     schedule: Schedule = Schedule(tuple(scheduled), ())
     evaluations: tuple[ConstraintEvaluation, ...] = evaluate_constraints(
@@ -1026,7 +1028,11 @@ def test_stability_objective_uses_bounded_cost(
     previous: Schedule = Schedule(
         (
             ScheduledTask(
-                item.id, "Previous name", previous_start, previous_start + item.duration
+                item.id,
+                "Previous name",
+                previous_start,
+                previous_start + item.duration,
+                item.participant_ids,
             ),
         ),
         (),

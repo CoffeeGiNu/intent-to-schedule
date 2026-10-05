@@ -121,6 +121,7 @@ def test_state_json_datetimes_require_utc_offsets(model: type[DataModel]) -> Non
                     "name": "Task",
                     "start": "2026-10-05T09:00:00Z",
                     "end": "2026-10-05T17:00:00",
+                    "participant_ids": [],
                 }
             ]
         }
@@ -129,8 +130,8 @@ def test_state_json_datetimes_require_utc_offsets(model: type[DataModel]) -> Non
         model.model_validate_json(json.dumps(data))
 
 
-def test_schedule_state_keeps_participants_and_reads_entries_without_them() -> None:
-    """Round-trip recorded participants and read scheduled entries saved without them."""
+def test_schedule_state_keeps_participants_and_requires_them() -> None:
+    """Round-trip recorded participants and reject scheduled entries without them."""
     end: datetime = START + timedelta(hours=1)
     schedule: Schedule = Schedule(
         (
@@ -144,19 +145,15 @@ def test_schedule_state_keeps_participants_and_reads_entries_without_them() -> N
     assert form is not None
     assert form.model_dump(mode="json")["items"][0]["participant_ids"] == ["alice", "bob"]
     assert to_schedule(ScheduleState.model_validate_json(form.model_dump_json())) == schedule
-    older: ScheduleState = ScheduleState.model_validate(
-        {
-            "items": [
-                {
-                    "status": "scheduled",
-                    "task_id": "a",
-                    "name": "A",
-                    "start": START.isoformat(),
-                    "end": end.isoformat(),
-                }
-            ]
-        }
-    )
-    assert to_schedule(older) == Schedule(
-        (ScheduledTask(TaskId("a"), "A", START, end, frozenset()),), ()
-    )
+    entry: dict[str, object] = {
+        "status": "scheduled",
+        "task_id": "a",
+        "name": "A",
+        "start": START.isoformat(),
+        "end": end.isoformat(),
+    }
+    with pytest.raises(ValidationError, match="participant_ids"):
+        ScheduleState.model_validate_json(json.dumps({"items": [entry]}))
+    assert to_schedule(
+        ScheduleState.model_validate({"items": [{**entry, "participant_ids": []}]})
+    ) == Schedule((ScheduledTask(TaskId("a"), "A", START, end, frozenset()),), ())

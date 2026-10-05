@@ -29,7 +29,12 @@ def test_saved_duration_is_used_after_current_task_edits() -> None:
         TaskId("task"), "task", HOUR, frozenset({PERSON}), Importance.LOW, True
     )
     previous: Schedule = Schedule(
-        (ScheduledTask(item.id, item.name, START, START + item.duration),), ()
+        (
+            ScheduledTask(
+                item.id, item.name, START, START + item.duration, item.participant_ids
+            ),
+        ),
+        (),
     )
     condition: TimeBoundCondition = TimeBoundCondition(
         frozenset({item.id}), Boundary.END, TimeBoundRelation.AT_OR_BEFORE, START

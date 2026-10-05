@@ -360,9 +360,9 @@ def test_previous_schedule_keeps_history_and_sorts_starts(
     """Return scheduled and dropped identifiers even after tasks disappear."""
     previous: Schedule = Schedule(
         (
-            ScheduledTask(TaskId("old-late"), "Old late", at(12), at(13)),
-            ScheduledTask(TaskId("old-b"), "Old B", at(10), at(11)),
-            ScheduledTask(TaskId("old-a"), "Old A", at(10), at(11)),
+            ScheduledTask(TaskId("old-late"), "Old late", at(12), at(13), frozenset()),
+            ScheduledTask(TaskId("old-b"), "Old B", at(10), at(11), frozenset()),
+            ScheduledTask(TaskId("old-a"), "Old A", at(10), at(11), frozenset()),
         ),
         (
             DroppedTask(TaskId("dropped-b"), "Dropped B"),
@@ -619,7 +619,12 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
         ),
     )
     previous: Schedule = Schedule(
-        (ScheduledTask(task.id, task.name, at(9), at(9) + task.duration),), ()
+        (
+            ScheduledTask(
+                task.id, task.name, at(9), at(9) + task.duration, task.participant_ids
+            ),
+        ),
+        (),
     )
     given: SchedulingProblem = replace(
         problem, tasks=(task,), fixed_tasks=(), constraints=(constraint,)
@@ -875,6 +880,52 @@ def test_agenda_uses_participants_recorded_in_the_previous_schedule(
     assert agenda_item(
         False, "review", on(5, 10), on(5, 11), ALICE
     ) in result.answer.days[0].items
+
+
+def test_agenda_merges_overlapping_working_intervals(
+    agenda_problem: SchedulingProblem,
+) -> None:
+    """Merge overlapping working time so free intervals never overlap."""
+    given: SchedulingProblem = replace(
+        agenda_problem,
+        calendar=Calendar(
+            agenda_problem.calendar.grid,
+            (
+                Availability(
+                    ALICE,
+                    (
+                        TimeInterval(on(5, 9), on(5, 12)),
+                        TimeInterval(on(5, 10), on(5, 13)),
+                    ),
+                ),
+            ),
+        ),
+        fixed_tasks=(
+            FixedTask(
+                TaskId("talk"), "Talk", on(5, 11), timedelta(hours=1), frozenset({ALICE})
+            ),
+        ),
+    )
+    result: AnswerResult = AgendaQuery(
+        ALICE, DateRange(date(2026, 10, 5), date(2026, 10, 6))
+    ).answer(given, None)
+    assert result == Answered(
+        AgendaAnswer(
+            ALICE,
+            False,
+            (
+                AgendaDay(
+                    date(2026, 10, 5),
+                    (TimeInterval(on(5, 9), on(5, 13)),),
+                    (agenda_item(True, "talk", on(5, 11), on(5, 12), ALICE),),
+                    (
+                        TimeInterval(on(5, 9), on(5, 11)),
+                        TimeInterval(on(5, 12), on(5, 13)),
+                    ),
+                ),
+            ),
+        )
+    )
 
 
 def test_agenda_rejects_unknown_person(agenda_problem: SchedulingProblem) -> None:
