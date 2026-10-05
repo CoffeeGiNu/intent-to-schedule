@@ -49,7 +49,8 @@ from intent_to_schedule.application.query import (
     TasksQuery,
     TaskType,
 )
-from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
+from intent_to_schedule.domain.availability import tasks_without_satisfying_start
+from intent_to_schedule.domain.calendar import TimeInterval
 from intent_to_schedule.domain.condition import (
     Condition,
     DailyLimitCondition,
@@ -67,6 +68,7 @@ from intent_to_schedule.domain.constraint import (
 )
 from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
 from intent_to_schedule.domain.person import PersonId
+from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import DroppedTask, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
@@ -855,8 +857,10 @@ def convert_time_window(data: TimeWindowData) -> TimeWindow:
     )
 
 
-def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]:
-    """Describe the ID created or touched by an applied command."""
+def command_record(
+    command: SchedulingCommand, problem: SchedulingProblem
+) -> dict[str, object]:
+    """Describe the ID created or touched by a command, given the problem after its batch."""
     task: Task | FixedTask
     task_id: TaskId
     constraint: Constraint
@@ -872,7 +876,7 @@ def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]
             AddConstraint(constraint=constraint)
             | ReplaceConstraint(constraint=constraint)
         ):
-            record: dict[str, str] = {
+            record: dict[str, object] = {
                 "kind": "add_constraint"
                 if isinstance(command, AddConstraint)
                 else "replace_constraint",
@@ -881,7 +885,7 @@ def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]
             condition: Condition = constraint.condition
             if isinstance(condition, TimeWindowCondition):
                 expansion: Expansion = expand(
-                    condition.windows, condition.relation, grid
+                    condition.windows, condition.relation, problem.calendar.grid
                 )
                 if expansion.rounded:
                     direction: str = (
@@ -892,9 +896,36 @@ def command_record(command: SchedulingCommand, grid: TimeGrid) -> dict[str, str]
                     record["note"] = (
                         f"Window times were rounded {direction} to calendar slots."
                     )
+                warnings: list[str] = [
+                    _window_warning(task, condition.relation, constraint)
+                    for task in tasks_without_satisfying_start(problem, condition)
+                ]
+                if warnings:
+                    record["warnings"] = warnings
             return record
         case RemoveConstraint(constraint_id=constraint_id):
             return {"kind": "remove_constraint", "constraint_id": constraint_id.value}
+
+
+def _window_warning(task: Task, relation: TimeRelation, constraint: Constraint) -> str:
+    """Describe a task that no available start keeps in line with a time window."""
+    placement: str = (
+        "within the windows"
+        if relation is TimeRelation.WITHIN
+        else "out of the windows"
+    )
+    consequence: str = (
+        "this soft constraint is violated whenever the task is scheduled."
+        if isinstance(constraint, SoftConstraint)
+        else "this hard constraint makes solve infeasible because the task is required."
+        if task.required
+        else "this hard constraint keeps the task unscheduled."
+    )
+    return (
+        f"Task {task.id.value} ({task.name}) has no available start (all participants "
+        f"available and free of fixed tasks) that keeps the whole task {placement} "
+        f"after rounding; {consequence}"
+    )
 
 
 def schedule_summary_record(summary: ScheduleSummary) -> dict[str, object]:

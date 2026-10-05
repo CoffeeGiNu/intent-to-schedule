@@ -203,7 +203,7 @@ class OpenAIStepTranslator(StepTranslator):
             elif isinstance(record, ApplyRecord):
                 result = {
                     "executed": [
-                        command_record(command, summary.grid)
+                        command_record(command, record.result.problem)
                         for command in record.step.commands
                     ]
                 }

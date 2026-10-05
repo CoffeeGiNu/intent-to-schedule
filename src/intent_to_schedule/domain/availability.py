@@ -2,9 +2,11 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 from intent_to_schedule.domain.calendar import Availability, TimeGrid, TimeInterval
+from intent_to_schedule.domain.condition import TimeWindowCondition
 from intent_to_schedule.domain.person import PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.task import FixedTask
+from intent_to_schedule.domain.task import FixedTask, Task
+from intent_to_schedule.domain.time_windows import TimeRelation, expand
 
 
 def free_slots(problem: SchedulingProblem, person_id: PersonId) -> tuple[bool, ...]:
@@ -47,5 +49,32 @@ def available_start_slots(
         if all(
             all(free[slot] for slot in range(start, start + duration_slots))
             for free in participants_free
+        )
+    )
+
+
+def tasks_without_satisfying_start(
+    problem: SchedulingProblem, condition: TimeWindowCondition
+) -> tuple[Task, ...]:
+    """Movable tasks of a time window condition with no available start satisfying it."""
+    grid: TimeGrid = problem.calendar.grid
+    within: bool = condition.relation is TimeRelation.WITHIN
+    allowed: list[bool] = [not within] * grid.slot_count
+    interval: TimeInterval
+    slots: range
+    for interval in expand(condition.windows, condition.relation, grid).intervals:
+        slots = grid.slots_within(interval)
+        allowed[slots.start:slots.stop] = [within] * len(slots)
+    return tuple(
+        task
+        for task in problem.tasks
+        if task.id in condition.task_ids
+        and not available_start_slots(
+            grid,
+            (
+                *(free_slots(problem, person_id) for person_id in task.participant_ids),
+                allowed,
+            ),
+            task.duration,
         )
     )

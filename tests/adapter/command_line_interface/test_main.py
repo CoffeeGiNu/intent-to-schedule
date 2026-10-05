@@ -691,15 +691,14 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
     assert status == 0
     state: State = load_state(path)
     constraint: ConstraintData = state.problem.constraints[0]
-    assert output == {
-        "executed": [
-            {
-                "kind": "add_constraint",
-                "constraint_id": constraint.id.value,
-                "note": f"Window times were rounded {direction} to calendar slots.",
-            }
-        ]
+    record: dict[str, object] = {
+        "kind": "add_constraint",
+        "constraint_id": constraint.id.value,
+        "note": f"Window times were rounded {direction} to calendar slots.",
     }
+    if relation_value == "avoid":
+        record["warnings"] = [window_warning(task_id, relation_value, VIOLATED)]
+    assert output == {"executed": [record]}
     assert isinstance(constraint.requirement, SoftRequirementData)
     assert constraint.requirement.strength == "strong"
     assert isinstance(constraint.condition, TimeWindowConditionData)
@@ -747,13 +746,13 @@ def late_start_problem(required: bool = False) -> SchedulingProblem:
     )
 
 
-def window_warning(relation: str, consequence: str) -> str:
-    """Build the warning for the review task without a satisfying start."""
+def window_warning(task_id: str, relation: str, consequence: str) -> str:
+    """Build the warning for a task named Review without a satisfying start."""
     placement: str = (
         "within the windows" if relation == "within" else "out of the windows"
     )
     return (
-        "Task review (Review) has no available start (all participants available "
+        f"Task {task_id} (Review) has no available start (all participants available "
         f"and free of fixed tasks) that keeps the whole task {placement} after "
         f"rounding; {consequence}"
     )
@@ -812,7 +811,7 @@ def test_apply_warns_when_no_available_start_satisfies_time_window(
     assert status == 0
     record: dict[str, object] = {"kind": kind, "constraint_id": "window"}
     if warned:
-        record["warnings"] = [window_warning(relation, UNSCHEDULED)]
+        record["warnings"] = [window_warning("review", relation, UNSCHEDULED)]
     assert output == {"executed": [record]}
     saved: ConstraintData = load_state(path).problem.constraints[0]
     assert isinstance(saved.condition, TimeWindowConditionData)
@@ -858,7 +857,7 @@ def test_window_warning_states_the_consequence_of_the_requirement(
             {
                 "kind": "add_constraint",
                 "constraint_id": "window",
-                "warnings": [window_warning("within", consequence)],
+                "warnings": [window_warning("review", "within", consequence)],
             }
         ]
     }
@@ -912,7 +911,7 @@ def test_apply_warns_using_fixed_tasks_added_later_in_the_batch(
             {
                 "kind": "add_constraint",
                 "constraint_id": "review-window",
-                "warnings": [window_warning("within", UNSCHEDULED)],
+                "warnings": [window_warning("review", "within", UNSCHEDULED)],
             },
             {"kind": "add_task", "task_id": "absence", "name": "Absence"},
             {"kind": "add_constraint", "constraint_id": "absence-window"},

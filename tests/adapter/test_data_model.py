@@ -99,6 +99,7 @@ from intent_to_schedule.domain.time_windows import (
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
 HOUR: timedelta = timedelta(hours=1)
 GRID: TimeGrid = TimeGrid(TimeInterval(START, START + 8 * HOUR), HOUR)
+EMPTY_PROBLEM: SchedulingProblem = SchedulingProblem(Calendar(GRID, ()), (), (), (), ())
 PERSON: PersonId = PersonId("person")
 QUERY_ADAPTER: TypeAdapter[QueryData] = TypeAdapter(
     Annotated[QueryData, Field(discriminator="kind")]
@@ -308,7 +309,7 @@ def test_json_task_shape_and_identifier_generation(kind: str, fixed: bool) -> No
     assert command.task.id == TaskId("generated" if kind == "add_task" else "existing")
     assert generation.call_count == (1 if kind == "add_task" else 0)
     if kind == "add_task":
-        assert command_record(command, GRID) == {
+        assert command_record(command, EMPTY_PROBLEM) == {
             "kind": "add_task",
             "task_id": "generated",
             "name": "Health check",
@@ -470,7 +471,7 @@ def test_window_rounding_note_on_add_and_replace(
         )
     )[0]
     assert isinstance(command, (AddConstraint, ReplaceConstraint))
-    assert command_record(command, GRID) == {
+    assert command_record(command, EMPTY_PROBLEM) == {
         "kind": kind,
         "constraint_id": "c",
         "note": f"Window times were rounded {direction} to calendar slots.",
@@ -488,7 +489,7 @@ def test_window_record_omits_note_for_aligned_times(relation: str) -> None:
     command: SchedulingCommand = convert_commands_input(
         CommandsData.model_validate({"commands": [constraint_command(condition)]})
     )[0]
-    assert command_record(command, GRID) == {
+    assert command_record(command, EMPTY_PROBLEM) == {
         "kind": "add_constraint",
         "constraint_id": "c",
     }
@@ -586,7 +587,9 @@ def test_time_window_constraint_conversion_generates_id_once(
                 TimeRange(time(13), None),
             ),
         )
-        assert command_record(command, grid) == {
+        assert command_record(
+            command, SchedulingProblem(Calendar(grid, ()), (), (), (), ())
+        ) == {
             "kind": "add_constraint",
             "constraint_id": "created",
         }

@@ -302,7 +302,7 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
             emit(
                 {
                     "executed": [
-                        command_record(command, problem.calendar.grid)
+                        command_record(command, updated)
                         for command in commands
                     ]
                 }
