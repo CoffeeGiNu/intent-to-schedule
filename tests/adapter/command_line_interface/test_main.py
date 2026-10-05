@@ -928,6 +928,60 @@ def test_apply_warns_using_fixed_tasks_added_later_in_the_batch(
     assert len(load_state(path).problem.constraints) == 2
 
 
+def window_until(end: str, kind: str = "add_constraint") -> dict[str, object]:
+    """Build a hard window command keeping the review between midnight and an end time."""
+    return constraint_command(
+        {
+            "kind": "time_window",
+            "task_ids": ["review"],
+            "relation": "within",
+            "windows": [{"time_range": {"start": "00:00", "end": end}}],
+        },
+        "window",
+        kind,
+    )
+
+
+@pytest.mark.parametrize(
+    "commands, warned",
+    [
+        ([window_until("12:00"), window_until("17:00", "replace_constraint")], False),
+        (
+            [
+                window_until("12:00"),
+                {"kind": "remove_constraint", "constraint_id": "window"},
+            ],
+            False,
+        ),
+        (
+            [window_until("17:00"), window_until("12:00", "replace_constraint")],
+            True,
+        ),
+    ],
+)
+def test_apply_warns_only_for_the_constraint_the_batch_keeps(
+    commands: list[dict[str, object]],
+    warned: bool,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skip warnings for windows a later command in the batch replaces or removes."""
+    path: Path = tmp_path / "state.json"
+    save_problem(path, late_start_problem(required=True))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": commands})))
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    expected: list[dict[str, object]] = [
+        {"kind": command["kind"], "constraint_id": "window"} for command in commands
+    ]
+    if warned:
+        expected[-1]["warnings"] = [window_warning("review", "within", INFEASIBLE)]
+    assert output == {"executed": expected}
+
+
 def query_state(tmp_path: Path) -> Path:
     """Create query state without applying commands or solving."""
     calendar: CalendarInput = CalendarInput.model_validate(calendar_data())
