@@ -106,7 +106,9 @@ type PersonIdField = Annotated[
     PersonId,
     PlainValidator(lambda value: _parse_id(value, PersonId)),
     PlainSerializer(lambda value: value.value),
-    WithJsonSchema({"type": "string"}),
+    WithJsonSchema(
+        {"type": "string", "description": "Non-empty identifier of a person from the calendar."}
+    ),
 ]
 """Person ID encoded as a JSON string."""
 
@@ -123,7 +125,11 @@ type ConstraintIdField = Annotated[
 type TimeOfDayField = Annotated[
     time,
     WithJsonSchema(
-        {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$"}
+        {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+            "description": "Time of day as HH:MM or HH:MM:SS, without an offset.",
+        }
     ),
 ]
 """Time of day without a UTC offset, encoded as HH:MM or HH:MM:SS."""
@@ -178,10 +184,14 @@ def to_schedule_entry_data(item: ScheduledTask | DroppedTask) -> ScheduleEntryDa
 
 
 class TimeIntervalData(DataModel):
-    """JSON form of TimeInterval."""
+    """Date and time range from an included start to an excluded end."""
 
-    start: AwareDatetime
-    end: AwareDatetime
+    start: AwareDatetime = Field(
+        description="Included start date and time with an offset, such as 2026-10-13T00:00:00+09:00."
+    )
+    end: AwareDatetime = Field(
+        description="Excluded end date and time with an offset. Must not be earlier than start."
+    )
 
     @model_validator(mode="after")
     def validate_times(self) -> "TimeIntervalData":
@@ -256,16 +266,28 @@ class PersonData(DataModel):
 class TaskContentData(DataModel):
     """Fields shared by the added and stored JSON forms of Task."""
 
-    name: str
-    duration: timedelta
-    participant_ids: tuple[PersonIdField, ...]
-    importance: Literal["low", "medium", "high"]
-    required: bool
-    stability: Literal["weak", "normal", "strong"]
+    name: str = Field(
+        description="Display name, matched exactly by name_equals in the tasks query. It need not be unique; commands reference tasks by identifier."
+    )
+    duration: timedelta = Field(
+        description="Length as an ISO 8601 duration, such as PT1H. Must be positive and a multiple of the calendar slot."
+    )
+    participant_ids: tuple[PersonIdField, ...] = Field(
+        description="Existing people who take part. Solve places the task only where every participant is available and free of fixed tasks, and keeps each person's movable tasks from overlapping. With an empty array, availability does not limit the start."
+    )
+    importance: Literal["low", "medium", "high"] = Field(
+        description="Cost of dropping the task: low, medium, or high selects a value from drop_costs in the objective_policy query. Solve pays it when an optional task is unscheduled. It also bounds the stability cost, for required tasks too."
+    )
+    required: bool = Field(
+        description="true makes solve schedule the task; solve is infeasible if it cannot. false makes the task optional: solve may drop it and pay its importance-based drop cost."
+    )
+    stability: Literal["weak", "normal", "strong"] = Field(
+        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task, and not with solve --no-stability."
+    )
 
 
 class NewTaskData(TaskContentData):
-    """JSON form of a Task to add, with an optional given ID."""
+    """A movable task to add, placed by solve, with an optional supplied identifier."""
 
     id: TaskIdField | None = Field(
         default=None,
@@ -274,22 +296,32 @@ class NewTaskData(TaskContentData):
 
 
 class TaskData(TaskContentData):
-    """JSON form of Task."""
+    """A stored movable task or complete replacement with its identifier."""
 
-    id: TaskIdField
+    id: TaskIdField = Field(
+        description="Existing task identifier returned by apply or the tasks query. Required for replacement; it stays unchanged."
+    )
 
 
 class FixedTaskContentData(DataModel):
     """Fields shared by the added and stored JSON forms of FixedTask."""
 
-    name: str
-    start: AwareDatetime
-    duration: timedelta
-    participant_ids: tuple[PersonIdField, ...]
+    name: str = Field(
+        description="Display name, matched exactly by name_equals in the tasks query. It need not be unique; commands reference tasks by identifier."
+    )
+    start: AwareDatetime = Field(
+        description="Start date and time with an offset, such as 2026-10-19T10:30:00+09:00. It need not fall on a slot boundary."
+    )
+    duration: timedelta = Field(
+        description="Length as an ISO 8601 duration, such as PT1H30M. Must not be negative; it need not be a multiple of the calendar slot."
+    )
+    participant_ids: tuple[PersonIdField, ...] = Field(
+        description="Existing people whose time it occupies. Every slot the task touches is unavailable to them in available_starts and solve."
+    )
 
 
 class NewFixedTaskData(FixedTaskContentData):
-    """JSON form of a FixedTask to add, with an optional given ID."""
+    """A fixed task to add at a given start, with an optional supplied identifier."""
 
     id: TaskIdField | None = Field(
         default=None,
@@ -298,9 +330,11 @@ class NewFixedTaskData(FixedTaskContentData):
 
 
 class FixedTaskData(FixedTaskContentData):
-    """JSON form of FixedTask."""
+    """A stored fixed task or complete replacement with its identifier."""
 
-    id: TaskIdField
+    id: TaskIdField = Field(
+        description="Existing task identifier returned by apply or the tasks query. Required for replacement; it stays unchanged."
+    )
 
 
 class TimeWindowConditionData(DataModel):
@@ -429,7 +463,7 @@ class SoftRequirementData(DataModel):
         description="soft permits violations and penalizes them alongside other preferences, dropping optional tasks, and moving previous placements. Unscheduled tasks have no condition violation."
     )
     strength: Literal["weak", "normal", "strong"] = Field(
-        description="weak gives a low penalty weight; normal gives a medium weight; strong gives a high weight. These trade off total costs and do not make the condition hard."
+        description="weak gives a low penalty weight; normal gives a medium weight; strong gives a high weight. These trade off total costs and do not make the condition hard. Query objective_policy for the current weights."
     )
 
 
@@ -466,24 +500,30 @@ class ConstraintData(ConstraintContentData):
 
 
 class AddTaskData(DataModel):
-    """JSON form of AddTask."""
+    """Add one movable or fixed task."""
 
-    kind: Literal["add_task"]
-    task: NewTaskData | NewFixedTaskData
+    kind: Literal["add_task"] = Field(description="add_task creates a task.")
+    task: NewTaskData | NewFixedTaskData = Field(
+        description="Movable task without start, or fixed task with start. Input mixing fields from both shapes is rejected. A supplied identifier must be a non-empty string unique among movable and fixed tasks."
+    )
 
 
 class ReplaceTaskData(DataModel):
-    """JSON form of ReplaceTask."""
+    """Replace an existing task's complete content."""
 
-    kind: Literal["replace_task"]
-    task: TaskData | FixedTaskData
+    kind: Literal["replace_task"] = Field(description="replace_task edits a task with the same identifier.")
+    task: TaskData | FixedTaskData = Field(
+        description="Complete replacement with the existing id. The fixed shape with start fixes the task; the movable shape without start makes it movable. Constraints referencing the identifier are kept."
+    )
 
 
 class RemoveTaskData(DataModel):
-    """JSON form of RemoveTask."""
+    """Remove an existing task by its identifier."""
 
-    kind: Literal["remove_task"]
-    task_id: TaskIdField
+    kind: Literal["remove_task"] = Field(description="remove_task deletes a movable or fixed task.")
+    task_id: TaskIdField = Field(
+        description="Identifier of the existing task to remove. It is removed from constraint task_ids; a constraint left without tasks, or a task gap referencing it, is removed."
+    )
 
 
 class AddConstraintData(DataModel):
@@ -531,20 +571,34 @@ class CommandsData(DataModel):
 
 
 class PeopleFilterData(DataModel):
-    """JSON conditions for people."""
+    """Filters selecting people by identifier and name."""
 
-    person_ids: tuple[PersonIdField, ...] | None = None
-    name_equals: str | None = None
+    person_ids: tuple[PersonIdField, ...] | None = Field(
+        default=None, description="Match any listed person identifier; omit or use null for all people."
+    )
+    name_equals: str | None = Field(
+        default=None, description="Match people whose name equals this text exactly; omit or use null for any name."
+    )
 
 
 class TasksFilterData(DataModel):
-    """JSON conditions for Tasks and FixedTasks."""
+    """Filters selecting movable and fixed tasks."""
 
-    task_ids: tuple[TaskIdField, ...] | None = None
-    type: Literal["task", "fixed"] | None = None
-    name_equals: str | None = None
-    participant_ids_all: tuple[PersonIdField, ...] | None = None
-    start_range: TimeIntervalData | None = None
+    task_ids: tuple[TaskIdField, ...] | None = Field(
+        default=None, description="Match any listed task identifier; omit or use null for all tasks."
+    )
+    type: Literal["task", "fixed"] | None = Field(
+        default=None, description="task matches movable tasks; fixed matches fixed tasks. Omit or use null for both."
+    )
+    name_equals: str | None = Field(
+        default=None, description="Match tasks whose name equals this text exactly; omit or use null for any name."
+    )
+    participant_ids_all: tuple[PersonIdField, ...] | None = Field(
+        default=None, description="Match tasks whose participants include every listed person; other participants are allowed. Omit or use null for any participants."
+    )
+    start_range: TimeIntervalData | None = Field(
+        default=None, description="Match fixed tasks starting in this range, including its start and excluding its end. Movable tasks never match. Omit or use null for any start."
+    )
 
 
 class ConstraintsFilterData(DataModel):
@@ -559,10 +613,14 @@ class ConstraintsFilterData(DataModel):
 
 
 class PreviousScheduleFilterData(DataModel):
-    """JSON conditions for the previous schedule."""
+    """Filters selecting entries of the previous schedule."""
 
-    task_ids: tuple[TaskIdField, ...] | None = None
-    start_range: TimeIntervalData | None = None
+    task_ids: tuple[TaskIdField, ...] | None = Field(
+        default=None, description="Match entries for any listed task identifier; omit or use null for all tasks."
+    )
+    start_range: TimeIntervalData | None = Field(
+        default=None, description="Match scheduled entries starting in this range, including its start and excluding its end. Dropped entries never match. Omit or use null for any start."
+    )
 
 
 class EvaluationFilterData(ConstraintsFilterData):
@@ -599,28 +657,46 @@ class ObjectivePolicyQueryData(DataModel):
 
 
 class SummaryQueryData(DataModel):
-    """JSON form of SummaryQuery."""
+    """Read the time grid and element counts."""
 
-    kind: Literal["summary"]
+    kind: Literal["summary"] = Field(
+        description="summary returns grid with the horizon and slot, counts of people, movable tasks, fixed_tasks, and constraints, and has_previous, which is true when a saved solution exists."
+    )
 
 
 class PeopleQueryData(DataModel):
-    """JSON form of PeopleQuery."""
+    """Read people with their identifiers and names."""
 
-    kind: Literal["people"]
-    filter: PeopleFilterData = Field(default_factory=PeopleFilterData)
-    select: Literal["all", "one"] = "all"
+    kind: Literal["people"] = Field(
+        description="people returns id and name for each matching person, ordered by name and then identifier."
+    )
+    filter: PeopleFilterData = Field(
+        default_factory=PeopleFilterData,
+        description="Optional filters combined with and; omitted filters match all people.",
+    )
+    select: Literal["all", "one"] = Field(
+        "all",
+        description="all, the default, returns matches up to limit. one requires exactly one match before limiting; zero or multiple matches are rejected with up to five candidates.",
+    )
     limit: int = Field(
         20, description="Limit from 1 to 100; out-of-range values are rejected."
     )
 
 
 class TasksQueryData(DataModel):
-    """JSON form of TasksQuery."""
+    """Read movable and fixed tasks with their complete fields."""
 
-    kind: Literal["tasks"]
-    filter: TasksFilterData = Field(default_factory=TasksFilterData)
-    select: Literal["all", "one"] = "all"
+    kind: Literal["tasks"] = Field(
+        description="tasks returns each matching task in the shape replace_task accepts: fixed tasks with start, then movable tasks with importance, required, and stability. Fixed tasks are ordered by start and movable tasks by name."
+    )
+    filter: TasksFilterData = Field(
+        default_factory=TasksFilterData,
+        description="Optional filters combined with and; omitted filters match all tasks.",
+    )
+    select: Literal["all", "one"] = Field(
+        "all",
+        description="all, the default, returns matches up to limit. one requires exactly one match before limiting; zero or multiple matches are rejected with up to five candidates.",
+    )
     limit: int = Field(
         20, description="Limit from 1 to 100; out-of-range values are rejected."
     )
@@ -642,11 +718,14 @@ class ConstraintsQueryData(DataModel):
 
 
 class PreviousScheduleQueryData(DataModel):
-    """JSON form of PreviousScheduleQuery."""
+    """Read entries of the last saved solution."""
 
-    kind: Literal["previous_schedule"]
+    kind: Literal["previous_schedule"] = Field(
+        description="previous_schedule returns has_previous and entries with status scheduled, task_id, name, start, and end, or status dropped, task_id, and name. Scheduled entries come first in start order. Names and ends are recorded at solve time and may predate current changes. With no saved solution, has_previous is false and items are empty."
+    )
     filter: PreviousScheduleFilterData = Field(
-        default_factory=PreviousScheduleFilterData
+        default_factory=PreviousScheduleFilterData,
+        description="Optional filters combined with and; omitted filters match all entries.",
     )
     limit: int = Field(
         20, description="Limit from 1 to 100; out-of-range values are rejected."
@@ -654,12 +733,21 @@ class PreviousScheduleQueryData(DataModel):
 
 
 class AvailableStartsQueryData(DataModel):
-    """JSON form of AvailableStartsQuery."""
+    """Find start times when every participant is free."""
 
-    kind: Literal["available_starts"]
-    participant_ids: tuple[PersonIdField, ...]
-    duration: timedelta
-    windows: tuple[TimeWindowData, ...] | None = None
+    kind: Literal["available_starts"] = Field(
+        description="available_starts returns start times on slot boundaries, in time order, where every participant is available and free of fixed tasks for the whole duration. Movable tasks, their previous placements, and constraints are not considered; solve makes the final decision. Candidates may overlap each other."
+    )
+    participant_ids: tuple[PersonIdField, ...] = Field(
+        description="Existing people who must all be free. An empty array checks only the horizon and windows."
+    )
+    duration: timedelta = Field(
+        description="Length as an ISO 8601 duration, such as PT1H. Must be positive and a multiple of the calendar slot."
+    )
+    windows: tuple[TimeWindowData, ...] | None = Field(
+        default=None,
+        description="Alternative windows combined with or; the whole task from start to end must fit within them. Omit or use null for the whole horizon; an empty array allows no times.",
+    )
     limit: int = Field(
         20, description="Limit from 1 to 100; out-of-range values are rejected."
     )
