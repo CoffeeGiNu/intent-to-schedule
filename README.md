@@ -35,7 +35,7 @@ echo '{"kind":"summary"}' | uv run intent-to-schedule --state example-state.json
 
 ## Query
 
-Save any of these eight inputs as `query.json`. Filters combine with **and**. Listings return `kind`, `items`, `total` (all matches before the limit), and `truncated`. `limit` defaults to 20 and must be between 1 and 100. Empty results are successful. People and tasks also accept `select: "one"`: exactly one match is required before limiting; zero or multiple matches exit with status 1. Ambiguous selections describe up to five candidates.
+Save any of these nine inputs as `query.json`. Filters combine with **and**. Listings return `kind`, `items`, `total` (all matches before the limit), and `truncated`. `limit` defaults to 20 and must be between 1 and 100. Empty results are successful. People and tasks also accept `select: "one"`: exactly one match is required before limiting; zero or multiple matches exit with status 1. Ambiguous selections describe up to five candidates.
 
 `summary` returns the horizon and slot in `grid`, element `counts`, and `has_previous`:
 
@@ -70,11 +70,19 @@ Save any of these eight inputs as `query.json`. Filters combine with **and**. Li
 {"kind":"constraints"}
 ```
 
-`previous_schedule` returns `has_previous` and entries with `status: "scheduled"`, `task_id`, `name`, `start`, and `end`, or `status: "dropped"`, `task_id`, and `name`. Names and end times are recorded at solve time and remain unchanged after a task is renamed or removed. Optional filters are `task_ids` and `start_range`; a start range excludes dropped entries. This is the last saved solution, which may predate current problem changes:
+`previous_schedule` returns `has_previous` and entries with `status: "scheduled"`, `task_id`, `name`, `start`, `end`, and `participant_ids`, or `status: "dropped"`, `task_id`, and `name`. Names, end times, and participants are recorded at solve time and remain unchanged after a task is edited or removed. Optional filters are `task_ids` and `start_range`; a start range excludes dropped entries. This is the last saved solution, which may predate current problem changes:
 
 ```json
 {"kind":"previous_schedule"}
 ```
+
+`agenda` returns one person's `person_id`, `has_previous`, and `days`. Each day has `date`, `working` intervals from the calendar, `items`, and `free` intervals. Items are the person's fixed appointments (`type: "fixed"`) and the tasks the last saved solution placed for that person (`type: "scheduled"`), in start order, each with `type`, `task_id`, `name`, `start`, `end`, and `participant_ids`. `free` is working time minus the items, using real times without slot rounding. Dates without working time appear with empty `working`. An item crossing midnight appears on both dates. The optional `date_range` includes its start date and excludes its end date, counted in the horizon's starting offset; omit it for the whole horizon. An unknown `person_id` is rejected:
+
+```json
+{"kind":"agenda","person_id":"ito","date_range":{"start":"2026-10-19","end":"2026-10-24"}}
+```
+
+**Scheduled items come from the last saved solution, as in `previous_schedule`, and may predate current problem changes.** They keep the names, times, and participants recorded at solve time. Movable tasks added or edited since then appear only after the next `solve`, and `free` does not account for them.
 
 `evaluation` measures the **current constraints against the last saved solution**. Each item has `constraint_id`, `label`, `requirement`, `violation` (`amount` and `unit`, either `hours` or `count`), `cost` (null for hard constraints), and `breakdown`. Time windows and bounds break down violations by `task_id`; daily limits break them down by `date`; task gaps have an empty breakdown. Parts include their violation and cost, including zero amounts. Daily breakdowns include every horizon date.
 
@@ -166,8 +174,8 @@ Run `solve` after applying changes. It prints `{"summary":{...},"items":[...]}` 
     "counts":{"scheduled_tasks":2,"dropped_tasks":1,"violated_soft_constraints":1,"moved_tasks":0}
   },
   "items":[
-    {"status":"scheduled","task_id":"review","name":"Review","start":"2026-10-19T09:00:00+09:00","end":"2026-10-19T10:00:00+09:00"},
-    {"status":"scheduled","task_id":"planning","name":"Planning","start":"2026-10-19T10:00:00+09:00","end":"2026-10-19T11:00:00+09:00"},
+    {"status":"scheduled","task_id":"review","name":"Review","start":"2026-10-19T09:00:00+09:00","end":"2026-10-19T10:00:00+09:00","participant_ids":["ito","takahashi"]},
+    {"status":"scheduled","task_id":"planning","name":"Planning","start":"2026-10-19T10:00:00+09:00","end":"2026-10-19T11:00:00+09:00","participant_ids":["ito"]},
     {"status":"dropped","task_id":"optional","name":"Optional discussion"}
   ]
 }
