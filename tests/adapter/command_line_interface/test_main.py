@@ -1320,6 +1320,28 @@ def test_command_schema_exposes_disjoint_task_shapes(
         assert schema["$defs"][fixed]["additionalProperties"] is False
 
 
+@pytest.mark.parametrize("command", ["apply", "query"])
+def test_schema_describes_every_model_and_field(
+    capsys: pytest.CaptureFixture[str], command: str
+) -> None:
+    """Describe every model and field of the printed input schema."""
+    assert main(["schema", command]) == 0
+    schema: dict[str, Any] = json.loads(capsys.readouterr().out)
+    models: dict[str, dict[str, Any]] = dict(schema["$defs"])
+    if "properties" in schema:
+        models[schema["title"]] = schema
+    missing: list[str] = [
+        name for name, model in models.items() if not model.get("description")
+    ] + [
+        f"{name}.{field}"
+        for name, model in models.items()
+        for field, value in model.get("properties", {}).items()
+        if not value.get("description")
+    ]
+    assert missing == []
+    assert "JSON form of" not in json.dumps(schema)
+
+
 def test_apply_fixed_task_persists_and_reports_generated_identifier(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
