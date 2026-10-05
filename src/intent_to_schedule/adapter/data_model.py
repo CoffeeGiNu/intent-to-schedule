@@ -157,8 +157,7 @@ class ScheduledTaskData(DataModel):
     start: AwareDatetime
     end: AwareDatetime
     participant_ids: tuple[PersonIdField, ...] = Field(
-        default=(),
-        description="Participants recorded at solve time, unchanged after the task is edited or removed. Empty for entries saved before participants were recorded.",
+        description="Participants recorded at solve time, unchanged after the task is edited or removed."
     )
 
     @field_serializer("start", "end", when_used="json")
@@ -674,7 +673,7 @@ class AgendaQueryData(DataModel):
     """Read one person's working time, items, and free time for each date."""
 
     kind: Literal["agenda"] = Field(
-        description="Returns person_id, has_previous, and days in date order, including dates without working time. Each day has date, working intervals, items, and free intervals. items are the person's fixed tasks (type fixed) and tasks placed for the person in the last saved solution (type scheduled), in start order, each with task_id, name, start, end, and participant_ids. Scheduled items keep the names, times, and participants recorded at solve time, so they may differ from current tasks. An item crossing midnight appears on both dates. free is working time minus items, using real times without slot rounding; it ignores movable tasks not in the saved solution and constraints.",
+        description="Returns person_id, has_previous, and days in date order, including dates without working time. Each day has date, working intervals with overlapping or adjacent intervals merged, items, and free intervals. items are the person's fixed tasks (type fixed) and tasks placed for the person in the last saved solution (type scheduled), in start order, each with task_id, name, start, end, and participant_ids. Scheduled items keep the names, times, and participants recorded at solve time, so they may differ from current tasks. An item crossing midnight appears on both dates. free is working time minus items, using real times without slot rounding; it ignores movable tasks not in the saved solution and constraints.",
     )
     person_id: PersonIdField = Field(
         description="Existing person identifier; an unknown identifier is rejected."

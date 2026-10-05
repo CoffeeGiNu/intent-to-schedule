@@ -13,7 +13,7 @@ class ScheduledTask:
     name: str
     start: datetime
     end: datetime
-    participant_ids: frozenset[PersonId] = frozenset()
+    participant_ids: frozenset[PersonId]
 
 
 @dataclass(frozen=True)

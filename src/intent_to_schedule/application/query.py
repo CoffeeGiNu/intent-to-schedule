@@ -100,6 +100,7 @@ class AgendaDay:
 
     date: date
     working: tuple[TimeInterval, ...]
+    """Working time on the date with overlapping or adjacent intervals merged."""
     items: tuple[AgendaItem, ...]
     """Items overlapping the date in start order."""
     free: tuple[TimeInterval, ...]
@@ -569,18 +570,8 @@ class AgendaQuery:
                 day, time.min, grid.horizon.start.tzinfo
             )
             span: TimeInterval = TimeInterval(midnight, midnight + timedelta(days=1))
-            day_working: tuple[TimeInterval, ...] = tuple(
-                sorted(
-                    (
-                        TimeInterval(
-                            max(interval.start, span.start), min(interval.end, span.end)
-                        )
-                        for interval in working
-                        if interval.overlap(span) > timedelta(0)
-                    ),
-                    key=lambda interval: interval.start,
-                )
-            )
+            outside_working: tuple[TimeInterval, ...] = complement(working, span)
+            day_working: tuple[TimeInterval, ...] = complement(outside_working, span)
             day_items: tuple[AgendaItem, ...] = tuple(
                 sorted(
                     (
@@ -592,12 +583,8 @@ class AgendaQuery:
                     key=lambda item: (item.interval.start, item.task_id.value),
                 )
             )
-            free: tuple[TimeInterval, ...] = tuple(
-                gap
-                for interval in day_working
-                for gap in complement(
-                    tuple(item.interval for item in day_items), interval
-                )
+            free: tuple[TimeInterval, ...] = complement(
+                (*outside_working, *(item.interval for item in day_items)), span
             )
             days.append(AgendaDay(day, day_working, day_items, free))
         return Answered(AgendaAnswer(self.person_id, previous is not None, tuple(days)))
