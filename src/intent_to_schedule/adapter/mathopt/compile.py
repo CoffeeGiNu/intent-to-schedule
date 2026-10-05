@@ -38,7 +38,7 @@ def compile_problem(
     previous: Schedule | None = None,
     relaxed: bool = False,
 ) -> CompiledProblem:
-    """Build a MathOpt model, penalizing hard violations and required drops if relaxed."""
+    """Build a MathOpt model, optionally relaxing hard constraints and required tasks."""
     grid: TimeGrid = problem.calendar.grid
     slot_count: int = grid.slot_count
     model: mathopt.Model = mathopt.Model()

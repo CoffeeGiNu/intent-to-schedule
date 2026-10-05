@@ -90,7 +90,7 @@ Filter by `violated_only` (default false), `constraint_ids`, or `task_ids`. A ta
 
 Movable tasks use their recorded start and end, even after their duration changes. Missing or dropped movable tasks contribute zero; removed tasks are ignored. Fixed tasks use their current intervals rounded outward to slots. Changes after a solve can therefore produce hard violations in this query. Evaluations are computed from placements, using the same slot, window, gap, and daily rules as the solver.
 
-`objective_policy` returns the coefficients actually used by the default solver: `drop_costs` by importance, `weights` by strength, `per_count` for daily count limits, and `stability_drop_cost_ratio`. Use it for current values when comparing trade-offs:
+`objective_policy` returns the coefficients actually used by the default solver: `drop_costs` by importance, `weights` by strength, `per_count` for daily count limits, and `stability_drop_cost_ratio`. `hard_violation_weight` (per hour or count) and `required_drop_cost` (per task) apply only to the relaxed solve that explains an infeasible solve; both exceed every soft cost. Use it for current values when comparing trade-offs:
 
 ```json
 {"kind":"objective_policy"}
@@ -178,6 +178,28 @@ The objective adds three costs: the importance-based drop cost of every dropped 
 For a small trade-off using the current default policy, dropping a low-importance optional task costs 5, and violating a normal soft constraint costs 5 per hour. Scheduling it with a 1.5-hour violation costs 7.5, so dropping it is cheaper if everything else stays equal. At one hour the costs tie and either result is possible. Query `objective_policy` for the current coefficients rather than assuming these example values.
 
 `solve --no-stability` solves from scratch. Stability cost and moved count are zero with this option or without a previous schedule. Dropped tasks do not count as moved. An infeasible solve leaves the previous schedule intact. Use `evaluation` after solving to inspect the constraints behind the reported soft cost.
+
+An infeasible solve exits with status 2 and solves again with relaxed rules: each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so this solve always succeeds. Its schedule is neither printed nor saved; the output lists what it gave up:
+
+```json
+{
+  "infeasible":true,
+  "conflicts":{
+    "constraints":[{
+      "constraint_id":"review-start",
+      "label":"Start the review on Tuesday or later",
+      "requirement":{"kind":"hard"},
+      "violation":{"amount":8.0,"unit":"hours"},
+      "cost":null,
+      "breakdown":[{"task_id":"review","violation":{"amount":8.0,"unit":"hours"},"cost":null}],
+      "related_constraint_ids":["review-deadline"]
+    }],
+    "dropped_required_tasks":[{"task_id":"offsite","name":"Offsite","reason":"no_free_start"}]
+  }
+}
+```
+
+`constraints` lists the hard constraints broken by the relaxed schedule, in the `evaluation` item shape and measured the same way, plus `related_constraint_ids`: the other hard constraints referencing any of the same tasks. `dropped_required_tasks` lists the required tasks it dropped. `reason` is `no_free_start` when no start has every participant available and free of fixed appointments, as `available_starts` checks over the whole horizon, and `conflict` otherwise. The relaxed schedule is one way that breaks the least, not a list of everything involved in a conflict: of two contradictory deadlines, only one may appear, so check `related_constraint_ids`. Relaxing everything listed, by making constraints soft, making tasks optional, or removing them, makes the problem solvable.
 
 ## Constraints
 
@@ -343,7 +365,7 @@ uv run intent-to-schedule --state example-state.json chat \
 
 `chat` is a light demonstration loop using OpenAI. Set `OPENAI_API_KEY` and, for a different service endpoint, `OPENAI_BASE_URL`. `--model` is required; `--now` accepts a date and time for relative words, defaulting to the horizon start. Each turn allows up to 12 translator steps: query reads the working problem, apply attempts a batch and passes its result to the next step, solve ends with a scheduling result, and message ends with text. Query and apply results inform subsequent steps. A successful chat solve prints the same `{"summary":{...},"items":[...]}` result as `solve`, honoring the solve step's stability setting.
 
-On a successful solve, chat saves the working problem and previous schedule. On an infeasible solve, it saves the working problem and retains the previous schedule. A message or step limit saves no problem changes. These completed turns save the user request and final assistant text in dialogue; intermediate step records are not saved. A message prints `{"message":"..."}`; the step limit prints `{"exhausted":true}`.
+On a successful solve, chat saves the working problem and previous schedule. On an infeasible solve, it saves the working problem, retains the previous schedule, and prints the same `{"infeasible":true,"conflicts":{...}}` result as `solve`. A message or step limit saves no problem changes. These completed turns save the user request and final assistant text in dialogue; intermediate step records are not saved. A message prints `{"message":"..."}`; the step limit prints `{"exhausted":true}`.
 
 ## Exit status
 
@@ -351,4 +373,4 @@ On a successful solve, chat saves the working problem and previous schedule. On 
 |---|---|
 | 0 | Success, including empty queries, messages, and help |
 | 1 | Rejection (`rejected` contains messages), input or runtime error (`error` contains text), or chat step limit |
-| 2 | Infeasible solve or chat solve (`{"infeasible":true}`) |
+| 2 | Infeasible solve or chat solve (`{"infeasible":true,"conflicts":{...}}`) |
