@@ -931,10 +931,14 @@ def command_record(
                     record["note"] = (
                         f"Window times were rounded {direction} to calendar slots."
                     )
-                warnings: list[str] = [
-                    _window_warning(task, condition.relation, constraint)
-                    for task in tasks_without_satisfying_start(problem, condition)
-                ]
+                warnings: list[str] = (
+                    [
+                        _window_warning(task, condition.relation, constraint)
+                        for task in tasks_without_satisfying_start(problem, condition)
+                    ]
+                    if constraint in problem.constraints
+                    else []
+                )
                 if warnings:
                     record["warnings"] = warnings
             return record
