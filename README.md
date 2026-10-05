@@ -206,6 +206,8 @@ Within each window, `date_range`, `weekdays`, and `time_range` combine with **an
 
 Times of day must have no offset and are interpreted in the calendar horizon's starting offset. Resolve words such as “tomorrow” into dates yourself. Windows are clipped to the horizon and overlapping or adjacent intervals are merged before rounding: `within` rounds inward to complete slots, while `avoid` rounds outward to include touched slots. A changed boundary produces a rounding `note` beside the returned `constraint_id` on add or replace. An empty expansion is rejected. The state keeps the entered windows; rounding is applied when solving.
 
+After the whole batch is applied, `add_constraint` and `replace_constraint` with a `time_window` condition check each listed movable task against the starts the `available_starts` query would return for its participants and duration, including fixed tasks and tasks from the same batch. If no such start keeps the whole task within the rounded windows, or out of them for `avoid`, that command's entry gets `warnings`, a list of messages naming the task. The batch is still saved and `apply` exits 0. A hard constraint then keeps the task unscheduled, or makes `solve` infeasible if the task is required; a soft constraint is violated whenever the task is scheduled.
+
 Each example below is a separate `apply` input. Replace task placeholders with identifiers from `query` or `apply`.
 
 Finish by 17:00 on October 19, including exactly 17:00:
