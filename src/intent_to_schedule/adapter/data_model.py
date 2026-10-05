@@ -660,7 +660,7 @@ class SummaryQueryData(DataModel):
     """Read the time grid and element counts."""
 
     kind: Literal["summary"] = Field(
-        description="summary returns grid with the horizon and slot, counts of people, movable tasks, fixed_tasks, and constraints, and has_previous, which is true when a saved solution exists."
+        description="summary returns grid with the horizon and slot, counts of people, tasks (movable), fixed_tasks, and constraints, and has_previous, which is true when a saved solution exists."
     )
 
 
