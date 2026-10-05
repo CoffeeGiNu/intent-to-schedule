@@ -998,6 +998,8 @@ def test_objective_policy_record_lists_every_coefficient() -> None:
         "weights": {"weak": 1.0, "normal": 5.0, "strong": 20.0},
         "per_count": 1.0,
         "stability_drop_cost_ratio": 0.5,
+        "hard_violation_weight": 1000.0,
+        "required_drop_cost": 1000000.0,
     }
 
 

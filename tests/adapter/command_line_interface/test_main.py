@@ -36,7 +36,13 @@ from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.application.command import AddTask
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Infeasible, Solved
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    DroppedRequiredTask,
+    DropReason,
+    Infeasible,
+    Solved,
+)
 from intent_to_schedule.application.translate import (
     ApplyStep,
     MessageStep,
@@ -1152,7 +1158,13 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     monkeypatch.setattr(openai, "OpenAI", lambda: client)
     solver: MagicMock = MagicMock()
     solver.solve.return_value = (
-        Infeasible() if outcome == "infeasible" else Solved(replacement)
+        Infeasible(
+            Conflicts(
+                (), (DroppedRequiredTask(added.id, added.name, DropReason.CONFLICT),)
+            )
+        )
+        if outcome == "infeasible"
+        else Solved(replacement)
     )
     now: datetime | None = start - timedelta(days=2) if explicit_now else None
     status: int = chat(
@@ -1188,7 +1200,15 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
         solver.solve.assert_called_once()
         if outcome == "infeasible":
             assert status == 2
-            assert output == {"infeasible": True}
+            assert output == {
+                "infeasible": True,
+                "conflicts": {
+                    "constraints": [],
+                    "dropped_required_tasks": [
+                        {"task_id": "added", "name": "Added", "reason": "conflict"}
+                    ],
+                },
+            }
             assert persisted.previous == state.previous
             assert persisted.dialogue[-1].text == "Infeasible."
         else:
@@ -1746,3 +1766,85 @@ def test_command_line_summary_and_queries_use_saved_solution(
     query_path.write_text('{"kind":"objective_policy"}')
     assert main(["--state", str(path), "query", "--file", str(query_path)]) == 0
     assert json.loads(capsys.readouterr().out)["per_count"] == DEFAULT_POLICY.per_count
+
+
+def test_infeasible_solve_reports_conflicts_and_keeps_previous(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Report relaxed conflicts with exit status 2 without changing the state."""
+    path: Path = initialized(tmp_path, capsys)
+    review: dict[str, object] = {
+        "id": "review",
+        "name": "Review",
+        "duration": "PT1H",
+        "participant_ids": ["alice"],
+        "importance": "low",
+        "required": True,
+        "stability": "normal",
+    }
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(json.dumps({"commands": [{"kind": "add_task", "task": review}]})),
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    status, output = invoke(capsys, "--state", str(path), "solve")
+    assert status == 0
+    commands: list[dict[str, object]] = [
+        {
+            "kind": "add_task",
+            "task": {**review, "id": "long", "name": "Long", "duration": "PT4H"},
+        },
+        constraint_command(
+            {
+                "kind": "time_bound",
+                "task_ids": ["review"],
+                "boundary": "start",
+                "relation": "at_or_after",
+                "at": "2026-10-01T12:00:00+00:00",
+            },
+            "late",
+        ),
+        constraint_command(
+            {
+                "kind": "time_bound",
+                "task_ids": ["review"],
+                "boundary": "end",
+                "relation": "at_or_before",
+                "at": "2026-10-01T12:00:00+00:00",
+            },
+            "early",
+        ),
+    ]
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": commands})))
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    before: str = path.read_text(encoding="utf-8")
+    status, output = invoke(capsys, "--state", str(path), "solve")
+    assert status == 2
+    hour: dict[str, object] = {"amount": 1.0, "unit": "hours"}
+    assert output == {
+        "infeasible": True,
+        "conflicts": {
+            "constraints": [
+                {
+                    "constraint_id": "late",
+                    "label": "Entered request",
+                    "requirement": {"kind": "hard"},
+                    "violation": hour,
+                    "cost": None,
+                    "breakdown": [
+                        {"task_id": "review", "violation": hour, "cost": None}
+                    ],
+                    "related_constraint_ids": ["early"],
+                }
+            ],
+            "dropped_required_tasks": [
+                {"task_id": "long", "name": "Long", "reason": "no_free_start"}
+            ],
+        },
+    }
+    assert path.read_text(encoding="utf-8") == before

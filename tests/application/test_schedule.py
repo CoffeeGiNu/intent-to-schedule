@@ -19,7 +19,7 @@ from intent_to_schedule.application.query import (
     ObjectivePolicyQuery,
 )
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Infeasible
+from intent_to_schedule.application.solve import Conflicts, Infeasible
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import (
     DailyLimitCondition,
@@ -67,7 +67,7 @@ class Solver:
     ) -> Infeasible:
         self.problem = problem
         self.previous = previous
-        return Infeasible()
+        return Infeasible(Conflicts((), ()))
 
 
 class Validator:
@@ -96,7 +96,9 @@ def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
     )
     original: SchedulingProblem = problem(first, second)
     solver: Solver = Solver()
-    assert Scheduling(solver, Validator()).solve(original, previous) == Infeasible()
+    assert Scheduling(solver, Validator()).solve(original, previous) == Infeasible(
+        Conflicts((), ())
+    )
     assert solver.problem is original
     assert solver.previous is previous
 

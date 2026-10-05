@@ -31,7 +31,12 @@ from intent_to_schedule.application.query import (
     SummaryQuery,
 )
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Infeasible, Solved, SolveResult
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    Infeasible,
+    Solved,
+    SolveResult,
+)
 from intent_to_schedule.application.translate import (
     ApplyRecord,
     ApplyStep,
@@ -90,7 +95,9 @@ def test_conversation_queries_use_scheduling_policy() -> None:
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
     step: QueryStep = QueryStep(ObjectivePolicyQuery())
     translator: FakeStepTranslator = FakeStepTranslator((step, MessageStep("done")))
-    service: Scheduling = Scheduling(FakeSolver(Infeasible()), AllOf(), policy)
+    service: Scheduling = Scheduling(
+        FakeSolver(Infeasible(Conflicts((), ()))), AllOf(), policy
+    )
     Conversation(translator, service).respond((), make_problem(), None)
     assert translator.calls[1][2] == (
         QueryRecord(step, Answered(ObjectivePolicyAnswer(policy))),
@@ -133,7 +140,7 @@ def test_message_ends_without_solving() -> None:
     translator: FakeStepTranslator = FakeStepTranslator(
         (MessageStep("When works for you?"), SolveStep(True))
     )
-    solver: FakeSolver = FakeSolver(Infeasible())
+    solver: FakeSolver = FakeSolver(Infeasible(Conflicts((), ())))
     dialogue: tuple[Utterance, ...] = (
         Utterance(Speaker.USER, "Can we talk about the schedule?"),
     )
@@ -152,7 +159,7 @@ def test_message_ends_without_solving() -> None:
     "result",
     [
         Solved(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
-        Infeasible(),
+        Infeasible(Conflicts((), ())),
     ],
 )
 def test_apply_then_solve_uses_working_problem_and_stability(
@@ -230,7 +237,8 @@ def test_query_uses_working_problem_and_records_result(
         (ApplyStep((AddTask(make_task()),)), query_step, MessageStep("done"))
     )
     response: Response = Conversation(
-        translator, Scheduling(FakeSolver(Infeasible()), AllOf())
+        translator,
+        Scheduling(FakeSolver(Infeasible(Conflicts((), ()))), AllOf()),
     ).respond((), problem, Schedule((), ()))
     assert response.problem is problem
     assert translator.calls[2][2][1] == QueryRecord(query_step, result)
@@ -242,7 +250,7 @@ def test_step_limit_returns_exhausted_after_repeated_rejections() -> None:
     translator: FakeStepTranslator = FakeStepTranslator(
         (ApplyStep((RemoveTask(TaskId("missing")),)),) * STEP_LIMIT + (SolveStep(True),)
     )
-    solver: FakeSolver = FakeSolver(Infeasible())
+    solver: FakeSolver = FakeSolver(Infeasible(Conflicts((), ())))
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
         (), problem, None
     )
@@ -258,7 +266,8 @@ def test_terminal_step_at_limit_is_honored() -> None:
         (ApplyStep(()),) * (STEP_LIMIT - 1) + (MessageStep("done"),)
     )
     response: Response = Conversation(
-        translator, Scheduling(FakeSolver(Infeasible()), AllOf())
+        translator,
+        Scheduling(FakeSolver(Infeasible(Conflicts((), ()))), AllOf()),
     ).respond((), make_problem(), None)
     assert response.outcome == MessageStep("done")
     assert len(translator.calls) == STEP_LIMIT

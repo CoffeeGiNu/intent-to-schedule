@@ -109,3 +109,19 @@ def test_stability_cost_increases_below_its_limit(
     ]
     assert all(earlier < later for earlier, later in pairwise(costs))
     assert costs[-1] < limit
+
+
+@pytest.mark.parametrize("field", ["hard_violation_weight", "required_drop_cost"])
+@pytest.mark.parametrize("value", [100.0, float("inf"), float("nan")])
+def test_policy_requires_relaxation_costs_above_every_soft_cost(
+    field: str, value: float
+) -> None:
+    """Reject relaxation costs that do not exceed every soft coefficient."""
+    with pytest.raises(ValueError):
+        replace(DEFAULT_POLICY, **{field: value})
+
+
+def test_policy_compares_relaxation_costs_with_scaled_count_weights() -> None:
+    """Reject a per count scale that makes a soft count cost exceed relaxation."""
+    with pytest.raises(ValueError):
+        replace(DEFAULT_POLICY, per_count=60.0)

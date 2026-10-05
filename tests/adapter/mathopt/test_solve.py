@@ -22,7 +22,14 @@ from intent_to_schedule.application.query import (
     AvailableStartsQuery,
 )
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Infeasible, Solved, SolveResult
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    DroppedRequiredTask,
+    DropReason,
+    Infeasible,
+    Solved,
+    SolveResult,
+)
 from intent_to_schedule.domain.availability import free_slots
 from intent_to_schedule.domain.calendar import (
     Availability,
@@ -840,3 +847,92 @@ def test_summary_matches_objective_of_the_same_solve(
         )
     assert summarize_schedule(value, solved.schedule, policy).moved_tasks == 0
     assert summarize_schedule(value, solved.schedule, policy).stability_cost == 0
+
+
+def test_infeasible_reports_contradictory_deadlines() -> None:
+    """Report a broken deadline and relate the contradicting one to it."""
+    day: datetime = datetime(2026, 10, 2, tzinfo=START.tzinfo)
+    item: Task = task("item", duration=HOUR, people=PEOPLE)
+    after: HardConstraint = HardConstraint(
+        ConstraintId("after"),
+        bound(item, Boundary.START, TimeBoundRelation.AT_OR_AFTER, day),
+    )
+    before: HardConstraint = HardConstraint(
+        ConstraintId("before"),
+        bound(item, Boundary.END, TimeBoundRelation.AT_OR_BEFORE, day),
+    )
+    value: SchedulingProblem = problem(
+        item,
+        constraints=(after, before),
+        start=day - timedelta(days=1),
+        end=day + timedelta(days=1),
+    )
+    result: SolveResult = SOLVER.solve(value)
+    assert isinstance(result, Infeasible)
+    assert result.conflicts.dropped_required_tasks == ()
+    assert result.conflicts.constraints
+    assert sum(
+        conflict.evaluation.violation.amount
+        for conflict in result.conflicts.constraints
+    ) == pytest.approx(1.0)
+    pair: set[ConstraintId] = {after.id, before.id}
+    for conflict in result.conflicts.constraints:
+        assert conflict.evaluation.constraint.id in pair
+        assert conflict.related_constraint_ids == tuple(
+            pair - {conflict.evaluation.constraint.id}
+        )
+
+
+def test_infeasible_reports_required_task_without_shared_free_start() -> None:
+    """Report a required task whose participants are never free together."""
+    first: PersonId = PersonId("first")
+    second: PersonId = PersonId("second")
+    item: Task = task("meeting", people=frozenset({first, second}))
+    value: SchedulingProblem = problem(
+        item,
+        availabilities=(
+            Availability(first, (TimeInterval(START, START + HOUR),)),
+            Availability(second, (TimeInterval(START + HOUR, START + 2 * HOUR),)),
+        ),
+    )
+    assert SOLVER.solve(value) == Infeasible(
+        Conflicts(
+            (), (DroppedRequiredTask(item.id, item.name, DropReason.NO_FREE_START),)
+        )
+    )
+
+
+def test_infeasible_reports_required_task_conflicting_with_another() -> None:
+    """Report one of two required tasks competing for the only free hour."""
+    first: Task = task("first", duration=HOUR, people=PEOPLE)
+    second: Task = task("second", duration=HOUR, people=PEOPLE)
+    result: SolveResult = SOLVER.solve(problem(first, second, end=START + HOUR))
+    assert isinstance(result, Infeasible)
+    assert result.conflicts.constraints == ()
+    dropped: tuple[DroppedRequiredTask, ...] = result.conflicts.dropped_required_tasks
+    assert len(dropped) == 1
+    assert (dropped[0].task_id, dropped[0].reason) in {
+        (first.id, DropReason.CONFLICT),
+        (second.id, DropReason.CONFLICT),
+    }
+
+
+@pytest.mark.parametrize("feasible", [True, False])
+def test_solver_relaxes_only_after_infeasible(feasible: bool) -> None:
+    """Solve once when feasible, and once more with the same limit when infeasible."""
+    item: Task = task("timed", people=PEOPLE)
+    limit: timedelta = timedelta(seconds=1)
+    availabilities: tuple[Availability, ...] | None = (
+        None if feasible else (Availability(PERSON, ()),)
+    )
+    solve_mock: MagicMock
+    with patch(
+        "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", wraps=mathopt.solve
+    ) as solve_mock:
+        result: SolveResult = MathOptSchedulingSolver(
+            DEFAULT_POLICY, time_limit=limit
+        ).solve(problem(item, availabilities=availabilities))
+    assert isinstance(result, Solved if feasible else Infeasible)
+    assert [
+        call.kwargs["params"].time_limit for call in solve_mock.call_args_list
+    ] == [limit] * (1 if feasible else 2)
