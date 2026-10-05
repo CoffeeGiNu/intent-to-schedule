@@ -719,6 +719,208 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
     }
 
 
+UNSCHEDULED: str = "this hard constraint keeps the task unscheduled."
+INFEASIBLE: str = (
+    "this hard constraint makes solve infeasible because the task is required."
+)
+VIOLATED: str = "this soft constraint is violated whenever the task is scheduled."
+
+
+def late_start_problem(required: bool = False) -> SchedulingProblem:
+    """Build a three-hour review for a person working from 11:00 to the 17:00 horizon end."""
+    value: SchedulingProblem = problem(people=(PERSON,))
+    review: Task = Task(
+        TaskId("review"),
+        "Review",
+        3 * HOUR,
+        frozenset({PERSON}),
+        Importance.LOW,
+        required,
+    )
+    working: Availability = Availability(
+        PERSON, (TimeInterval(START + 2 * HOUR, START + 8 * HOUR),)
+    )
+    return replace(
+        value,
+        calendar=replace(value.calendar, availabilities=(working,)),
+        tasks=(review,),
+    )
+
+
+def window_warning(relation: str, consequence: str) -> str:
+    """Build the warning for the review task without a satisfying start."""
+    placement: str = (
+        "within the windows" if relation == "within" else "out of the windows"
+    )
+    return (
+        "Task review (Review) has no available start (all participants available "
+        f"and free of fixed tasks) that keeps the whole task {placement} after "
+        f"rounding; {consequence}"
+    )
+
+
+@pytest.mark.parametrize("kind", ["add_constraint", "replace_constraint"])
+@pytest.mark.parametrize(
+    "relation, time_range, warned",
+    [
+        ("within", {"start": "00:00", "end": "12:00"}, True),
+        ("within", {"start": "00:00", "end": "14:00"}, False),
+        ("avoid", {"start": "10:00", "end": None}, True),
+        ("avoid", {"start": "14:00", "end": None}, False),
+    ],
+)
+def test_apply_warns_when_no_available_start_satisfies_time_window(
+    kind: str,
+    relation: str,
+    time_range: dict[str, str | None],
+    warned: bool,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Warn about a window outside working hours while saving the batch."""
+    value: SchedulingProblem = late_start_problem()
+    if kind == "replace_constraint":
+        existing: HardConstraint = HardConstraint(
+            ConstraintId("window"),
+            TimeBoundCondition(
+                frozenset({TaskId("review")}),
+                Boundary.END,
+                TimeBoundRelation.AT_OR_BEFORE,
+                START + 8 * HOUR,
+            ),
+        )
+        value = replace(value, constraints=(existing,))
+    path: Path = tmp_path / "state.json"
+    save_problem(path, value)
+    condition: dict[str, object] = {
+        "kind": "time_window",
+        "task_ids": ["review"],
+        "relation": relation,
+        "windows": [{"time_range": time_range}],
+    }
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps({"commands": [constraint_command(condition, "window", kind)]})
+        ),
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    record: dict[str, object] = {"kind": kind, "constraint_id": "window"}
+    if warned:
+        record["warnings"] = [window_warning(relation, UNSCHEDULED)]
+    assert output == {"executed": [record]}
+    saved: ConstraintData = load_state(path).problem.constraints[0]
+    assert isinstance(saved.condition, TimeWindowConditionData)
+    assert saved.condition.relation == relation
+
+
+@pytest.mark.parametrize(
+    "requirement, required, consequence",
+    [
+        ({"kind": "hard"}, True, INFEASIBLE),
+        ({"kind": "soft", "strength": "strong"}, False, VIOLATED),
+        ({"kind": "soft", "strength": "weak"}, True, VIOLATED),
+    ],
+)
+def test_window_warning_states_the_consequence_of_the_requirement(
+    requirement: dict[str, str],
+    required: bool,
+    consequence: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explain what an unsatisfiable window does for hard and soft requirements."""
+    path: Path = tmp_path / "state.json"
+    save_problem(path, late_start_problem(required))
+    command: dict[str, Any] = constraint_command(
+        {
+            "kind": "time_window",
+            "task_ids": ["review"],
+            "relation": "within",
+            "windows": [{"time_range": {"start": "00:00", "end": "12:00"}}],
+        },
+        "window",
+    )
+    command["constraint"]["requirement"] = requirement
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"commands": [command]})))
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    assert output == {
+        "executed": [
+            {
+                "kind": "add_constraint",
+                "constraint_id": "window",
+                "warnings": [window_warning("within", consequence)],
+            }
+        ]
+    }
+
+
+def test_apply_warns_using_fixed_tasks_added_later_in_the_batch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Judge windows against the whole batch and skip fixed tasks in the condition."""
+    path: Path = tmp_path / "state.json"
+    save_problem(path, late_start_problem())
+    window: dict[str, object] = {
+        "kind": "time_window",
+        "relation": "within",
+        "windows": [{"time_range": {"start": "00:00", "end": "15:00"}}],
+    }
+    absence: dict[str, object] = {
+        "id": "absence",
+        "name": "Absence",
+        "start": (START + 4 * HOUR).isoformat(),
+        "duration": "PT3H",
+        "participant_ids": [PERSON.value],
+    }
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "commands": [
+                        constraint_command(
+                            {**window, "task_ids": ["review"]}, "review-window"
+                        ),
+                        {"kind": "add_task", "task": absence},
+                        constraint_command(
+                            {**window, "task_ids": ["absence"]}, "absence-window"
+                        ),
+                    ]
+                }
+            )
+        ),
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    assert output == {
+        "executed": [
+            {
+                "kind": "add_constraint",
+                "constraint_id": "review-window",
+                "warnings": [window_warning("within", UNSCHEDULED)],
+            },
+            {"kind": "add_task", "task_id": "absence", "name": "Absence"},
+            {"kind": "add_constraint", "constraint_id": "absence-window"},
+        ]
+    }
+    assert len(load_state(path).problem.constraints) == 2
+
+
 def query_state(tmp_path: Path) -> Path:
     """Create query state without applying commands or solving."""
     calendar: CalendarInput = CalendarInput.model_validate(calendar_data())
