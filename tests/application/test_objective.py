@@ -105,6 +105,8 @@ def test_hard_evaluations_have_no_cost_and_do_not_change_soft_totals() -> None:
     assert soft.cost == DEFAULT_POLICY.weight(Strength.STRONG)
     assert isinstance(satisfied, SoftConstraintEvaluation)
     assert satisfied.cost == 0.0
-    summary: ScheduleSummary = summarize_schedule(value, previous, DEFAULT_POLICY)
+    summary: ScheduleSummary = summarize_schedule(
+        value, previous, DEFAULT_POLICY, None, False
+    )
     assert summary.soft_constraints_cost == DEFAULT_POLICY.weight(Strength.STRONG)
     assert summary.violated_soft_constraints == 1
