@@ -12,7 +12,12 @@ from openai.lib._parsing._responses import type_to_text_format_param
 from openai.types.responses import ResponseFormatTextConfigParam
 from pydantic import ValidationError
 
-from intent_to_schedule.adapter.data_model import ScheduleData
+from intent_to_schedule.adapter.data_model import (
+    APPLY_OPERATION_DESCRIPTION,
+    QUERY_OPERATION_DESCRIPTION,
+    SCHEDULE_OPERATION_DESCRIPTION,
+    ScheduleData,
+)
 from intent_to_schedule.adapter.openai.translate import (
     OpenAIStepTranslator,
     StepOutput,
@@ -193,10 +198,24 @@ def test_translate_sends_summary_dialogue_and_step_results() -> None:
     assert context["current_time"] == now.isoformat()
     prompt: str = messages[0]["content"]
     assert "query, apply, schedule, or message" in prompt
+    assert "limit of 12 steps" in prompt
     assert "use schedule to create the schedule and end the turn" in prompt
-    assert "An accepted apply is saved immediately" in prompt
-    assert "a rejected batch changes nothing" in prompt
-    assert "Set schedule stability false" in prompt
+    text_format: ResponseFormatTextConfigParam = type_to_text_format_param(StepOutput)
+    assert text_format["type"] == "json_schema"
+    schema: dict[str, object] = text_format["schema"]
+    definitions: dict[str, dict[str, object]] = cast(
+        dict[str, dict[str, object]], schema["$defs"]
+    )
+    apply_description: str = cast(str, definitions["ApplyOutput"]["description"])
+    assert "An accepted batch is saved immediately" in apply_description
+    assert "a rejected batch changes nothing" in apply_description
+    schedule_properties: dict[str, dict[str, object]] = cast(
+        dict[str, dict[str, object]], definitions["ScheduleOutput"]["properties"]
+    )
+    stability_description: str = cast(
+        str, schedule_properties["stability"]["description"]
+    )
+    assert "Use false only for a clear request" in stability_description
     assert context["summary"] == {
         "kind": "summary",
         "grid": {
@@ -287,6 +306,19 @@ def test_installed_structured_output_helper_marks_defaulted_fields_required() ->
     assert '"horizon"' in json.dumps(agenda_properties["date_range"])
     assert "oneOf" not in json.dumps(schema)
     assert "discriminator" not in json.dumps(schema)
+
+
+def test_step_output_schema_uses_shared_operation_descriptions() -> None:
+    """Expose each shared operation description in its strict output schema."""
+    text_format: ResponseFormatTextConfigParam = type_to_text_format_param(StepOutput)
+    assert text_format["type"] == "json_schema"
+    schema: dict[str, object] = text_format["schema"]
+    definitions: dict[str, dict[str, object]] = cast(
+        dict[str, dict[str, object]], schema["$defs"]
+    )
+    assert definitions["ApplyOutput"]["description"] == APPLY_OPERATION_DESCRIPTION
+    assert definitions["QueryOutput"]["description"] == QUERY_OPERATION_DESCRIPTION
+    assert definitions["ScheduleOutput"]["description"] == SCHEDULE_OPERATION_DESCRIPTION
 
 
 def test_explicit_window_values_from_the_strict_schema_convert() -> None:

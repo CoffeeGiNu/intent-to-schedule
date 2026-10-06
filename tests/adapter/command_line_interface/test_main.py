@@ -31,8 +31,11 @@ from intent_to_schedule.adapter.local.store import (
     save_state,
 )
 from intent_to_schedule.adapter.data_model import (
+    APPLY_OPERATION_DESCRIPTION,
     CalendarInputData,
     ConstraintData,
+    QUERY_OPERATION_DESCRIPTION,
+    SCHEDULE_OPERATION_DESCRIPTION,
     SoftRequirementData,
     TimeWindowConditionData,
     convert_calendar_input,
@@ -254,6 +257,7 @@ def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
                 "{status, conflicts}",
                 "time_limit",
                 "previous schedule",
+                "--no-stability",
             ),
         ),
         (
@@ -265,21 +269,18 @@ def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
                 "no_feasible_solution",
                 "solution_not_found",
                 "Exit codes: 0, 2, and 3",
-                "{status, summary, items}",
-                "{status, conflicts}",
-                "time_limit",
                 "No feasible solution.",
                 "Solution not found.",
             ),
         ),
     ],
 )
-def test_schedule_and_chat_help_describe_solution_results(
+def test_schedule_and_chat_help_describe_results_and_chat_policy(
     capsys: pytest.CaptureFixture[str],
     command: str,
     required_text: tuple[str, ...],
 ) -> None:
-    """Describe solution statuses and exit codes in both command helps."""
+    """Describe schedule output and retain chat-specific policy in help."""
     system_exit: pytest.ExceptionInfo[SystemExit]
     with pytest.raises(SystemExit) as system_exit:
         main([command, "--help"])
@@ -377,6 +378,44 @@ def test_init_show_schema_and_round_trip(
     assert status == 0
     assert output["title"] == "CommandsData"
     assert output["required"] == ["commands"]
+
+
+@pytest.mark.parametrize(
+    ("command", "description"),
+    [
+        ("apply", APPLY_OPERATION_DESCRIPTION),
+        ("query", QUERY_OPERATION_DESCRIPTION),
+    ],
+)
+def test_schema_uses_the_shared_operation_description(
+    capsys: pytest.CaptureFixture[str], command: str, description: str
+) -> None:
+    """Expose the shared apply or query description at the schema root."""
+    status: int
+    output: dict[str, Any]
+    status, output = invoke(capsys, "schema", command)
+    assert status == 0
+    assert output["description"] == description
+
+
+@pytest.mark.parametrize(
+    ("command", "description"),
+    [
+        ("apply", APPLY_OPERATION_DESCRIPTION),
+        ("query", QUERY_OPERATION_DESCRIPTION),
+        ("schedule", SCHEDULE_OPERATION_DESCRIPTION),
+    ],
+)
+def test_command_help_uses_the_shared_operation_description(
+    capsys: pytest.CaptureFixture[str], command: str, description: str
+) -> None:
+    """Show the unchanged shared description in each operation's help."""
+    error: pytest.ExceptionInfo[SystemExit]
+    with pytest.raises(SystemExit) as error:
+        main(["help", command])
+    assert error.value.code == 0
+    output: str = " ".join(capsys.readouterr().out.split())
+    assert description in output
 
 
 def test_init_rejects_invalid_calendar_without_writing_state(

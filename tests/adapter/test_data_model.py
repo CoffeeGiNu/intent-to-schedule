@@ -1235,8 +1235,8 @@ def test_task_descriptions_name_the_schedule_command() -> None:
     assert "if no feasible schedule exists" in required_description
     assert "solve" not in required_description
     assert stability_description is not None
-    assert "schedule --no-stability" in stability_description
-    assert "solve --no-stability" not in stability_description
+    assert "schedule stability is true" in stability_description
+    assert "--no-stability" not in stability_description
     assert (
         "moved-task counts still include changed starts whenever a previous schedule exists"
         in stability_description
