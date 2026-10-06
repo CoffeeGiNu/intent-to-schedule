@@ -376,8 +376,8 @@ def solve(path: Path, service: Scheduling, stability: bool) -> int:
     """Solve the current problem and persist the result."""
     state: State = load_state(path)
     problem: SchedulingProblem = to_problem(state.problem)
-    previous: Schedule | None = to_schedule(state.previous) if stability else None
-    result: Solved | Infeasible = service.solve(problem, previous)
+    previous: Schedule | None = to_schedule(state.previous)
+    result: Solved | Infeasible = service.solve(problem, previous, stability)
     match result:
         case Infeasible():
             emit(infeasible_output(result))

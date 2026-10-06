@@ -80,7 +80,7 @@ class SchedulingSolver(Protocol):
     """Port that solves a SchedulingProblem."""
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
     ) -> Schedule | Infeasible: ...
 
 

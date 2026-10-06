@@ -68,9 +68,7 @@ class Conversation:
             elif isinstance(step, SolveStep):
                 return Response(
                     working,
-                    self._scheduling.solve(
-                        working, previous if step.stability else None
-                    ),
+                    self._scheduling.solve(working, previous, step.stability),
                 )
             else:
                 return Response(problem, step)

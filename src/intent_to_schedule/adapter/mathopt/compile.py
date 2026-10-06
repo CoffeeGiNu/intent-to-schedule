@@ -36,6 +36,7 @@ def compile_problem(
     problem: SchedulingProblem,
     policy: ObjectivePolicy,
     previous: Schedule | None = None,
+    stability: bool = True,
     relaxed: bool = False,
 ) -> CompiledProblem:
     """Build a MathOpt model, optionally relaxing hard constraints and required tasks."""
@@ -58,7 +59,7 @@ def compile_problem(
     objective_terms: list[mathopt.LinearBase] = []
     previous_starts: dict[TaskId, datetime] = (
         {item.task_id: item.start for item in previous.scheduled}
-        if previous is not None
+        if stability and previous is not None
         else {}
     )
     incidence: dict[PersonId, dict[int, list[mathopt.Variable]]] = {

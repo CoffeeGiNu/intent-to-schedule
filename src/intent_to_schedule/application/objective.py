@@ -115,6 +115,7 @@ def summarize_schedule(
     schedule: Schedule,
     policy: ObjectivePolicy,
     previous: Schedule | None = None,
+    stability: bool = True,
 ) -> ScheduleSummary:
     """Compute objective costs and counts from a solved schedule."""
     evaluations: tuple[ConstraintEvaluation, ...] = evaluate_constraints(
@@ -123,7 +124,7 @@ def summarize_schedule(
     tasks: dict[TaskId, Task] = {task.id: task for task in problem.tasks}
     previous_starts: dict[TaskId, datetime] = (
         {item.task_id: item.start for item in previous.scheduled}
-        if previous is not None
+        if stability and previous is not None
         else {}
     )
     stability_cost: float = 0.0

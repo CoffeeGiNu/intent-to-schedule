@@ -55,12 +55,13 @@ class Scheduling:
         return result
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
     ) -> SolveResult:
-        """Solve a problem, keeping Tasks near their previous start."""
-        result: Schedule | Infeasible = self._solver.solve(problem, previous)
+        """Solve a problem, keeping Tasks near their previous start with stability."""
+        result: Schedule | Infeasible = self._solver.solve(problem, previous, stability)
         if isinstance(result, Infeasible):
             return result
         return Solved(
-            result, summarize_schedule(problem, result, self._policy, previous)
+            result,
+            summarize_schedule(problem, result, self._policy, previous, stability),
         )

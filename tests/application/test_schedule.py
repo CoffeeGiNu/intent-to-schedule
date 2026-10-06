@@ -142,7 +142,11 @@ def test_scheduling_summarizes_solver_schedule_with_its_policy() -> None:
     schedule: Schedule = Schedule(
         (
             ScheduledTask(
-                first.id, first.name, START, START + first.duration, first.participant_ids
+                first.id,
+                first.name,
+                START,
+                START + first.duration,
+                first.participant_ids,
             ),
         ),
         (DroppedTask(second.id, second.name),),

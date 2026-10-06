@@ -29,28 +29,35 @@ class MathOptSchedulingSolver(SchedulingSolver):
         self.time_limit: timedelta | None = time_limit
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None = None
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None = None,
+        stability: bool = True,
     ) -> Schedule | Infeasible:
         """Solve a SchedulingProblem, explaining infeasibility with a relaxed solve."""
         termination: mathopt.Termination
         schedule: Schedule | None
-        termination, schedule = self._schedule(problem, previous, False)
+        termination, schedule = self._schedule(problem, previous, stability, False)
         if schedule is not None:
             return schedule
         if termination.reason is not mathopt.TerminationReason.INFEASIBLE:
             raise RuntimeError(f"MathOpt solve failed: {termination.reason}")
         relaxed: Schedule | None
-        termination, relaxed = self._schedule(problem, previous, True)
+        termination, relaxed = self._schedule(problem, previous, stability, True)
         if relaxed is None:
             return Infeasible(ConflictsNotFound(_termination_reason(termination)))
         return Infeasible(find_conflicts(problem, relaxed, self.policy))
 
     def _schedule(
-        self, problem: SchedulingProblem, previous: Schedule | None, relaxed: bool
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None,
+        stability: bool,
+        relaxed: bool,
     ) -> tuple[mathopt.Termination, Schedule | None]:
         """Solve the compiled problem and read its termination and any schedule found."""
         compiled: CompiledProblem = compile_problem(
-            problem, self.policy, previous, relaxed
+            problem, self.policy, previous, stability, relaxed
         )
         parameters: mathopt.SolveParameters = mathopt.SolveParameters(
             time_limit=self.time_limit
