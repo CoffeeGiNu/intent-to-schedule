@@ -34,6 +34,7 @@ from intent_to_schedule.adapter.data_model import (
 )
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.application.command import AddTask
+from intent_to_schedule.application.objective import ScheduleSummary
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import (
@@ -41,12 +42,16 @@ from intent_to_schedule.application.solve import (
     ConflictsNotFound,
     DroppedRequiredTask,
     DropReason,
-    Infeasible,
+    FeasibleSolution,
+    NoFeasibleSolution,
+    OptimalSolution,
+    Solution,
+    SolutionNotFound,
 )
 from intent_to_schedule.application.translate import (
     ApplyStep,
     MessageStep,
-    SolveStep,
+    ScheduleStep,
     Speaker,
     Step,
     Utterance,
@@ -181,7 +186,7 @@ def invoke(
     return status, json.loads(output)
 
 
-def solve_summary(
+def schedule_summary(
     scheduled_tasks: int = 0,
     dropped_tasks: int = 0,
     dropped_cost: float = 0.0,
@@ -227,6 +232,68 @@ def initialized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
     }
     assert state_path.exists()
     return state_path
+
+
+@pytest.mark.parametrize(
+    ("command", "required_text"),
+    [
+        (
+            "schedule",
+            (
+                "optimal",
+                "feasible",
+                "no_feasible_solution",
+                "solution_not_found",
+                "Exit codes: 0, 2, and 3",
+                "{status, summary, items}",
+                "{status, conflicts}",
+                "time_limit",
+                "previous schedule",
+            ),
+        ),
+        (
+            "chat",
+            (
+                "schedule",
+                "optimal",
+                "feasible",
+                "no_feasible_solution",
+                "solution_not_found",
+                "Exit codes: 0, 2, and 3",
+                "{status, summary, items}",
+                "{status, conflicts}",
+                "time_limit",
+                "No feasible solution.",
+                "Solution not found.",
+            ),
+        ),
+    ],
+)
+def test_schedule_and_chat_help_describe_solution_results(
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    required_text: tuple[str, ...],
+) -> None:
+    """Describe solution statuses and exit codes in both command helps."""
+    system_exit: pytest.ExceptionInfo[SystemExit]
+    with pytest.raises(SystemExit) as system_exit:
+        main([command, "--help"])
+    assert system_exit.value.code == 0
+    output: str = capsys.readouterr().out
+    flattened_output: str = " ".join(output.split())
+    phrase: str
+    for phrase in required_text:
+        assert phrase in flattened_output
+
+
+def test_solve_command_has_no_alias(capsys: pytest.CaptureFixture[str]) -> None:
+    """Reject the command name that was replaced by schedule."""
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "solve")
+    assert status == 1
+    assert "invalid choice" in str(output["error"])
+    assert "schedule" in str(output["error"])
 
 
 def test_cli_query_uses_scheduling_policy(
@@ -361,9 +428,9 @@ def test_init_fixed_tasks_persists_ids_and_round_trips(
     assert fixed.start == datetime(2026, 10, 1, 9, 15, tzinfo=timezone.utc)
     assert fixed.duration == timedelta(minutes=30)
     assert to_problem(to_problem_state(problem)) == problem
-    status, output = invoke(capsys, "solve", "--state", str(path))
+    status, output = invoke(capsys, "schedule", "--state", str(path))
     assert status == 0
-    assert output == {"summary": solve_summary(), "items": []}
+    assert output == {"status": "optimal", "summary": schedule_summary(), "items": []}
 
 
 def test_init_rejects_fixed_task_with_unknown_participant(
@@ -395,7 +462,7 @@ def test_init_rejects_fixed_task_with_unknown_participant(
     assert not path.exists()
 
 
-def test_apply_reject_and_solve(
+def test_apply_reject_and_schedule(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Apply commands, preserve rejected state, and keep the second solve stable."""
@@ -481,10 +548,11 @@ def test_apply_reject_and_solve(
     assert output == {"rejected": ["Task missing does not exist"]}
     assert path.read_text(encoding="utf-8") == unchanged
 
-    status, output = invoke(capsys, "--state", str(path), "solve")
+    status, output = invoke(capsys, "--state", str(path), "schedule")
     assert status == 0
     assert output == {
-        "summary": solve_summary(scheduled_tasks=1),
+        "status": "optimal",
+        "summary": schedule_summary(scheduled_tasks=1),
         "items": [
             {
                 "status": "scheduled",
@@ -498,7 +566,7 @@ def test_apply_reject_and_solve(
     }
     assert load_state(path).previous is not None
     second: dict[str, object]
-    status, second = invoke(capsys, "--state", str(path), "solve")
+    status, second = invoke(capsys, "--state", str(path), "schedule")
     assert status == 0
     assert second == output
 
@@ -556,7 +624,7 @@ def test_apply_uses_given_ids_within_the_same_batch(
             {"kind": "add_constraint", "constraint_id": "review-at-ten"},
         ]
     }
-    status, output = invoke(capsys, "--state", str(path), "solve")
+    status, output = invoke(capsys, "--state", str(path), "schedule")
     assert status == 0
     assert output["items"] == [
         {
@@ -777,7 +845,7 @@ def test_show_and_constraints_query_write_omitted_window_fields_explicitly(
 
 UNSCHEDULED: str = "this hard constraint keeps the task unscheduled."
 INFEASIBLE: str = (
-    "this hard constraint makes solve infeasible because the task is required."
+    "this hard constraint makes scheduling infeasible because the task is required."
 )
 VIOLATED: str = "this soft constraint is violated whenever the task is scheduled."
 
@@ -1171,12 +1239,13 @@ def test_query_previous_schedule_and_schema(
     [
         ("message", True, False),
         ("exhausted", True, True),
-        ("infeasible", True, False),
-        ("solved", False, True),
-        ("solved", True, False),
+        ("optimal", True, False),
+        ("feasible", False, True),
+        ("no_feasible_solution", True, False),
+        ("solution_not_found", True, True),
     ],
 )
-def test_chat_persists_only_solve_changes_and_uses_clock(
+def test_chat_persists_schedule_outcomes_and_uses_clock(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -1184,7 +1253,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     explicit_now: bool,
     stability: bool,
 ) -> None:
-    """Persist dialogue for every turn and problem changes only after solve."""
+    """Persist dialogue for every turn and problem changes only after scheduling."""
     start: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
     horizon: TimeInterval = TimeInterval(start, start + timedelta(hours=3))
     existing: Task = Task(
@@ -1259,7 +1328,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     terminal: Step = (
         MessageStep("When works for you?")
         if outcome == "message"
-        else SolveStep(stability)
+        else ScheduleStep(stability)
     )
     steps: list[Step] = [ApplyStep((AddTask(added),)), terminal]
     if outcome == "exhausted":
@@ -1274,15 +1343,29 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     client: MagicMock = MagicMock()
     monkeypatch.setattr(openai, "OpenAI", lambda: client)
     solver: MagicMock = MagicMock()
-    solver.solve.return_value = (
-        Infeasible(
+    summary_value: ScheduleSummary = ScheduleSummary(
+        0.0,
+        0.0,
+        5 / (1 + 5 / 50) if stability else 0.0,
+        2,
+        0,
+        0,
+        1 if stability else 0,
+    )
+    schedule_result: OptimalSolution | FeasibleSolution | NoFeasibleSolution | SolutionNotFound = (
+        NoFeasibleSolution(
             Conflicts(
                 (), (DroppedRequiredTask(added.id, added.name, DropReason.CONFLICT),)
             )
         )
-        if outcome == "infeasible"
-        else replacement
+        if outcome == "no_feasible_solution"
+        else SolutionNotFound("time_limit")
+        if outcome == "solution_not_found"
+        else FeasibleSolution(replacement, summary_value)
+        if outcome == "feasible"
+        else OptimalSolution(replacement, summary_value)
     )
+    solver.solve.return_value = schedule_result
     now: datetime | None = start - timedelta(days=2) if explicit_now else None
     status: int = chat(
         path, "new request", "demo-model", now, Scheduling(solver, AllOf())
@@ -1315,10 +1398,10 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
     else:
         assert to_problem(persisted.problem).tasks == (existing, added)
         solver.solve.assert_called_once()
-        if outcome == "infeasible":
+        if outcome == "no_feasible_solution":
             assert status == 2
             assert output == {
-                "infeasible": True,
+                "status": "no_feasible_solution",
                 "conflicts": {
                     "status": "found",
                     "constraints": [],
@@ -1328,12 +1411,21 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
                 },
             }
             assert persisted.previous == state.previous
-            assert persisted.dialogue[-1].text == "Infeasible."
+            assert persisted.dialogue[-1].text == "No feasible solution."
+        elif outcome == "solution_not_found":
+            assert status == 3
+            assert output == {
+                "status": "solution_not_found",
+                "reason": "time_limit",
+            }
+            assert persisted.previous == state.previous
+            assert persisted.dialogue[-1].text == "Solution not found."
         else:
             assert status == 0
             assert persisted.previous == to_schedule_state(replacement)
             assert output == {
-                "summary": solve_summary(
+                "status": outcome,
+                "summary": schedule_summary(
                     scheduled_tasks=2,
                     stability_cost=5 / (1 + 5 / 50) if stability else 0.0,
                     moved_tasks=1 if stability else 0,
@@ -1358,6 +1450,93 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
                 ],
             }
             assert persisted.dialogue[-1].text == "Scheduled."
+
+
+@pytest.mark.parametrize(
+    ("outcome", "exit_status", "saves_schedule"),
+    [
+        ("optimal", 0, True),
+        ("feasible", 0, True),
+        ("no_feasible_solution", 2, False),
+        ("solution_not_found", 3, False),
+    ],
+)
+def test_schedule_reports_each_outcome_and_persists_only_solutions(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+    exit_status: int,
+    saves_schedule: bool,
+) -> None:
+    """Report each solution result and save only schedules with a solution."""
+    item: Task = task("review")
+    value: SchedulingProblem = problem(item)
+    previous: Schedule = Schedule((), ())
+    scheduled: Schedule = Schedule(
+        (
+            ScheduledTask(
+                item.id,
+                item.name,
+                START,
+                START + item.duration,
+                item.participant_ids,
+            ),
+        ),
+        (),
+    )
+    summary_value: ScheduleSummary = ScheduleSummary(0.0, 0.0, 0.0, 1, 0, 0, 0)
+    result: Solution = (
+        OptimalSolution(scheduled, summary_value)
+        if outcome == "optimal"
+        else FeasibleSolution(scheduled, summary_value)
+        if outcome == "feasible"
+        else NoFeasibleSolution(ConflictsNotFound("time_limit"))
+        if outcome == "no_feasible_solution"
+        else SolutionNotFound("time_limit")
+    )
+    path: Path = tmp_path / "state.json"
+    save_problem(path, value, previous)
+    before: State = load_state(path)
+    monkeypatch.setattr(
+        MathOptSchedulingSolver, "solve", MagicMock(return_value=result)
+    )
+
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "schedule")
+
+    assert status == exit_status
+    expected: dict[str, object] = (
+        {
+            "status": outcome,
+            "summary": schedule_summary(scheduled_tasks=1),
+            "items": [
+                {
+                    "status": "scheduled",
+                    "task_id": "review",
+                    "name": "review",
+                    "start": START.isoformat(),
+                    "end": (START + HOUR).isoformat(),
+                    "participant_ids": [],
+                }
+            ],
+        }
+        if outcome in {"optimal", "feasible"}
+        else {
+            "status": "no_feasible_solution",
+            "conflicts": {"status": "not_found", "reason": "time_limit"},
+        }
+        if outcome == "no_feasible_solution"
+        else {"status": "solution_not_found", "reason": "time_limit"}
+    )
+    assert output == expected
+    after: State = load_state(path)
+    assert after.problem == before.problem
+    assert after.dialogue == before.dialogue
+    assert after.previous == (
+        to_schedule_state(scheduled) if saves_schedule else before.previous
+    )
 
 
 def test_schedule_entries_survive_task_changes(
@@ -1405,7 +1584,7 @@ def test_schedule_entries_survive_task_changes(
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
-    status, output = invoke(capsys, "--state", str(path), "solve")
+    status, output = invoke(capsys, "--state", str(path), "schedule")
     expected: list[dict[str, str]] = [
         {
             "status": "scheduled",
@@ -1419,7 +1598,8 @@ def test_schedule_entries_survive_task_changes(
     ]
     assert status == 0
     assert output == {
-        "summary": solve_summary(scheduled_tasks=1, dropped_tasks=1, dropped_cost=5.0),
+        "status": "optimal",
+        "summary": schedule_summary(scheduled_tasks=1, dropped_tasks=1, dropped_cost=5.0),
         "items": expected,
     }
     persisted: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
@@ -1504,7 +1684,7 @@ def test_schedule_entries_survive_task_changes(
 
 
 @pytest.mark.parametrize("stability", [False, True])
-def test_solve_option_passes_previous_schedule(
+def test_schedule_option_passes_previous_schedule(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -1515,14 +1695,17 @@ def test_solve_option_passes_previous_schedule(
     state: State = load_state(path)
     previous: Schedule = Schedule((), ())
     save_state(path, state.model_copy(update={"previous": to_schedule_state(previous)}))
-    solver: MagicMock = MagicMock(return_value=previous)
+    summary_value: ScheduleSummary = ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
+    solver: MagicMock = MagicMock(
+        return_value=OptimalSolution(previous, summary_value)
+    )
     monkeypatch.setattr(MathOptSchedulingSolver, "solve", solver)
     arguments: tuple[str, ...] = () if stability else ("--no-stability",)
     status: int
     output: dict[str, object]
-    status, output = invoke(capsys, "--state", str(path), "solve", *arguments)
+    status, output = invoke(capsys, "--state", str(path), "schedule", *arguments)
     assert status == 0
-    assert output == {"summary": solve_summary(), "items": []}
+    assert output == {"status": "optimal", "summary": schedule_summary(), "items": []}
     solver.assert_called_once_with(
         to_problem(state.problem), DEFAULT_POLICY, previous, stability
     )
@@ -1579,7 +1762,7 @@ def test_empty_windows_rejected_atomically(
     assert path.read_bytes() == before
 
 
-def test_command_line_add_solve_replace_solve(
+def test_command_line_add_schedule_replace_schedule(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Solve a batch with given identifiers and solve after replacement."""
@@ -1633,7 +1816,7 @@ def test_command_line_add_solve_replace_solve(
             "note": "Window times were rounded inward to calendar slots.",
         },
     ]
-    assert main(["--state", str(path), "solve"]) == 0
+    assert main(["--state", str(path), "schedule"]) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["items"] == [
         {
@@ -1669,7 +1852,7 @@ def test_command_line_add_solve_replace_solve(
     assert json.loads(capsys.readouterr().out)["executed"] == [
         {"kind": "replace_constraint", "constraint_id": "bound"}
     ]
-    assert main(["--state", str(path), "solve"]) == 0
+    assert main(["--state", str(path), "schedule"]) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["items"] == [
         {
@@ -1901,7 +2084,7 @@ def test_command_line_summary_and_queries_use_saved_solution(
     )
     path: Path = tmp_path / "state.json"
     save_problem(path, value, previous)
-    arguments: list[str] = ["--state", str(path), "solve"] + (
+    arguments: list[str] = ["--state", str(path), "schedule"] + (
         [] if stability else ["--no-stability"]
     )
     assert main(arguments) == 0
@@ -1938,7 +2121,7 @@ def test_command_line_summary_and_queries_use_saved_solution(
     assert json.loads(capsys.readouterr().out)["per_count"] == DEFAULT_POLICY.per_count
 
 
-def test_infeasible_solve_reports_conflicts_and_keeps_previous(
+def test_no_feasible_schedule_reports_conflicts_and_keeps_previous(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Report relaxed conflicts with exit status 2 without changing the state."""
@@ -1961,7 +2144,7 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
-    status, output = invoke(capsys, "--state", str(path), "solve")
+    status, output = invoke(capsys, "--state", str(path), "schedule")
     assert status == 0
     commands: list[dict[str, object]] = [
         {
@@ -1993,11 +2176,11 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
     before: str = path.read_text(encoding="utf-8")
-    status, output = invoke(capsys, "--state", str(path), "solve")
+    status, output = invoke(capsys, "--state", str(path), "schedule")
     assert status == 2
     hour: dict[str, object] = {"amount": 1.0, "unit": "hours"}
     assert output == {
-        "infeasible": True,
+        "status": "no_feasible_solution",
         "conflicts": {
             "status": "found",
             "constraints": [
@@ -2019,8 +2202,8 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
 
 
 @pytest.mark.parametrize("reason", ["time_limit", "numerical_error"])
-@pytest.mark.parametrize("command", ["solve", "chat"])
-def test_infeasible_without_relaxed_solution_prints_reason(
+@pytest.mark.parametrize("command", ["schedule", "chat"])
+def test_no_feasible_solution_without_relaxed_schedule_prints_reason(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -2033,10 +2216,10 @@ def test_infeasible_without_relaxed_solution_prints_reason(
     monkeypatch.setattr(
         MathOptSchedulingSolver,
         "solve",
-        MagicMock(return_value=Infeasible(ConflictsNotFound(reason))),
+        MagicMock(return_value=NoFeasibleSolution(ConflictsNotFound(reason))),
     )
     translator: MagicMock = MagicMock()
-    translator.translate.return_value = SolveStep(True)
+    translator.translate.return_value = ScheduleStep(True)
     monkeypatch.setattr(
         main_module, "OpenAIStepTranslator", MagicMock(return_value=translator)
     )
@@ -2044,14 +2227,14 @@ def test_infeasible_without_relaxed_solution_prints_reason(
     arguments: tuple[str, ...] = (
         ("chat", "Schedule it", "--model", "demo-model")
         if command == "chat"
-        else ("solve",)
+        else ("schedule",)
     )
     status: int
     output: dict[str, object]
     status, output = invoke(capsys, "--state", str(path), *arguments)
     assert status == 2
     assert output == {
-        "infeasible": True,
+        "status": "no_feasible_solution",
         "conflicts": {"status": "not_found", "reason": reason},
     }
     after: State = load_state(path)

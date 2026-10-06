@@ -10,6 +10,7 @@ import openai
 import pytest
 from openai.lib._parsing._responses import type_to_text_format_param
 from openai.types.responses import ResponseFormatTextConfigParam
+from pydantic import ValidationError
 
 from intent_to_schedule.adapter.openai.translate import (
     OpenAIStepTranslator,
@@ -36,7 +37,7 @@ from intent_to_schedule.application.translate import (
     MessageStep,
     QueryRecord,
     QueryStep,
-    SolveStep,
+    ScheduleStep,
     Speaker,
     Step,
     StepRecord,
@@ -71,8 +72,14 @@ def make_summary() -> Summary:
             {"result": {"kind": "message", "text": "When works for you?"}},
             MessageStep("When works for you?"),
         ),
-        ({"result": {"kind": "solve", "stability": True}}, SolveStep(True)),
-        ({"result": {"kind": "solve", "stability": False}}, SolveStep(False)),
+        (
+            {"result": {"kind": "schedule", "stability": True}},
+            ScheduleStep(True),
+        ),
+        (
+            {"result": {"kind": "schedule", "stability": False}},
+            ScheduleStep(False),
+        ),
         (
             {
                 "result": {
@@ -91,6 +98,14 @@ def make_summary() -> Summary:
 def test_convert_step_output(data: dict[str, object], expected: Step) -> None:
     """Convert terminal, query, and command steps to application values."""
     assert convert_step_output(StepOutput.model_validate(data)) == expected
+
+
+def test_old_solve_kind_is_rejected() -> None:
+    """Reject the old structured step kind."""
+    with pytest.raises(ValidationError):
+        StepOutput.model_validate(
+            {"result": {"kind": "solve", "stability": True}}
+        )
 
 
 def test_new_task_gets_generated_id() -> None:
@@ -175,6 +190,11 @@ def test_translate_sends_summary_dialogue_and_step_results() -> None:
         messages[0]["content"].split("\nContext: ", 1)[1]
     )
     assert context["current_time"] == now.isoformat()
+    prompt: str = messages[0]["content"]
+    assert "query, apply, schedule, or message" in prompt
+    assert "use schedule to create the schedule and end the turn" in prompt
+    assert "Changes are saved only when schedule is reached" in prompt
+    assert "Set schedule stability false" in prompt
     assert context["summary"] == {
         "kind": "summary",
         "grid": {

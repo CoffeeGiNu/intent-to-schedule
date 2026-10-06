@@ -1072,8 +1072,25 @@ def test_available_starts_record_notes_what_is_ignored() -> None:
         "items": [at(10).isoformat()],
         "total": 3,
         "truncated": True,
-        "note": "Movable Tasks and constraints are not considered; use solve for the final schedule.",
+        "note": "Movable Tasks and constraints are not considered; use schedule for the final schedule.",
     }
+
+
+def test_task_descriptions_name_the_schedule_command() -> None:
+    """Describe required tasks and stability with the schedule command name."""
+    required_description: str | None = TaskContentData.model_fields[
+        "required"
+    ].description
+    stability_description: str | None = TaskContentData.model_fields[
+        "stability"
+    ].description
+    assert required_description is not None
+    assert "schedule" in required_description
+    assert "if no feasible schedule exists" in required_description
+    assert "solve" not in required_description
+    assert stability_description is not None
+    assert "schedule --no-stability" in stability_description
+    assert "solve --no-stability" not in stability_description
 
 
 def test_objective_policy_record_lists_every_coefficient() -> None:

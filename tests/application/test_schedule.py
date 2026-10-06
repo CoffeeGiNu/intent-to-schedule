@@ -22,9 +22,11 @@ from intent_to_schedule.application.query import (
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import (
     Conflicts,
-    Infeasible,
-    Solved,
-    SolveResult,
+    FeasibleSolution,
+    NoFeasibleSolution,
+    OptimalSolution,
+    Solution,
+    SolutionNotFound,
 )
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import (
@@ -65,9 +67,9 @@ def problem(
 
 class Solver:
     def __init__(
-        self, result: Schedule | Infeasible = Infeasible(Conflicts((), ()))
+        self, result: Solution = NoFeasibleSolution(Conflicts((), ()))
     ) -> None:
-        self.result: Schedule | Infeasible = result
+        self.result: Solution = result
         self.problem: SchedulingProblem | None = None
         self.policy: ObjectivePolicy | None = None
         self.previous: Schedule | None = None
@@ -79,7 +81,7 @@ class Solver:
         policy: ObjectivePolicy,
         previous: Schedule | None,
         stability: bool,
-    ) -> Schedule | Infeasible:
+    ) -> Solution:
         self.problem = problem
         self.policy = policy
         self.previous = previous
@@ -101,8 +103,17 @@ class Validator:
 
 @pytest.mark.parametrize("stability", [False, True])
 @pytest.mark.parametrize("saved", [False, True])
+@pytest.mark.parametrize(
+    "result",
+    [
+        OptimalSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+        FeasibleSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+        NoFeasibleSolution(Conflicts((), ())),
+        SolutionNotFound("time_limit"),
+    ],
+)
 def test_scheduling_passes_policy_previous_schedule_and_stability_to_solver(
-    saved: bool, stability: bool
+    saved: bool, stability: bool, result: Solution
 ) -> None:
     first: Task = task("a")
     second: Task = task("b")
@@ -124,80 +135,23 @@ def test_scheduling_passes_policy_previous_schedule_and_stability_to_solver(
     )
     original: SchedulingProblem = problem(first, second)
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
-    solver: Solver = Solver()
-    assert Scheduling(solver, Validator(), policy).solve(
+    solver: Solver = Solver(result)
+    assert Scheduling(solver, Validator(), policy).schedule(
         original, previous, stability
-    ) == Infeasible(Conflicts((), ()))
+    ) is result
     assert solver.problem is original
     assert solver.policy is policy
     assert solver.previous is previous
     assert solver.stability is stability
 
 
-def test_solved_requires_summary() -> None:
-    """Reject a solved result without its summary."""
+@pytest.mark.parametrize("solution_type", [OptimalSolution, FeasibleSolution])
+def test_successful_solution_requires_summary(
+    solution_type: type[OptimalSolution] | type[FeasibleSolution],
+) -> None:
+    """Require a summary for every successful solution."""
     with pytest.raises(TypeError):
-        Solved(Schedule((), ()))  # type: ignore[call-arg]
-
-
-def test_scheduling_summarizes_solver_schedule_with_its_policy() -> None:
-    """Build the solved result from the solver's schedule and the service policy."""
-    policy: ObjectivePolicy = replace(
-        DEFAULT_POLICY, drop_costs={**DEFAULT_POLICY.drop_costs, Importance.HIGH: 70.0}
-    )
-    first: Task = task("a")
-    second: Task = task("b")
-    schedule: Schedule = Schedule(
-        (
-            ScheduledTask(
-                first.id,
-                first.name,
-                START,
-                START + first.duration,
-                first.participant_ids,
-            ),
-        ),
-        (DroppedTask(second.id, second.name),),
-    )
-    result: SolveResult = Scheduling(Solver(schedule), AllOf(), policy).solve(
-        problem(first, second), None, True
-    )
-    assert result == Solved(schedule, ScheduleSummary(70.0, 0.0, 0.0, 1, 1, 0, 0))
-
-
-@pytest.mark.parametrize("stability", [False, True])
-def test_scheduling_summary_counts_moves_only_with_stability(stability: bool) -> None:
-    """Charge moves from the saved schedule only when stability is on."""
-    item: Task = task("a")
-    previous: Schedule = Schedule(
-        (
-            ScheduledTask(
-                item.id, item.name, START, START + item.duration, item.participant_ids
-            ),
-        ),
-        (),
-    )
-    moved: Schedule = Schedule(
-        (
-            ScheduledTask(
-                item.id,
-                item.name,
-                START + timedelta(hours=1),
-                START + timedelta(hours=2),
-                item.participant_ids,
-            ),
-        ),
-        (),
-    )
-    result: SolveResult = Scheduling(Solver(moved), AllOf()).solve(
-        problem(item), previous, stability
-    )
-    assert isinstance(result, Solved)
-    assert (result.summary.stability_cost, result.summary.moved_tasks) == (
-        (DEFAULT_POLICY.stability_cost(item, timedelta(hours=1)), 1)
-        if stability
-        else (0.0, 0)
-    )
+        solution_type(Schedule((), ()))  # type: ignore[call-arg]
 
 
 def test_scheduling_execute_returns_command_rejection() -> None:
