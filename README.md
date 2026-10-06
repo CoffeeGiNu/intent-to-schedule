@@ -187,12 +187,13 @@ For a small trade-off using the current default policy, dropping a low-importanc
 
 `solve --no-stability` solves from scratch. Stability cost and moved count are zero with this option or without a previous schedule. Dropped tasks do not count as moved. An infeasible solve leaves the previous schedule intact. Use `evaluation` after solving to inspect the constraints behind the reported soft cost.
 
-An infeasible solve exits with status 2 and solves again with relaxed rules: each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so this solve always has a solution; if a solver time limit stops it before finding one, `conflicts` is `null`. Its schedule is neither printed nor saved; the output lists what it gave up:
+An infeasible solve exits with status 2 and solves again with relaxed rules: each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so a relaxed schedule always exists. Its schedule is neither printed nor saved; the output has `conflicts.status` set to `found` and lists what it gave up:
 
 ```json
 {
   "infeasible":true,
   "conflicts":{
+    "status":"found",
     "constraints":[{
       "constraint_id":"review-start",
       "label":"Start the review on Tuesday or later",
@@ -207,6 +208,8 @@ An infeasible solve exits with status 2 and solves again with relaxed rules: eac
 ```
 
 `constraints` lists the hard constraints broken by the relaxed schedule, in the `evaluation` item shape and measured the same way, plus `related_constraint_ids`: the other hard constraints referencing any of the same tasks. `dropped_required_tasks` lists the required tasks it dropped. `reason` is `no_free_start` when no start has every participant available and free of fixed appointments, as `available_starts` checks over the whole horizon, and `conflict` otherwise. The relaxed schedule is one way that breaks the least, not a list of everything involved in a conflict: of two contradictory deadlines, only one may appear, so check `related_constraint_ids`. Relaxing everything listed, by making constraints soft, making tasks optional, or removing them, makes the problem solvable.
+
+If the relaxed solve ends without a schedule, for example when a solver time limit stops it first, the output is `{"infeasible":true,"conflicts":{"status":"not_found","reason":"time_limit"}}` and the exit status is still 2. `conflicts.reason` is `time_limit` when the time limit stopped it, and otherwise MathOpt's termination reason in lowercase, such as `numerical_error`.
 
 ## Constraints
 

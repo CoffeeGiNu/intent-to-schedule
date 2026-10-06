@@ -46,7 +46,12 @@ from intent_to_schedule.application.converse import Conversation, Exhausted, Res
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import AnswerResult, SchedulingQuery, summarize
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Infeasible, Solved
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    ConflictsNotFound,
+    Infeasible,
+    Solved,
+)
 from intent_to_schedule.application.translate import MessageStep
 from intent_to_schedule.domain.consistency import (
     AlignedToSlots,
@@ -115,11 +120,13 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
         "Use query evaluation for constraint breakdowns and query objective_policy for current weights. "
         "If infeasible, exits 2 and prints {infeasible: true, conflicts} from a relaxed solve that permits hard violations and required drops at costs above every soft cost. "
+        "When the relaxed solve finds a schedule, conflicts.status is found; "
         "conflicts.constraints lists broken hard constraints in the evaluation item shape plus related_constraint_ids, the other hard constraints referencing the same tasks; "
         "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
         "This is one least-breaking way and may not name every party to a conflict, so check related_constraint_ids. "
         "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. "
-        "conflicts is null if the relaxed solve found no solution within the time limit. The previous schedule is kept.",
+        "Otherwise conflicts is {status: not_found, reason}, where reason is time_limit if the time limit stopped the relaxed solve "
+        "and otherwise the MathOpt termination reason in lowercase, such as numerical_error. The previous schedule is kept.",
     ),
     "chat": (
         "Run a demonstration conversation turn with OpenAI",
@@ -355,13 +362,15 @@ def schedule_output(result: Solved) -> dict[str, object]:
 
 
 def infeasible_output(result: Infeasible) -> dict[str, object]:
-    """Describe an infeasible solve with its conflicts."""
-    return {
-        "infeasible": True,
-        "conflicts": conflicts_record(result.conflicts)
-        if result.conflicts is not None
-        else None,
-    }
+    """Describe an infeasible solve with its conflicts or why none were found."""
+    conflicts: dict[str, object]
+    reason: str
+    match result.conflicts:
+        case Conflicts():
+            conflicts = {"status": "found", **conflicts_record(result.conflicts)}
+        case ConflictsNotFound(reason=reason):
+            conflicts = {"status": "not_found", "reason": reason}
+    return {"infeasible": True, "conflicts": conflicts}
 
 
 def solve(path: Path, service: Scheduling, stability: bool) -> int:

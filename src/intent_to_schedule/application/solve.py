@@ -57,11 +57,19 @@ class Conflicts:
 
 
 @dataclass(frozen=True)
+class ConflictsNotFound:
+    """Relaxed solve that ended without a schedule to explain infeasibility."""
+
+    reason: str
+    """Why the relaxed solve ended, such as time_limit."""
+
+
+@dataclass(frozen=True)
 class Infeasible:
     """Result indicating that no feasible schedule exists."""
 
-    conflicts: Conflicts | None
-    """What a relaxed solve gave up, or None if it found no solution in time."""
+    conflicts: Conflicts | ConflictsNotFound
+    """What a relaxed solve gave up, or why it found no schedule."""
 
 
 type SolveResult = Solved | Infeasible

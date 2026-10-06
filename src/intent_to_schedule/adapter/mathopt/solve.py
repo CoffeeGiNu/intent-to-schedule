@@ -6,6 +6,7 @@ from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_
 from intent_to_schedule.application.objective import summarize_schedule
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.application.solve import (
+    ConflictsNotFound,
     Infeasible,
     SchedulingSolver,
     Solved,
@@ -34,25 +35,24 @@ class MathOptSchedulingSolver(SchedulingSolver):
         self, problem: SchedulingProblem, previous: Schedule | None = None
     ) -> SolveResult:
         """Solve a SchedulingProblem, explaining infeasibility with a relaxed solve."""
-        reason: mathopt.TerminationReason
+        termination: mathopt.Termination
         schedule: Schedule | None
-        reason, schedule = self._schedule(problem, previous, False)
+        termination, schedule = self._schedule(problem, previous, False)
         if schedule is not None:
             return Solved(
                 schedule, summarize_schedule(problem, schedule, self.policy, previous)
             )
-        if reason is not mathopt.TerminationReason.INFEASIBLE:
-            raise RuntimeError(f"MathOpt solve failed: {reason}")
-        relaxed: Schedule | None = self._schedule(problem, previous, True)[1]
-        return Infeasible(
-            find_conflicts(problem, relaxed, self.policy)
-            if relaxed is not None
-            else None
-        )
+        if termination.reason is not mathopt.TerminationReason.INFEASIBLE:
+            raise RuntimeError(f"MathOpt solve failed: {termination.reason}")
+        relaxed: Schedule | None
+        termination, relaxed = self._schedule(problem, previous, True)
+        if relaxed is None:
+            return Infeasible(ConflictsNotFound(_termination_reason(termination)))
+        return Infeasible(find_conflicts(problem, relaxed, self.policy))
 
     def _schedule(
         self, problem: SchedulingProblem, previous: Schedule | None, relaxed: bool
-    ) -> tuple[mathopt.TerminationReason, Schedule | None]:
+    ) -> tuple[mathopt.Termination, Schedule | None]:
         """Solve the compiled problem and read its termination and any schedule found."""
         compiled: CompiledProblem = compile_problem(
             problem, self.policy, previous, relaxed
@@ -88,8 +88,16 @@ class MathOptSchedulingSolver(SchedulingSolver):
                         )
                     else:
                         dropped.append(DroppedTask(task.id, task.name))
-                return result.termination.reason, Schedule(
-                    tuple(scheduled), tuple(dropped)
-                )
+                return result.termination, Schedule(tuple(scheduled), tuple(dropped))
             case _:
-                return result.termination.reason, None
+                return result.termination, None
+
+
+def _termination_reason(termination: mathopt.Termination) -> str:
+    """Name why a MathOpt solve ended, reporting a time limit stop as time_limit."""
+    if (
+        termination.reason is mathopt.TerminationReason.NO_SOLUTION_FOUND
+        and termination.limit is mathopt.Limit.TIME
+    ):
+        return "time_limit"
+    return termination.reason.name.lower()
