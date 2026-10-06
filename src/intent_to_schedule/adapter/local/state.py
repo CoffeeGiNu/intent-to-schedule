@@ -1,14 +1,12 @@
-"""Forms and conversions for the persisted command line state."""
+"""Forms and conversions for persisted local state."""
 
 from datetime import timedelta
-from pathlib import Path
 from typing import Literal
 
 from intent_to_schedule.adapter.data_model import (
     ConstraintData,
     DataModel,
     FixedTaskData,
-    NewFixedTaskData,
     PersonData,
     PersonIdField,
     ScheduledTaskData,
@@ -49,13 +47,6 @@ class CalendarState(DataModel):
     horizon: TimeIntervalData
     slot: timedelta
     availabilities: tuple[AvailabilityState, ...]
-
-
-class CalendarInput(CalendarState):
-    """Calendar file accepted by init."""
-
-    people: tuple[PersonData, ...]
-    fixed_tasks: tuple[NewFixedTaskData, ...]
 
 
 class ProblemState(DataModel):
@@ -185,13 +176,3 @@ def to_dialogue(form: tuple[UtteranceState, ...]) -> tuple[Utterance, ...]:
     """Convert persisted dialogue to utterances."""
     return tuple(Utterance(Speaker(item.speaker), item.text) for item in form)
 
-
-def load_state(path: Path) -> State:
-    """Load a state file."""
-    return State.model_validate_json(path.read_text(encoding="utf-8"))
-
-
-def save_state(path: Path, state: State) -> None:
-    """Write a state file, creating its parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(state.model_dump_json(indent=2) + "\n", encoding="utf-8")

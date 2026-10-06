@@ -61,7 +61,12 @@ from intent_to_schedule.application.query import (
 )
 from intent_to_schedule.application.solve import Conflicts
 from intent_to_schedule.domain.availability import tasks_without_satisfying_start
-from intent_to_schedule.domain.calendar import TimeInterval
+from intent_to_schedule.domain.calendar import (
+    Availability,
+    Calendar,
+    TimeGrid,
+    TimeInterval,
+)
 from intent_to_schedule.domain.condition import (
     Condition,
     DailyLimitCondition,
@@ -78,7 +83,7 @@ from intent_to_schedule.domain.constraint import (
     SoftConstraint,
 )
 from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
-from intent_to_schedule.domain.person import PersonId
+from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import DroppedTask, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
@@ -368,6 +373,23 @@ class NewFixedTaskData(FixedTaskContentData):
         default=None,
         description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
     )
+
+
+class AvailabilityData(DataModel):
+    """JSON form of one person's available intervals."""
+
+    person_id: PersonIdField
+    intervals: tuple[TimeIntervalData, ...]
+
+
+class CalendarInputData(DataModel):
+    """Calendar and people accepted by init."""
+
+    horizon: TimeIntervalData
+    slot: timedelta
+    availabilities: tuple[AvailabilityData, ...]
+    people: tuple[PersonData, ...]
+    fixed_tasks: tuple[NewFixedTaskData, ...]
 
 
 class FixedTaskData(FixedTaskContentData):
@@ -1264,6 +1286,36 @@ def convert_fixed_task(task_id: TaskId, data: FixedTaskContentData) -> FixedTask
         data.duration,
         frozenset(data.participant_ids),
     )
+
+
+def convert_calendar_input(data: CalendarInputData) -> SchedulingProblem:
+    """Convert init input to a problem with generated fixed-task IDs."""
+    calendar: Calendar = Calendar(
+        TimeGrid(
+            TimeInterval(data.horizon.start, data.horizon.end),
+            data.slot,
+        ),
+        tuple(
+            Availability(
+                item.person_id,
+                tuple(
+                    TimeInterval(interval.start, interval.end)
+                    for interval in item.intervals
+                ),
+            )
+            for item in data.availabilities
+        ),
+    )
+    people: tuple[Person, ...] = tuple(
+        Person(item.id, item.name) for item in data.people
+    )
+    fixed_tasks: tuple[FixedTask, ...] = tuple(
+        convert_fixed_task(
+            item.id if item.id is not None else TaskId.generate(), item
+        )
+        for item in data.fixed_tasks
+    )
+    return SchedulingProblem(calendar, people, (), fixed_tasks, ())
 
 
 def convert_constraint(

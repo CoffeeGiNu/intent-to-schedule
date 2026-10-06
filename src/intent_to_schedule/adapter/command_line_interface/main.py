@@ -3,39 +3,31 @@
 import argparse
 import json
 import sys
-from collections.abc import Callable
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import openai
 from pydantic import Field, TypeAdapter, ValidationError
 
-from intent_to_schedule.adapter.command_line_interface.state import (
-    CalendarInput,
-    ProblemState,
-    ScheduleState,
-    State,
-    UtteranceState,
+from intent_to_schedule.adapter.local.store import (
+    LocalDialogueStore,
+    LocalStateStore,
     load_state,
-    save_state,
-    to_dialogue,
-    to_problem,
-    to_problem_state,
-    to_schedule,
-    to_schedule_state,
 )
 from intent_to_schedule.adapter.data_model import (
+    CalendarInputData,
     CommandsData,
-    FixedTaskData,
     QueryData,
+    ScheduleEntryData,
     answer_record,
     command_record,
     conflicts_record,
+    convert_calendar_input,
     convert_commands_input,
     convert_query,
     schedule_summary_record,
+    to_schedule_entry_data,
 )
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.adapter.openai.translate import OpenAIStepTranslator
@@ -44,10 +36,20 @@ from intent_to_schedule.application.command import (
     Rejected,
     SchedulingCommand,
 )
-from intent_to_schedule.application.converse import Conversation, Exhausted, Response
+from intent_to_schedule.application.converse import (
+    Conversation,
+    DialogueStore,
+    Exhausted,
+)
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
-from intent_to_schedule.application.query import AnswerResult, SchedulingQuery, summarize
+from intent_to_schedule.application.query import (
+    AnswerResult,
+    SchedulingQuery,
+    Summary,
+    summarize,
+)
 from intent_to_schedule.application.schedule import Scheduling
+from intent_to_schedule.application.store import StateStore
 from intent_to_schedule.application.solve import (
     Conflicts,
     ConflictsNotFound,
@@ -70,8 +72,6 @@ from intent_to_schedule.domain.consistency import (
     Violations,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import Schedule
-from intent_to_schedule.domain.task import TaskId
 
 
 class JsonParser(argparse.ArgumentParser):
@@ -278,52 +278,35 @@ def reject(violations: Violations) -> int:
     return 1
 
 
-def save_problem(path: Path, state: State, problem: SchedulingProblem) -> None:
-    """Save a problem in the loaded state."""
-    save_state(path, state.model_copy(update={"problem": to_problem_state(problem)}))
-
-
-def scheduling(validator: Validator) -> Scheduling:
+def scheduling(validator: Validator, state_store: StateStore) -> Scheduling:
     """Wire the scheduling use case."""
     policy: ObjectivePolicy = DEFAULT_POLICY
-    return Scheduling(MathOptSchedulingSolver(), validator, policy)
+    return Scheduling(MathOptSchedulingSolver(), validator, state_store, policy)
 
 
-def init(path: Path, calendar_path: Path, service: Scheduling) -> int:
+def init(
+    calendar_path: Path,
+    validator: Validator,
+    state_store: StateStore,
+    dialogue_store: DialogueStore,
+) -> int:
     """Create and validate a problem from calendar input."""
-    calendar: CalendarInput = CalendarInput.model_validate_json(
+    form: CalendarInputData = CalendarInputData.model_validate_json(
         calendar_path.read_text(encoding="utf-8")
     )
-    form: ProblemState = ProblemState(
-        calendar=calendar,
-        people=calendar.people,
-        tasks=(),
-        fixed_tasks=tuple(
-            FixedTaskData(
-                id=item.id if item.id is not None else TaskId.generate(),
-                **item.model_dump(exclude={"id"}),
-            )
-            for item in calendar.fixed_tasks
-        ),
-        constraints=(),
-    )
-    problem: SchedulingProblem = to_problem(form)
-    result: Executed | Rejected = service.execute(problem, ())
-    match result:
-        case Rejected(violations=violations):
-            return reject(violations)
-        case Executed(problem=updated):
-            state: State = State(
-                problem=to_problem_state(updated), previous=None, dialogue=()
-            )
-            save_state(path, state)
-            emit(answer_record(summarize(updated, None)))
-            return 0
+    problem: SchedulingProblem = convert_calendar_input(form)
+    violations: Violations = validator.validate(problem)
+    if not violations.is_empty:
+        return reject(violations)
+    state_store.save_problem(problem)
+    state_store.save_previous(None)
+    dialogue_store.save(())
+    emit(answer_record(summarize(problem, None)))
+    return 0
 
 
-def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
+def apply(input_path: Path | None, service: Scheduling) -> int:
     """Apply a JSON command batch to the current problem."""
-    state: State = load_state(path)
     source: str = (
         input_path.read_text(encoding="utf-8")
         if input_path is not None
@@ -332,13 +315,11 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
     commands: tuple[SchedulingCommand, ...] = convert_commands_input(
         CommandsData.model_validate_json(source)
     )
-    problem: SchedulingProblem = to_problem(state.problem)
-    result: Executed | Rejected = service.execute(problem, commands)
+    result: Executed | Rejected = service.execute(commands)
     match result:
         case Rejected(violations=violations):
             return reject(violations)
         case Executed(problem=updated):
-            save_problem(path, state, updated)
             emit(
                 {
                     "executed": [
@@ -350,9 +331,8 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
             return 0
 
 
-def query(path: Path, input_path: Path | None, service: Scheduling) -> int:
+def query(input_path: Path | None, service: Scheduling) -> int:
     """Answer a JSON query about the current problem and previous schedule."""
-    state: State = load_state(path)
     source: str = (
         input_path.read_text(encoding="utf-8")
         if input_path is not None
@@ -362,9 +342,7 @@ def query(path: Path, input_path: Path | None, service: Scheduling) -> int:
         Annotated[QueryData, Field(discriminator="kind")]
     )
     request: SchedulingQuery = convert_query(adapter.validate_json(source))
-    problem: SchedulingProblem = to_problem(state.problem)
-    previous: Schedule | None = to_schedule(state.previous)
-    result: AnswerResult = service.answer(request, problem, previous)
+    result: AnswerResult = service.answer(request)
     if isinstance(result, Rejected):
         return reject(result.violations)
     emit(answer_record(result.answer))
@@ -373,12 +351,23 @@ def query(path: Path, input_path: Path | None, service: Scheduling) -> int:
 
 def schedule_output(result: OptimalSolution | FeasibleSolution) -> dict[str, object]:
     """Describe a scheduled result."""
-    form: ScheduleState | None = to_schedule_state(result.schedule)
-    assert form is not None
+    entries: tuple[ScheduleEntryData, ...] = tuple(
+        to_schedule_entry_data(item)
+        for item in (
+            *sorted(
+                result.schedule.scheduled,
+                key=lambda item: (item.start, item.task_id.value),
+            ),
+            *sorted(result.schedule.dropped, key=lambda item: item.task_id.value),
+        )
+    )
+    items: list[dict[str, object]] = [
+        item.model_dump(mode="json") for item in entries
+    ]
     return {
         "status": "optimal" if isinstance(result, OptimalSolution) else "feasible",
         "summary": schedule_summary_record(result.summary),
-        **form.model_dump(mode="json"),
+        "items": items,
     }
 
 
@@ -399,12 +388,9 @@ def solution_not_found_output(result: SolutionNotFound) -> dict[str, object]:
     return {"status": "solution_not_found", "reason": result.reason}
 
 
-def schedule(path: Path, service: Scheduling, stability: bool) -> int:
+def schedule(service: Scheduling, stability: bool) -> int:
     """Schedule the current problem and persist a found schedule."""
-    state: State = load_state(path)
-    problem: SchedulingProblem = to_problem(state.problem)
-    previous: Schedule | None = to_schedule(state.previous)
-    result: Solution = service.schedule(problem, previous, stability)
+    result: Solution = service.schedule(stability)
     match result:
         case NoFeasibleSolution():
             emit(no_feasible_solution_output(result))
@@ -412,69 +398,48 @@ def schedule(path: Path, service: Scheduling, stability: bool) -> int:
         case SolutionNotFound():
             emit(solution_not_found_output(result))
             return 3
-        case OptimalSolution(schedule=schedule) | FeasibleSolution(schedule=schedule):
-            save_state(
-                path, state.model_copy(update={"previous": to_schedule_state(schedule)})
-            )
+        case OptimalSolution() | FeasibleSolution():
             emit(schedule_output(result))
             return 0
 
 
 def chat(
-    path: Path,
     text: str,
     model: str,
     now: datetime | None,
     service: Scheduling,
+    dialogue_store: DialogueStore,
 ) -> int:
     """Handle an utterance with the OpenAI API."""
-    state: State = load_state(path)
-    dialogue: tuple[UtteranceState, ...] = (
-        *state.dialogue,
-        UtteranceState(speaker="user", text=text),
+    summary: Summary = service.summarize()
+    current: datetime = (
+        now if now is not None else summary.grid.horizon.start
     )
-    problem: SchedulingProblem = to_problem(state.problem)
-    current: datetime = now if now is not None else problem.calendar.grid.horizon.start
-    save: Callable[[SchedulingProblem], None] = partial(save_problem, path, state)
     conversation: Conversation = Conversation(
-        OpenAIStepTranslator(openai.OpenAI(), model, lambda: current), service
+        OpenAIStepTranslator(openai.OpenAI(), model, lambda: current),
+        service,
+        dialogue_store,
     )
-    response: Response = conversation.respond(
-        to_dialogue(dialogue), problem, to_schedule(state.previous), save
-    )
-    updates: dict[str, object] = {"problem": to_problem_state(response.problem)}
-    assistant_text: str
+    outcome: MessageStep | Solution | Exhausted = conversation.respond(text)
     output: dict[str, object]
     status: int
     message: str
-    schedule: Schedule
-    match response.outcome:
+    match outcome:
         case MessageStep(text=message):
-            assistant_text = message
             output = {"message": message}
             status = 0
         case Exhausted():
-            assistant_text = "Step limit reached."
             output = {"exhausted": True}
             status = 1
         case NoFeasibleSolution():
-            assistant_text = "No feasible solution."
-            output = no_feasible_solution_output(response.outcome)
+            output = no_feasible_solution_output(outcome)
             status = 2
         case SolutionNotFound():
-            assistant_text = "Solution not found."
-            output = solution_not_found_output(response.outcome)
+            output = solution_not_found_output(outcome)
             status = 3
-        case OptimalSolution(schedule=schedule) | FeasibleSolution(schedule=schedule):
-            updates["previous"] = to_schedule_state(schedule)
-            assistant_text = "Scheduled."
-            output = schedule_output(response.outcome)
+        case OptimalSolution() | FeasibleSolution():
+            output = schedule_output(outcome)
             status = 0
-    updates["dialogue"] = (
-        *dialogue,
-        UtteranceState(speaker="assistant", text=assistant_text),
-    )
-    save_state(path, state.model_copy(update=updates))
     emit(output)
     return status
 
@@ -506,18 +471,26 @@ def main(argv: list[str] | None = None) -> int:
             AlignedToSlots(),
             NonemptyTimeWindows(),
         )
-        service: Scheduling = scheduling(validator)
+        state_store: LocalStateStore = LocalStateStore(path)
+        dialogue_store: LocalDialogueStore = LocalDialogueStore(path)
+        service: Scheduling = scheduling(validator, state_store)
         match args.command:
             case "init":
-                return init(path, args.calendar, service)
+                return init(args.calendar, validator, state_store, dialogue_store)
             case "apply":
-                return apply(path, args.file, service)
+                return apply(args.file, service)
             case "query":
-                return query(path, args.file, service)
+                return query(args.file, service)
             case "schedule":
-                return schedule(path, service, not args.no_stability)
+                return schedule(service, not args.no_stability)
             case "chat":
-                return chat(path, args.text, args.model, args.now, service)
+                return chat(
+                    args.text,
+                    args.model,
+                    args.now,
+                    service,
+                    dialogue_store,
+                )
     except ConsistencyError as error:
         return reject(error.violations)
     except (
