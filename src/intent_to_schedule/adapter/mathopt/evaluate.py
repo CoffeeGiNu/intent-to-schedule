@@ -48,8 +48,6 @@ def compile_evaluation(
     placements: Mapping[int, mathopt.Variable]
     offset: timedelta
     target: timedelta
-    start: int
-    variable: mathopt.Variable
     occupancy: Mapping[int, mathopt.LinearBase | float]
     region: tuple[TimeInterval, ...]
     dependency: DependencyExpression

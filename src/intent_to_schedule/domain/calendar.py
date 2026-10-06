@@ -113,7 +113,6 @@ class TimeGrid:
         """Sorted calendar dates intersecting the half-open horizon."""
         first: date = self.date_of(self.horizon.start)
         last: date = self.date_of(self.horizon.end - datetime.resolution)
-        index: int
         return tuple(
             first + timedelta(days=index) for index in range((last - first).days + 1)
         )
