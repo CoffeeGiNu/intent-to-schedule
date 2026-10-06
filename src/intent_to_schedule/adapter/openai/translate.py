@@ -14,6 +14,7 @@ from intent_to_schedule.adapter.data_model import (
     CommandData,
     DataModel,
     QueryData,
+    ScheduleData,
     answer_result_record,
     answer_record,
     convert_command,
@@ -49,11 +50,10 @@ class ApplyOutput(DataModel):
     commands: tuple[CommandData, ...]
 
 
-class ScheduleOutput(DataModel):
+class ScheduleOutput(ScheduleData):
     """Structured output for a schedule step."""
 
     kind: Literal["schedule"]
-    stability: bool
 
 
 class MessageOutput(DataModel):

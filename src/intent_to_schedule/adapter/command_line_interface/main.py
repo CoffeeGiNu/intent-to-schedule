@@ -19,6 +19,7 @@ from intent_to_schedule.adapter.data_model import (
     CalendarInputData,
     CommandsData,
     QueryData,
+    ScheduleData,
     answer_result_record,
     answer_record,
     convert_calendar_input,
@@ -333,9 +334,9 @@ def query(input_path: Path | None, service: Scheduling) -> int:
     return 1 if isinstance(result, Rejected) else 0
 
 
-def schedule(service: Scheduling, stability: bool) -> int:
+def schedule(service: Scheduling, request: ScheduleData) -> int:
     """Schedule the current problem and persist a found schedule."""
-    result: Solution = service.schedule(stability)
+    result: Solution = service.schedule(request.stability)
     emit(solution_record(result))
     if isinstance(result, NoFeasibleSolution):
         return 2
@@ -423,7 +424,10 @@ def main(argv: list[str] | None = None) -> int:
             case "query":
                 return query(args.file, service)
             case "schedule":
-                return schedule(service, not args.no_stability)
+                return schedule(
+                    service,
+                    ScheduleData(stability=False) if args.no_stability else ScheduleData(),
+                )
             case "chat":
                 return chat(
                     args.text,

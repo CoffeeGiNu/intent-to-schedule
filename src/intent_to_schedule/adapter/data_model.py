@@ -644,6 +644,15 @@ class CommandsData(DataModel):
     )
 
 
+class ScheduleData(DataModel):
+    """Input for scheduling the current problem."""
+
+    stability: bool = Field(
+        default=True,
+        description="true, the default, adds a cost for moving each task away from its previous start, so tasks stay put unless moving improves the result; tasks can still move. false ignores previous starts when placing tasks but keeps the previous schedule and every constraint. Use false only when the whole schedule should be rearranged.",
+    )
+
+
 class PeopleFilterData(DataModel):
     """Filters selecting people by identifier and name."""
 
