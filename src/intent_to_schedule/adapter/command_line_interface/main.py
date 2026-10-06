@@ -97,7 +97,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "query": (
         "Read a summary, records, or available start times",
         "Reads JSON from --file or standard input; see `schema query`. "
-        "evaluation measures current constraints against the last saved solution, with violation amounts, units, costs, and task or date breakdowns. "
+        "evaluation measures current constraints against the last saved solution, with violation amounts, units, soft costs (hard items and their breakdown parts have no cost), and task or date breakdowns. "
         "Filters are violated_only (default false), constraint_ids, and task_ids, combined with and. "
         "Hard violations come first, then highest soft costs. Without a saved solution, has_previous is false and items are empty. "
         "objective_policy returns the current drop_costs, weights, per_count, stability_drop_cost_ratio, hard_violation_weight, and required_drop_cost. "

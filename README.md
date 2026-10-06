@@ -84,7 +84,7 @@ Save any of these nine inputs as `query.json`. Filters combine with **and**. Lis
 
 **Scheduled items come from the last saved solution, as in `previous_schedule`, and may predate current problem changes.** They keep the names, times, and participants recorded at solve time. Movable tasks added or edited since then appear only after the next `solve`, and `free` does not account for them.
 
-`evaluation` measures the **current constraints against the last saved solution**. Each item has `constraint_id`, `label`, `requirement`, `violation` (`amount` and `unit`, either `hours` or `count`), `cost` (null for hard constraints), and `breakdown`. Time windows and bounds break down violations by `task_id`; daily limits break them down by `date`; task gaps have an empty breakdown. Parts include their violation and cost, including zero amounts. Daily breakdowns include every horizon date.
+`evaluation` measures the **current constraints against the last saved solution**. Each item has `constraint_id`, `label`, `requirement`, `violation` (`amount` and `unit`, either `hours` or `count`), `cost` (soft constraints only), and `breakdown`. Hard constraints have no cost: their items and breakdown parts omit `cost`, so tell them apart by `requirement.kind`. Time windows and bounds break down violations by `task_id`; daily limits break them down by `date`; task gaps have an empty breakdown. Parts include their violation, and for soft constraints their cost, including zero amounts. Daily breakdowns include every horizon date.
 
 ```json
 {"kind":"evaluation"}
@@ -198,8 +198,7 @@ An infeasible solve exits with status 2 and solves again with relaxed rules: eac
       "label":"Start the review on Tuesday or later",
       "requirement":{"kind":"hard"},
       "violation":{"amount":8.0,"unit":"hours"},
-      "cost":null,
-      "breakdown":[{"task_id":"review","violation":{"amount":8.0,"unit":"hours"},"cost":null}],
+      "breakdown":[{"task_id":"review","violation":{"amount":8.0,"unit":"hours"}}],
       "related_constraint_ids":["review-deadline"]
     }],
     "dropped_required_tasks":[{"task_id":"offsite","name":"Offsite","reason":"no_free_start"}]
