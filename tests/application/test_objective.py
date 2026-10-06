@@ -69,11 +69,7 @@ def test_hard_evaluations_have_no_cost_and_do_not_change_soft_totals() -> None:
         TaskId("task"), "task", HOUR, frozenset({PERSON}), Importance.LOW, True
     )
     previous: Schedule = Schedule(
-        (
-            ScheduledTask(
-                item.id, item.name, START, START + HOUR, item.participant_ids
-            ),
-        ),
+        (ScheduledTask(item.id, item.name, START, START + HOUR, item.participant_ids),),
         (),
     )
     late: TimeBoundCondition = TimeBoundCondition(
