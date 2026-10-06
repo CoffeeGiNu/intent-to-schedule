@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from intent_to_schedule.application.command import Executed, ExecuteResult
@@ -50,6 +50,7 @@ class Conversation:
         dialogue: Sequence[Utterance],
         problem: SchedulingProblem,
         previous: Schedule | None,
+        save: Callable[[SchedulingProblem], None],
     ) -> Response:
         """Run translation steps until a reply, schedule, or step limit."""
         working: SchedulingProblem = problem
@@ -67,11 +68,12 @@ class Conversation:
                 steps.append(ApplyRecord(step, result))
                 if isinstance(result, Executed):
                     working = result.problem
+                    save(working)
             elif isinstance(step, ScheduleStep):
                 return Response(
                     working,
                     self._scheduling.schedule(working, previous, step.stability),
                 )
             else:
-                return Response(problem, step)
-        return Response(problem, Exhausted())
+                return Response(working, step)
+        return Response(working, Exhausted())

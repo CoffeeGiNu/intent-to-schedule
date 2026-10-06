@@ -3,7 +3,9 @@
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -145,8 +147,9 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "A reason is time_limit when a time limit stops scheduling, otherwise the MathOpt termination reason in lowercase, such as numerical_error. "
         "Exit codes: 0, 2, and 3 for optimal or feasible, no_feasible_solution, and solution_not_found respectively. "
         "The assistant text is Scheduled. for optimal or feasible, No feasible solution. for no_feasible_solution, and Solution not found. for solution_not_found. "
-        "An optimal or feasible result saves the working problem, previous schedule, and dialogue. "
-        "A no_feasible_solution or solution_not_found result saves the working problem and dialogue and keeps the previous schedule. "
+        "Accepted apply batches are saved immediately and stay saved however the turn ends; rejected batches change nothing. "
+        "Every outcome saves the dialogue. "
+        "An optimal or feasible result also saves the previous schedule; no_feasible_solution and solution_not_found keep it. "
         "Reads OPENAI_API_KEY and OPENAI_BASE_URL from the environment.",
     ),
     "help": ("Print this message or the help of the given subcommand", ""),
@@ -275,6 +278,11 @@ def reject(violations: Violations) -> int:
     return 1
 
 
+def save_problem(path: Path, state: State, problem: SchedulingProblem) -> None:
+    """Save a problem in the loaded state."""
+    save_state(path, state.model_copy(update={"problem": to_problem_state(problem)}))
+
+
 def scheduling(validator: Validator) -> Scheduling:
     """Wire the scheduling use case."""
     policy: ObjectivePolicy = DEFAULT_POLICY
@@ -330,9 +338,7 @@ def apply(path: Path, input_path: Path | None, service: Scheduling) -> int:
         case Rejected(violations=violations):
             return reject(violations)
         case Executed(problem=updated):
-            save_state(
-                path, state.model_copy(update={"problem": to_problem_state(updated)})
-            )
+            save_problem(path, state, updated)
             emit(
                 {
                     "executed": [
@@ -429,13 +435,14 @@ def chat(
     )
     problem: SchedulingProblem = to_problem(state.problem)
     current: datetime = now if now is not None else problem.calendar.grid.horizon.start
+    save: Callable[[SchedulingProblem], None] = partial(save_problem, path, state)
     conversation: Conversation = Conversation(
         OpenAIStepTranslator(openai.OpenAI(), model, lambda: current), service
     )
     response: Response = conversation.respond(
-        to_dialogue(dialogue), problem, to_schedule(state.previous)
+        to_dialogue(dialogue), problem, to_schedule(state.previous), save
     )
-    updates: dict[str, object] = {}
+    updates: dict[str, object] = {"problem": to_problem_state(response.problem)}
     assistant_text: str
     output: dict[str, object]
     status: int
@@ -451,17 +458,14 @@ def chat(
             output = {"exhausted": True}
             status = 1
         case NoFeasibleSolution():
-            updates["problem"] = to_problem_state(response.problem)
             assistant_text = "No feasible solution."
             output = no_feasible_solution_output(response.outcome)
             status = 2
         case SolutionNotFound():
-            updates["problem"] = to_problem_state(response.problem)
             assistant_text = "Solution not found."
             output = solution_not_found_output(response.outcome)
             status = 3
         case OptimalSolution(schedule=schedule) | FeasibleSolution(schedule=schedule):
-            updates["problem"] = to_problem_state(response.problem)
             updates["previous"] = to_schedule_state(schedule)
             assistant_text = "Scheduled."
             output = schedule_output(response.outcome)

@@ -92,7 +92,7 @@ _STEP_PROMPT: str = (
     "Use query to discover details and identifiers; use apply to add, replace, or remove tasks and constraints. "
     "After applying all requested changes, use schedule to create the schedule and end the turn. "
     "Use message to answer a question or ask for clarification and end the turn. "
-    "Changes are saved only when schedule is reached; message discards edits made during this turn. "
+    "An accepted apply is saved immediately and stays saved if the turn ends with a message; a rejected batch changes nothing. "
     "Use only person, task, and constraint identifiers returned by queries or successful apply results; never invent identifiers. "
     "Query people to resolve names, then tasks to resolve movable or fixed events by name, date, and participants. "
     "Use select one when exactly one match is needed; narrow ambiguous matches or ask the user instead of guessing. "
