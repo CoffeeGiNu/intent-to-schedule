@@ -18,7 +18,7 @@ from intent_to_schedule.adapter.data_model import (
     convert_task,
     to_constraint_data,
     to_fixed_task_data,
-    to_schedule_entry_data,
+    to_schedule_entries_data,
     to_task_data,
     to_time_interval_data,
 )
@@ -158,21 +158,9 @@ def to_schedule_state(schedule: Schedule | None) -> ScheduleState | None:
     """Convert a domain schedule to its persisted form."""
     if schedule is None:
         return None
-    return ScheduleState(
-        items=tuple(
-            to_schedule_entry_data(item)
-            for item in (
-                *sorted(
-                    schedule.scheduled,
-                    key=lambda item: (item.start, item.task_id.value),
-                ),
-                *sorted(schedule.dropped, key=lambda item: item.task_id.value),
-            )
-        ),
-    )
+    return ScheduleState(items=to_schedule_entries_data(schedule))
 
 
 def to_dialogue(form: tuple[UtteranceState, ...]) -> tuple[Utterance, ...]:
     """Convert persisted dialogue to utterances."""
     return tuple(Utterance(Speaker(item.speaker), item.text) for item in form)
-

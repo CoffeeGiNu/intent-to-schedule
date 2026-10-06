@@ -14,12 +14,12 @@ from intent_to_schedule.adapter.data_model import (
     CommandData,
     DataModel,
     QueryData,
+    answer_result_record,
     answer_record,
-    command_record,
     convert_command,
     convert_query,
+    execute_result_record,
 )
-from intent_to_schedule.application.command import Rejected
 from intent_to_schedule.application.query import Summary
 from intent_to_schedule.application.translate import (
     ApplyRecord,
@@ -195,21 +195,10 @@ class OpenAIStepTranslator(StepTranslator):
         record: StepRecord
         for record in steps:
             result: dict[str, object]
-            if isinstance(record.result, Rejected):
-                result = {
-                    "rejected": [
-                        item.message for item in record.result.violations.items
-                    ]
-                }
-            elif isinstance(record, ApplyRecord):
-                result = {
-                    "executed": [
-                        command_record(command, record.result.problem)
-                        for command in record.step.commands
-                    ]
-                }
+            if isinstance(record, ApplyRecord):
+                result = execute_result_record(record.step.commands, record.result)
             else:
-                result = {"answered": answer_record(record.result.answer)}
+                result = answer_result_record(record.result)
             records.append(
                 {
                     "kind": "apply" if isinstance(record, ApplyRecord) else "query",

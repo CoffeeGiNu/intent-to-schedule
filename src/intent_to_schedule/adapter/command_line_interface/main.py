@@ -19,15 +19,14 @@ from intent_to_schedule.adapter.data_model import (
     CalendarInputData,
     CommandsData,
     QueryData,
-    ScheduleEntryData,
+    answer_result_record,
     answer_record,
-    command_record,
-    conflicts_record,
     convert_calendar_input,
     convert_commands_input,
     convert_query,
-    schedule_summary_record,
-    to_schedule_entry_data,
+    execute_result_record,
+    rejected_record,
+    solution_record,
 )
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.adapter.openai.translate import OpenAIStepTranslator
@@ -51,8 +50,6 @@ from intent_to_schedule.application.query import (
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.store import StateStore
 from intent_to_schedule.application.solve import (
-    Conflicts,
-    ConflictsNotFound,
     FeasibleSolution,
     NoFeasibleSolution,
     OptimalSolution,
@@ -274,7 +271,7 @@ def emit(value: object) -> None:
 
 def reject(violations: Violations) -> int:
     """Print a rejected result."""
-    emit({"rejected": [item.message for item in violations.items]})
+    emit(rejected_record(Rejected(violations)))
     return 1
 
 
@@ -316,19 +313,8 @@ def apply(input_path: Path | None, service: Scheduling) -> int:
         CommandsData.model_validate_json(source)
     )
     result: Executed | Rejected = service.execute(commands)
-    match result:
-        case Rejected(violations=violations):
-            return reject(violations)
-        case Executed(problem=updated):
-            emit(
-                {
-                    "executed": [
-                        command_record(command, updated)
-                        for command in commands
-                    ]
-                }
-            )
-            return 0
+    emit(execute_result_record(commands, result))
+    return 1 if isinstance(result, Rejected) else 0
 
 
 def query(input_path: Path | None, service: Scheduling) -> int:
@@ -343,64 +329,19 @@ def query(input_path: Path | None, service: Scheduling) -> int:
     )
     request: SchedulingQuery = convert_query(adapter.validate_json(source))
     result: AnswerResult = service.answer(request)
-    if isinstance(result, Rejected):
-        return reject(result.violations)
-    emit(answer_record(result.answer))
-    return 0
-
-
-def schedule_output(result: OptimalSolution | FeasibleSolution) -> dict[str, object]:
-    """Describe a scheduled result."""
-    entries: tuple[ScheduleEntryData, ...] = tuple(
-        to_schedule_entry_data(item)
-        for item in (
-            *sorted(
-                result.schedule.scheduled,
-                key=lambda item: (item.start, item.task_id.value),
-            ),
-            *sorted(result.schedule.dropped, key=lambda item: item.task_id.value),
-        )
-    )
-    items: list[dict[str, object]] = [
-        item.model_dump(mode="json") for item in entries
-    ]
-    return {
-        "status": "optimal" if isinstance(result, OptimalSolution) else "feasible",
-        "summary": schedule_summary_record(result.summary),
-        "items": items,
-    }
-
-
-def no_feasible_solution_output(result: NoFeasibleSolution) -> dict[str, object]:
-    """Describe a proven absence of a feasible schedule."""
-    conflicts: dict[str, object]
-    reason: str
-    match result.conflicts:
-        case Conflicts():
-            conflicts = {"status": "found", **conflicts_record(result.conflicts)}
-        case ConflictsNotFound(reason=reason):
-            conflicts = {"status": "not_found", "reason": reason}
-    return {"status": "no_feasible_solution", "conflicts": conflicts}
-
-
-def solution_not_found_output(result: SolutionNotFound) -> dict[str, object]:
-    """Describe a schedule search that ended without a result."""
-    return {"status": "solution_not_found", "reason": result.reason}
+    emit(answer_result_record(result))
+    return 1 if isinstance(result, Rejected) else 0
 
 
 def schedule(service: Scheduling, stability: bool) -> int:
     """Schedule the current problem and persist a found schedule."""
     result: Solution = service.schedule(stability)
-    match result:
-        case NoFeasibleSolution():
-            emit(no_feasible_solution_output(result))
-            return 2
-        case SolutionNotFound():
-            emit(solution_not_found_output(result))
-            return 3
-        case OptimalSolution() | FeasibleSolution():
-            emit(schedule_output(result))
-            return 0
+    emit(solution_record(result))
+    if isinstance(result, NoFeasibleSolution):
+        return 2
+    if isinstance(result, SolutionNotFound):
+        return 3
+    return 0
 
 
 def chat(
@@ -432,13 +373,13 @@ def chat(
             output = {"exhausted": True}
             status = 1
         case NoFeasibleSolution():
-            output = no_feasible_solution_output(outcome)
+            output = solution_record(outcome)
             status = 2
         case SolutionNotFound():
-            output = solution_not_found_output(outcome)
+            output = solution_record(outcome)
             status = 3
         case OptimalSolution() | FeasibleSolution():
-            output = schedule_output(outcome)
+            output = solution_record(outcome)
             status = 0
     emit(output)
     return status

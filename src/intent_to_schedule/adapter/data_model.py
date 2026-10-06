@@ -1,5 +1,6 @@
 import re
 from calendar import Day
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Annotated, Literal, cast
 
@@ -22,6 +23,8 @@ from pydantic import (
 from intent_to_schedule.application.command import (
     AddConstraint,
     AddTask,
+    ExecuteResult,
+    Rejected,
     RemoveConstraint,
     RemoveTask,
     ReplaceConstraint,
@@ -40,6 +43,7 @@ from intent_to_schedule.application.query import (
     AgendaItem,
     AgendaQuery,
     Answer,
+    AnswerResult,
     AvailableStartsAnswer,
     AvailableStartsQuery,
     ConstraintsAnswer,
@@ -59,7 +63,14 @@ from intent_to_schedule.application.query import (
     TasksQuery,
     TaskType,
 )
-from intent_to_schedule.application.solve import Conflicts
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    FeasibleSolution,
+    NoFeasibleSolution,
+    OptimalSolution,
+    Solution,
+    SolutionNotFound,
+)
 from intent_to_schedule.domain.availability import tasks_without_satisfying_start
 from intent_to_schedule.domain.calendar import (
     Availability,
@@ -85,7 +96,7 @@ from intent_to_schedule.domain.constraint import (
 from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
-from intent_to_schedule.domain.schedule import DroppedTask, ScheduledTask
+from intent_to_schedule.domain.schedule import DroppedTask, Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 from intent_to_schedule.domain.time_windows import (
@@ -991,6 +1002,22 @@ def command_record(
             return {"kind": "remove_constraint", "constraint_id": constraint_id.value}
 
 
+def rejected_record(result: Rejected) -> dict[str, object]:
+    """Convert a rejected result to its JSON record."""
+    return {"rejected": [item.message for item in result.violations.items]}
+
+
+def execute_result_record(
+    commands: Sequence[SchedulingCommand], result: ExecuteResult
+) -> dict[str, object]:
+    """Convert a command execution result to its JSON record."""
+    if isinstance(result, Rejected):
+        return rejected_record(result)
+    return {
+        "executed": [command_record(command, result.problem) for command in commands]
+    }
+
+
 def _window_warning(task: Task, relation: TimeRelation, constraint: Constraint) -> str:
     """Describe a task that no available start keeps in line with a time window."""
     placement: str = (
@@ -1028,6 +1055,19 @@ def schedule_summary_record(summary: ScheduleSummary) -> dict[str, object]:
             "moved_tasks": summary.moved_tasks,
         },
     }
+
+
+def to_schedule_entries_data(schedule: Schedule) -> tuple[ScheduleEntryData, ...]:
+    """Convert schedule entries in their display order."""
+    scheduled: list[ScheduledTask] = sorted(
+        schedule.scheduled,
+        key=lambda item: (item.start, item.task_id.value),
+    )
+    dropped: list[DroppedTask] = sorted(
+        schedule.dropped, key=lambda item: item.task_id.value
+    )
+    entries: tuple[ScheduledTask | DroppedTask, ...] = (*scheduled, *dropped)
+    return tuple(to_schedule_entry_data(item) for item in entries)
 
 
 def _violation_record(amount: float, unit: ViolationUnit) -> dict[str, object]:
@@ -1099,6 +1139,31 @@ def conflicts_record(conflicts: Conflicts) -> dict[str, object]:
             for item in conflicts.dropped_required_tasks
         ],
     }
+
+
+def solution_record(result: Solution) -> dict[str, object]:
+    """Convert a schedule result to its JSON record."""
+    if isinstance(result, (OptimalSolution, FeasibleSolution)):
+        status: str = "optimal" if isinstance(result, OptimalSolution) else "feasible"
+        entries: tuple[ScheduleEntryData, ...] = to_schedule_entries_data(
+            result.schedule
+        )
+        items: list[dict[str, object]] = [
+            item.model_dump(mode="json") for item in entries
+        ]
+        return {
+            "status": status,
+            "summary": schedule_summary_record(result.summary),
+            "items": items,
+        }
+    if isinstance(result, NoFeasibleSolution):
+        conflicts: dict[str, object]
+        if isinstance(result.conflicts, Conflicts):
+            conflicts = {"status": "found", **conflicts_record(result.conflicts)}
+        else:
+            conflicts = {"status": "not_found", "reason": result.conflicts.reason}
+        return {"status": "no_feasible_solution", "conflicts": conflicts}
+    return {"status": "solution_not_found", "reason": result.reason}
 
 
 def _interval_record(interval: TimeInterval) -> dict[str, str]:
@@ -1219,6 +1284,13 @@ def answer_record(answer: Answer) -> dict[str, object]:
                 note="Movable Tasks and constraints are not considered; use schedule for the final schedule.",
             )
     return {"kind": record["kind"], **record}
+
+
+def answer_result_record(result: AnswerResult) -> dict[str, object]:
+    """Convert a query result to its JSON record."""
+    if isinstance(result, Rejected):
+        return rejected_record(result)
+    return answer_record(result.answer)
 
 
 def convert_command(data: CommandData) -> SchedulingCommand:
