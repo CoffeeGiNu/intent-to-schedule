@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from intent_to_schedule.domain.calendar import (
     Availability,
@@ -30,7 +30,7 @@ from intent_to_schedule.domain.time_windows import TimeRelation, TimeWindow
 
 
 def make_problem() -> SchedulingProblem:
-    start: datetime = datetime(2026, 1, 1)
+    start: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
     person_id: PersonId = PersonId("p1")
     task_id: TaskId = TaskId("t1")
     task: Task = Task(
@@ -72,7 +72,7 @@ def test_validators_report_duplicate_missing_and_unaligned_values() -> None:
             frozenset({TaskId("missing")}),
             Boundary.START,
             TimeBoundRelation.AT,
-            datetime(2026, 1, 1),
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     )
     unaligned_task: Task = replace(duplicate, duration=timedelta(minutes=15))
@@ -145,7 +145,7 @@ def test_fixed_task_references_and_off_grid_times() -> None:
     fixed: FixedTask = FixedTask(
         TaskId("fixed"),
         "Existing",
-        datetime(2026, 1, 1, 0, 15),
+        datetime(2026, 1, 1, 0, 15, tzinfo=timezone.utc),
         timedelta(minutes=10),
         frozenset({PersonId("p1")}),
     )
@@ -155,7 +155,7 @@ def test_fixed_task_references_and_off_grid_times() -> None:
             frozenset({fixed.id}),
             Boundary.START,
             TimeBoundRelation.AT,
-            datetime(2026, 1, 1),
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     )
     problem = replace(problem, fixed_tasks=(fixed,), constraints=(constraint,))

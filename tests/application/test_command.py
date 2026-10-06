@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from intent_to_schedule.application.command import (
     AddConstraint,
@@ -30,7 +30,7 @@ from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
 
-START: datetime = datetime(2026, 10, 1, 9)
+START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 
 
 def task(value: str, name: str = "Task") -> Task:

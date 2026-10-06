@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from intent_to_schedule.domain.person import PersonId
 
@@ -51,6 +51,8 @@ class TimeGrid:
     def __post_init__(self) -> None:
         if self.slot <= timedelta(0):
             raise ValueError("TimeGrid slot must be positive.")
+        if self.horizon.start.utcoffset() is None:
+            raise ValueError("TimeGrid horizon must have an offset.")
         if self.horizon.start >= self.horizon.end:
             raise ValueError("TimeGrid horizon start must precede its end.")
         if not self.is_aligned(self.horizon.end):
@@ -95,9 +97,16 @@ class TimeGrid:
             raise ValueError("Slot range must not be empty.")
         return TimeInterval(self.time_at(slots.start), self.time_at(slots.stop))
 
+    @property
+    def starting_offset(self) -> timezone:
+        """Fixed offset of the horizon start."""
+        offset: timedelta | None = self.horizon.start.utcoffset()
+        assert offset is not None
+        return timezone(offset)
+
     def date_of(self, at: datetime) -> date:
         """Calendar date of a time in the horizon's starting offset."""
-        return at.astimezone(self.horizon.start.tzinfo).date()
+        return at.astimezone(self.starting_offset).date()
 
     @property
     def dates(self) -> tuple[date, ...]:

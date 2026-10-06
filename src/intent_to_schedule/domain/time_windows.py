@@ -75,30 +75,17 @@ class Expansion:
 
 
 def window_times(
-    windows: Sequence[TimeWindow], horizon: TimeInterval
+    windows: Sequence[TimeWindow], grid: TimeGrid
 ) -> tuple[TimeInterval, ...]:
     """Times in the horizon covered by any window, merged into disjoint intervals."""
-    offset: timedelta | None = horizon.start.utcoffset()
-    calendar_timezone: timezone | None = (
-        timezone(offset) if offset is not None else None
-    )
-    horizon_start: datetime = (
-        horizon.start.astimezone(calendar_timezone)
-        if calendar_timezone is not None
-        else horizon.start
-    )
-    horizon_end: datetime = (
-        horizon.end.astimezone(calendar_timezone)
-        if calendar_timezone is not None
-        else horizon.end
-    )
+    calendar_timezone: timezone = grid.starting_offset
     intervals: list[TimeInterval] = []
     window: TimeWindow
     for window in windows:
-        current: date = horizon_start.date()
+        current: date = grid.date_of(grid.horizon.start)
         if window.date_range is not None:
             current = max(current, window.date_range.start)
-        while current <= horizon_end.date():
+        while current <= grid.date_of(grid.horizon.end):
             if window.date_range is not None and current >= window.date_range.end:
                 break
             following: date = current + timedelta(days=1)
@@ -118,14 +105,14 @@ def window_times(
                 )
                 intervals.append(TimeInterval(start, end))
             current = following
-    return _merge(intervals, horizon)
+    return _merge(intervals, grid.horizon)
 
 
 def expand(
     windows: Sequence[TimeWindow], relation: TimeRelation, grid: TimeGrid
 ) -> Expansion:
     """Merge windows and round them to slots in the direction the relation needs."""
-    times: tuple[TimeInterval, ...] = window_times(windows, grid.horizon)
+    times: tuple[TimeInterval, ...] = window_times(windows, grid)
     intervals: list[TimeInterval] = []
     interval: TimeInterval
     for interval in times:

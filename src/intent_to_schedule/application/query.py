@@ -507,7 +507,7 @@ class AvailableStartsQuery:
         intervals: tuple[TimeInterval, ...] = (
             (grid.horizon,)
             if self.windows is None
-            else window_times(self.windows, grid.horizon)
+            else window_times(self.windows, grid)
         )
         items: list[datetime] = []
         start: int
@@ -576,9 +576,7 @@ class AgendaQuery:
                 self.date_range.start <= day < self.date_range.end
             ):
                 continue
-            midnight: datetime = datetime.combine(
-                day, time.min, grid.horizon.start.tzinfo
-            )
+            midnight: datetime = datetime.combine(day, time.min, grid.starting_offset)
             span: TimeInterval = TimeInterval(midnight, midnight + timedelta(days=1))
             outside_working: tuple[TimeInterval, ...] = complement(working, span)
             day_working: tuple[TimeInterval, ...] = complement(outside_working, span)

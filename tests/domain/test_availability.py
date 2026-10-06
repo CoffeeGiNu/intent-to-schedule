@@ -157,7 +157,7 @@ def test_duration_longer_than_horizon_has_no_start_for_participants() -> None:
 
 
 def test_duration_longer_than_horizon_does_not_require_a_representable_end() -> None:
-    start: datetime = datetime(9999, 12, 31, 23)
+    start: datetime = datetime(9999, 12, 31, 23, tzinfo=timezone.utc)
     grid: TimeGrid = TimeGrid(TimeInterval(start, start + SLOT), SLOT)
     assert available_start_slots(grid, (), timedelta(days=1)) == ()
 

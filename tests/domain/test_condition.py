@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 
@@ -32,7 +32,7 @@ from intent_to_schedule.domain.measure import (
 from intent_to_schedule.domain.task import TaskId
 from intent_to_schedule.domain.time_windows import TimeRange, TimeRelation, TimeWindow
 
-START: datetime = datetime(2026, 10, 1, 9)
+START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 GRID: TimeGrid = TimeGrid(
     TimeInterval(START, START + timedelta(hours=4)), timedelta(hours=1)
 )

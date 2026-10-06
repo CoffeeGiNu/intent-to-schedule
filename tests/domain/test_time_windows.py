@@ -16,6 +16,7 @@ from intent_to_schedule.domain.time_windows import (
 )
 
 OFFSET: timezone = timezone(timedelta(hours=9))
+HOUR: timedelta = timedelta(hours=1)
 
 
 def at(day: int, hour: int = 0, minute: int = 0) -> datetime:
@@ -40,18 +41,18 @@ def test_window_fields_are_intersected_and_windows_are_unioned() -> None:
             TimeRange(time(9), time(10)),
         ),
     )
-    assert window_times(windows, horizon) == (interval(16, 13, 18), interval(19, 9, 10))
+    assert window_times(windows, TimeGrid(horizon, HOUR)) == (interval(16, 13, 18), interval(19, 9, 10))
 
 
 def test_omitted_fields_cover_the_whole_horizon() -> None:
     horizon: TimeInterval = TimeInterval(at(12, 11), at(14, 15))
-    assert window_times((TimeWindow(None, None, None),), horizon) == (horizon,)
+    assert window_times((TimeWindow(None, None, None),), TimeGrid(horizon, HOUR)) == (horizon,)
 
 
 def test_omitted_dates_repeat_the_time_on_every_day() -> None:
     horizon: TimeInterval = TimeInterval(at(12), at(15))
     window: TimeWindow = TimeWindow(None, None, TimeRange(time(13), time(18)))
-    assert window_times((window,), horizon) == tuple(
+    assert window_times((window,), TimeGrid(horizon, HOUR)) == tuple(
         interval(day, 13, 18) for day in (12, 13, 14)
     )
 
@@ -59,13 +60,13 @@ def test_omitted_dates_repeat_the_time_on_every_day() -> None:
 def test_omitted_time_covers_selected_whole_days() -> None:
     horizon: TimeInterval = TimeInterval(at(12), at(20))
     window: TimeWindow = TimeWindow(None, frozenset({Day.FRIDAY}), None)
-    assert window_times((window,), horizon) == (TimeInterval(at(16), at(17)),)
+    assert window_times((window,), TimeGrid(horizon, HOUR)) == (TimeInterval(at(16), at(17)),)
 
 
 def test_null_time_end_covers_the_rest_of_each_day() -> None:
     horizon: TimeInterval = TimeInterval(at(12), at(14))
     window: TimeWindow = TimeWindow(None, None, TimeRange(time(22), None))
-    assert window_times((window,), horizon) == (
+    assert window_times((window,), TimeGrid(horizon, HOUR)) == (
         TimeInterval(at(12, 22), at(13)),
         TimeInterval(at(13, 22), at(14)),
     )
@@ -78,7 +79,7 @@ def test_windows_are_clipped_to_the_horizon() -> None:
         None,
         TimeRange(time(13), time(18)),
     )
-    assert window_times((window,), horizon) == (
+    assert window_times((window,), TimeGrid(horizon, HOUR)) == (
         interval(12, 14, 18),
         interval(13, 13, 15),
     )
@@ -87,11 +88,11 @@ def test_windows_are_clipped_to_the_horizon() -> None:
 def test_window_time_end_and_horizon_end_are_excluded() -> None:
     horizon: TimeInterval = interval(12, 9, 10)
     assert (
-        window_times((TimeWindow(None, None, TimeRange(time(10), time(11))),), horizon)
+        window_times((TimeWindow(None, None, TimeRange(time(10), time(11))),), TimeGrid(horizon, HOUR))
         == ()
     )
     assert (
-        window_times((TimeWindow(None, None, TimeRange(time(8), time(9))),), horizon)
+        window_times((TimeWindow(None, None, TimeRange(time(8), time(9))),), TimeGrid(horizon, HOUR))
         == ()
     )
 
@@ -103,7 +104,7 @@ def test_window_dates_use_the_horizon_start_offset() -> None:
         frozenset({Day.TUESDAY}),
         TimeRange(time(1), time(2)),
     )
-    result: tuple[TimeInterval, ...] = window_times((window,), horizon)
+    result: tuple[TimeInterval, ...] = window_times((window,), TimeGrid(horizon, HOUR))
     assert result == (interval(13, 1, 2),)
     assert result[0].start.utcoffset() == timedelta(hours=9)
 
@@ -111,9 +112,9 @@ def test_window_dates_use_the_horizon_start_offset() -> None:
 @pytest.mark.parametrize("weekdays", [None, frozenset()])
 def test_empty_windows_and_empty_weekdays(weekdays: frozenset[Day] | None) -> None:
     horizon: TimeInterval = TimeInterval(at(12), at(13))
-    assert window_times((), horizon) == ()
+    assert window_times((), TimeGrid(horizon, HOUR)) == ()
     window: TimeWindow = TimeWindow(None, weekdays, None)
-    assert window_times((window,), horizon) == ((horizon,) if weekdays is None else ())
+    assert window_times((window,), TimeGrid(horizon, HOUR)) == ((horizon,) if weekdays is None else ())
 
 
 def test_overlapping_and_adjacent_windows_are_merged_in_time_order() -> None:
@@ -122,7 +123,7 @@ def test_overlapping_and_adjacent_windows_are_merged_in_time_order() -> None:
         TimeWindow(None, None, TimeRange(time(start), time(end)))
         for start, end in ((11, 13), (9, 10), (10, 12), (15, 16), (9, 10))
     )
-    assert window_times(windows, horizon) == (interval(12, 9, 13), interval(12, 15, 16))
+    assert window_times(windows, TimeGrid(horizon, HOUR)) == (interval(12, 9, 13), interval(12, 15, 16))
 
 
 @pytest.mark.parametrize("relation", list(TimeRelation))
