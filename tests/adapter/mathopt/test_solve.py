@@ -408,9 +408,9 @@ def test_solver_passes_time_limit() -> None:
     with patch(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", wraps=mathopt.solve
     ) as solve_mock:
-        result: Schedule | Infeasible = MathOptSchedulingSolver(
-            time_limit=limit
-        ).solve(problem(task("timed")), DEFAULT_POLICY, None, True)
+        result: Schedule | Infeasible = MathOptSchedulingSolver(time_limit=limit).solve(
+            problem(task("timed")), DEFAULT_POLICY, None, True
+        )
     assert isinstance(result, Schedule)
     assert solve_mock.call_args.kwargs["params"].time_limit == limit
 
@@ -985,9 +985,7 @@ def test_solver_relaxes_only_after_infeasible(feasible: bool) -> None:
     with patch(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", wraps=mathopt.solve
     ) as solve_mock:
-        result: Schedule | Infeasible = MathOptSchedulingSolver(
-            time_limit=limit
-        ).solve(
+        result: Schedule | Infeasible = MathOptSchedulingSolver(time_limit=limit).solve(
             problem(item, availabilities=availabilities), DEFAULT_POLICY, None, True
         )
     assert isinstance(result, Schedule if feasible else Infeasible)
@@ -1017,14 +1015,17 @@ def test_solver_relaxes_only_after_infeasible(feasible: bool) -> None:
             mathopt.Termination(reason=mathopt.TerminationReason.NUMERICAL_ERROR),
             "numerical_error",
         ),
+        (
+            mathopt.Termination(reason=mathopt.TerminationReason.IMPRECISE),
+            "imprecise",
+        ),
     ],
 )
 def test_infeasible_without_relaxed_solution_reports_termination(
     termination: mathopt.Termination, reason: str
 ) -> None:
     """Report why the relaxed solve found nothing from its MathOpt termination."""
-    unsolved: MagicMock = MagicMock()
-    unsolved.termination = termination
+    unsolved: mathopt.SolveResult = mathopt.SolveResult(termination=termination)
     results: list[mathopt.SolveResult] = []
     original_solve: Callable[..., mathopt.SolveResult] = mathopt.solve
 
@@ -1052,3 +1053,69 @@ def test_infeasible_without_relaxed_solution_reports_termination(
         )
     assert result == Infeasible(ConflictsNotFound(reason))
     assert len(results) == 2
+
+
+def test_infeasible_uses_relaxed_solution_whatever_its_termination() -> None:
+    """Report conflicts from a relaxed solution even when its solve ends imprecise."""
+    results: list[mathopt.SolveResult] = []
+    original_solve: Callable[..., mathopt.SolveResult] = mathopt.solve
+
+    def imprecise_relaxed(
+        model: mathopt.Model,
+        solver_type: mathopt.SolverType,
+        *,
+        params: mathopt.SolveParameters,
+    ) -> mathopt.SolveResult:
+        result: mathopt.SolveResult = original_solve(model, solver_type, params=params)
+        if results:
+            result = replace(
+                result,
+                termination=mathopt.Termination(
+                    reason=mathopt.TerminationReason.IMPRECISE
+                ),
+            )
+        results.append(result)
+        return result
+
+    item: Task = task("item", people=PEOPLE)
+    with patch(
+        "intent_to_schedule.adapter.mathopt.solve.mathopt.solve",
+        side_effect=imprecise_relaxed,
+    ):
+        result: Schedule | Infeasible = SOLVER.solve(
+            problem(item, availabilities=(Availability(PERSON, ()),)),
+            DEFAULT_POLICY,
+            None,
+            True,
+        )
+    assert results[1].has_primal_feasible_solution()
+    assert result == Infeasible(
+        Conflicts(
+            (), (DroppedRequiredTask(item.id, item.name, DropReason.NO_FREE_START),)
+        )
+    )
+
+
+def test_first_solve_ending_imprecise_fails() -> None:
+    """Fail when the first solve ends imprecise, even with a solution."""
+    original_solve: Callable[..., mathopt.SolveResult] = mathopt.solve
+
+    def imprecise(
+        model: mathopt.Model,
+        solver_type: mathopt.SolverType,
+        *,
+        params: mathopt.SolveParameters,
+    ) -> mathopt.SolveResult:
+        return replace(
+            original_solve(model, solver_type, params=params),
+            termination=mathopt.Termination(reason=mathopt.TerminationReason.IMPRECISE),
+        )
+
+    with (
+        patch(
+            "intent_to_schedule.adapter.mathopt.solve.mathopt.solve",
+            side_effect=imprecise,
+        ),
+        pytest.raises(RuntimeError, match="IMPRECISE"),
+    ):
+        SOLVER.solve(problem(task("item")), DEFAULT_POLICY, None, True)
