@@ -265,6 +265,21 @@ def test_time_range_rejects_times_outside_the_day(
         TimeRange(start, end)
 
 
+@pytest.mark.parametrize(
+    "start,end",
+    [
+        (timedelta(hours=9, seconds=30), clock(10)),
+        (clock(9), timedelta(hours=10, microseconds=1)),
+        (timedelta(hours=9, seconds=30), timedelta(hours=9, seconds=45)),
+    ],
+)
+def test_time_range_rejects_times_finer_than_a_minute(
+    start: timedelta, end: timedelta
+) -> None:
+    with pytest.raises(ValueError, match="whole minutes"):
+        TimeRange(start, end)
+
+
 @pytest.mark.parametrize("end", [date(2026, 10, 4), date(2026, 10, 5)])
 def test_date_range_rejects_nonincreasing_endpoints(end: date) -> None:
     """Reject date ranges whose end is not after their start."""
