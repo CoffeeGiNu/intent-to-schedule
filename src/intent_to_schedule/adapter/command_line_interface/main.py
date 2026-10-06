@@ -128,11 +128,11 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "they grow with every hour moved but stay below limit. Hard constraints require zero violation. "
         "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
         "Use query evaluation for constraint breakdowns and query objective_policy for current weights. "
-        "If no feasible schedule exists, conflicts come from a relaxed solve that permits hard violations and required drops at costs above every soft cost. "
+        "If no feasible schedule exists, conflicts come from a relaxed solve that permits hard violations and required drops at costs that each exceed every single soft coefficient but not necessarily a sum of soft costs; a dropped required task also pays its importance-based drop cost. "
         "When the relaxed solve finds a schedule, conflicts.status is found; "
         "conflicts.constraints lists broken hard constraints in the evaluation item shape plus related_constraint_ids, the other hard constraints referencing the same tasks; "
         "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
-        "This is one least-breaking way and may not name every party to a conflict, so check related_constraint_ids. "
+        "The relaxed schedule minimizes these costs together with the ordinary costs, and may not reach that minimum if the relaxed solve stops before proving optimality; it is one set of changes, not the fewest conflicts or every party to a conflict, so check related_constraint_ids. "
         "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. "
         "If the relaxed solve finds no schedule, conflicts is {status: not_found, reason}, where reason is time_limit if the time limit stopped it "
         "and otherwise the MathOpt termination reason in lowercase, such as numerical_error. The previous schedule is kept.",
