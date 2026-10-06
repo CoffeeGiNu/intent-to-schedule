@@ -56,6 +56,10 @@ class TimeRange:
     end: timedelta
 
     def __post_init__(self) -> None:
+        if self.start % timedelta(minutes=1) or self.end % timedelta(minutes=1):
+            raise ValueError(
+                f"Time range start {self.start} and end {self.end} must be whole minutes."
+            )
         start: str = format_time_of_day(self.start)
         end: str = format_time_of_day(self.end)
         if self.start < timedelta(0) or self.end > timedelta(days=1):
