@@ -30,12 +30,23 @@ type ViolationUnit = Literal["hours", "count"]
 
 
 @dataclass(frozen=True)
-class ViolationPart:
-    """Violation attributed to a task or calendar date."""
+class TaskViolationPart:
+    """Violation attributed to a task."""
 
     amount: float
-    task_id: TaskId | None = None
-    calendar_date: date | None = None
+    task_id: TaskId
+
+
+@dataclass(frozen=True)
+class DateViolationPart:
+    """Violation attributed to a calendar date."""
+
+    amount: float
+    calendar_date: date
+
+
+type ViolationPart = TaskViolationPart | DateViolationPart
+"""Violation attributed to a task or calendar date."""
 
 
 @dataclass(frozen=True)
@@ -102,7 +113,7 @@ def measure_criterion(
                 if interval is not None
                 else 0.0
             )
-            parts.append(ViolationPart(amount, task_id=measure.task_id))
+            parts.append(TaskViolationPart(amount, measure.task_id))
         case IntervalMeasure():
             if not isinstance(criterion.evaluation, Intrusion):
                 raise ValueError("Unsupported interval evaluation")
@@ -125,7 +136,7 @@ def measure_criterion(
                     if interval is not None
                     else 0.0
                 )
-                parts.append(ViolationPart(amount, task_id=task_id))
+                parts.append(TaskViolationPart(amount, task_id))
         case DependencyMeasure():
             from_interval: TimeInterval | None = placements.get(measure.from_task_id)
             to_interval: TimeInterval | None = placements.get(measure.to_task_id)
@@ -154,7 +165,7 @@ def measure_criterion(
                 else:
                     totals[day] = current + interval.duration
             parts = [
-                ViolationPart(_evaluate(totals[day], criterion), calendar_date=day)
+                DateViolationPart(_evaluate(totals[day], criterion), day)
                 for day in dates
             ]
     unit: ViolationUnit = (

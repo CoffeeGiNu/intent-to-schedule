@@ -85,7 +85,12 @@ from intent_to_schedule.domain.time_windows import (
     TimeWindow,
     expand,
 )
-from intent_to_schedule.domain.violation import ViolationPart, ViolationUnit
+from intent_to_schedule.domain.violation import (
+    DateViolationPart,
+    TaskViolationPart,
+    ViolationPart,
+    ViolationUnit,
+)
 
 
 def _parse_id(
@@ -997,10 +1002,11 @@ def _violation_part_record(
         "violation": _violation_record(part.amount, item.violation.unit),
         "cost": part.amount * item.coefficient if item.coefficient is not None else None,
     }
-    if part.task_id is not None:
-        return {"task_id": part.task_id.value, **record}
-    assert part.calendar_date is not None
-    return {"date": part.calendar_date.isoformat(), **record}
+    match part:
+        case TaskViolationPart():
+            return {"task_id": part.task_id.value, **record}
+        case DateViolationPart():
+            return {"date": part.calendar_date.isoformat(), **record}
 
 
 def _evaluation_record(item: ConstraintEvaluation) -> dict[str, object]:
