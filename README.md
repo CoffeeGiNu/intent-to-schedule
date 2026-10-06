@@ -1,6 +1,6 @@
 # intent-to-schedule
 
-Turn scheduling requests into JSON commands and solve them with a mixed integer program (OR-Tools MathOpt). People and fixed appointments come from a calendar; movable tasks and constraints are added through commands, by you or by an agent such as Claude Code.
+Turn scheduling requests into commands and solve the schedule as a mixed integer linear program. Designed mainly for use from LLM-based AI agents.
 
 ## Usage
 
