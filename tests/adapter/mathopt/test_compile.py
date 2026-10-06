@@ -1013,14 +1013,16 @@ def test_start_candidates_skip_slots_blocked_for_participants(
         (Importance.HIGH, Strength.STRONG, 24.0, False, 480 / 17),
     ],
 )
+@pytest.mark.parametrize("stability", [True, False])
 def test_stability_objective_uses_bounded_cost(
     importance: Importance,
     strength: Strength,
     hours: float,
     required: bool,
     expected: float,
+    stability: bool,
 ) -> None:
-    """Charge bounded stability cost for a task with one available start."""
+    """Charge bounded stability cost for a task with one available start, if enabled."""
     item: Task = replace(
         task("movable", required=required), importance=importance, stability=strength
     )
@@ -1039,13 +1041,13 @@ def test_stability_objective_uses_bounded_cost(
     )
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, stability_drop_cost_ratio=0.3)
     compiled: CompiledProblem = compile_problem(
-        problem(item, end=START + SLOT), policy, previous
+        problem(item, end=START + SLOT), policy, previous, stability
     )
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
     )
     assert result.variable_values()[compiled.presences[item.id]] == pytest.approx(1.0)
-    assert result.objective_value() == pytest.approx(expected)
+    assert result.objective_value() == pytest.approx(expected if stability else 0.0)
 
 
 def test_previous_dropped_tasks_have_no_stability_cost() -> None:

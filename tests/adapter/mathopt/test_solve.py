@@ -493,7 +493,9 @@ def test_stability_moves_optional_task_instead_of_dropping(
         TaskId("occupied"), "Occupied", START, SLOT, item.participant_ids
     )
     changed: SchedulingProblem = replace(original, constraints=(), fixed_tasks=(fixed,))
-    result: Solved | Infeasible = Scheduling(SOLVER, AllOf()).solve(changed, previous)
+    result: Solved | Infeasible = Scheduling(SOLVER, AllOf()).solve(
+        changed, previous, True
+    )
     assert isinstance(result, Solved)
     assert starts(result.schedule) == {item.id: distant_start}
 
@@ -523,7 +525,9 @@ def test_stability_keeps_required_task_at_nearest_free_start() -> None:
         item.participant_ids,
     )
     changed: SchedulingProblem = replace(original, constraints=(), fixed_tasks=(fixed,))
-    result: Solved | Infeasible = Scheduling(SOLVER, AllOf()).solve(changed, previous)
+    result: Solved | Infeasible = Scheduling(SOLVER, AllOf()).solve(
+        changed, previous, True
+    )
     assert isinstance(result, Solved)
     assert starts(result.schedule) == {item.id: target + SLOT}
 
@@ -719,7 +723,7 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
     assert query.answer(added.problem, None) == Answered(
         AvailableStartsAnswer(expected, len(expected))
     )
-    first_solution: SolveResult = scheduling.solve(added.problem, None)
+    first_solution: SolveResult = scheduling.solve(added.problem, None, True)
     assert isinstance(first_solution, Solved)
     assert first_solution.schedule.scheduled[0].start in expected
     later: Task = replace(review, id=TaskId("later"))
@@ -727,7 +731,7 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
         added.problem, (AddTask(later),)
     )
     assert isinstance(with_later, Executed)
-    solution: SolveResult = scheduling.solve(with_later.problem, None)
+    solution: SolveResult = scheduling.solve(with_later.problem, None, True)
     assert isinstance(solution, Solved)
     assert {item.task_id for item in solution.schedule.scheduled} == {
         review.id,
@@ -846,7 +850,7 @@ def test_summary_matches_objective_of_the_same_solve(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", side_effect=capture
     ):
         solved = Scheduling(MathOptSchedulingSolver(policy), AllOf(), policy).solve(
-            value, previous
+            value, previous, True
         )
     assert isinstance(solved, Solved)
     assert solved.summary.total_cost == pytest.approx(captured[0].objective_value())
@@ -867,8 +871,9 @@ def test_summary_matches_objective_of_the_same_solve(
         assert solved.summary.stability_cost == pytest.approx(
             15 / 13 if custom_policy else 15 / 7
         )
-    assert summarize_schedule(value, solved.schedule, policy).moved_tasks == 0
-    assert summarize_schedule(value, solved.schedule, policy).stability_cost == 0
+    assert summarize_schedule(value, solved.schedule, policy, previous, False) == (
+        replace(solved.summary, stability_cost=0.0, moved_tasks=0)
+    )
 
 
 def test_infeasible_reports_contradictory_deadlines() -> None:

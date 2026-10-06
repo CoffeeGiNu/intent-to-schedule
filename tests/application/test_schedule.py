@@ -70,12 +70,14 @@ class Solver:
         self.result: Schedule | Infeasible = result
         self.problem: SchedulingProblem | None = None
         self.previous: Schedule | None = None
+        self.stability: bool | None = None
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
     ) -> Schedule | Infeasible:
         self.problem = problem
         self.previous = previous
+        self.stability = stability
         return self.result
 
 
@@ -92,7 +94,10 @@ class Validator:
 
 
 @pytest.mark.parametrize("stability", [False, True])
-def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
+@pytest.mark.parametrize("saved", [False, True])
+def test_scheduling_passes_previous_schedule_and_stability_to_solver(
+    saved: bool, stability: bool
+) -> None:
     first: Task = task("a")
     second: Task = task("b")
     previous: Schedule | None = (
@@ -108,16 +113,17 @@ def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
             ),
             (DroppedTask(second.id, second.name),),
         )
-        if stability
+        if saved
         else None
     )
     original: SchedulingProblem = problem(first, second)
     solver: Solver = Solver()
-    assert Scheduling(solver, Validator()).solve(original, previous) == Infeasible(
-        Conflicts((), ())
-    )
+    assert Scheduling(solver, Validator()).solve(
+        original, previous, stability
+    ) == Infeasible(Conflicts((), ()))
     assert solver.problem is original
     assert solver.previous is previous
+    assert solver.stability is stability
 
 
 def test_solved_requires_summary() -> None:
@@ -142,9 +148,44 @@ def test_scheduling_summarizes_solver_schedule_with_its_policy() -> None:
         (DroppedTask(second.id, second.name),),
     )
     result: SolveResult = Scheduling(Solver(schedule), AllOf(), policy).solve(
-        problem(first, second), None
+        problem(first, second), None, True
     )
     assert result == Solved(schedule, ScheduleSummary(70.0, 0.0, 0.0, 1, 1, 0, 0))
+
+
+@pytest.mark.parametrize("stability", [False, True])
+def test_scheduling_summary_counts_moves_only_with_stability(stability: bool) -> None:
+    """Charge moves from the saved schedule only when stability is on."""
+    item: Task = task("a")
+    previous: Schedule = Schedule(
+        (
+            ScheduledTask(
+                item.id, item.name, START, START + item.duration, item.participant_ids
+            ),
+        ),
+        (),
+    )
+    moved: Schedule = Schedule(
+        (
+            ScheduledTask(
+                item.id,
+                item.name,
+                START + timedelta(hours=1),
+                START + timedelta(hours=2),
+                item.participant_ids,
+            ),
+        ),
+        (),
+    )
+    result: SolveResult = Scheduling(Solver(moved), AllOf()).solve(
+        problem(item), previous, stability
+    )
+    assert isinstance(result, Solved)
+    assert (result.summary.stability_cost, result.summary.moved_tasks) == (
+        (DEFAULT_POLICY.stability_cost(item, timedelta(hours=1)), 1)
+        if stability
+        else (0.0, 0)
+    )
 
 
 def test_scheduling_execute_returns_command_rejection() -> None:

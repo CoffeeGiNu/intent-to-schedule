@@ -1461,7 +1461,7 @@ def test_solve_option_passes_previous_schedule(
     monkeypatch: pytest.MonkeyPatch,
     stability: bool,
 ) -> None:
-    """Pass the saved schedule only when stability is enabled."""
+    """Pass the saved schedule and whether stability is enabled."""
     path: Path = initialized(tmp_path, capsys)
     state: State = load_state(path)
     previous: Schedule = Schedule((), ())
@@ -1474,9 +1474,7 @@ def test_solve_option_passes_previous_schedule(
     status, output = invoke(capsys, "--state", str(path), "solve", *arguments)
     assert status == 0
     assert output == {"summary": solve_summary(), "items": []}
-    solver.assert_called_once_with(
-        to_problem(state.problem), previous if stability else None
-    )
+    solver.assert_called_once_with(to_problem(state.problem), previous, stability)
     assert to_schedule(load_state(path).previous) == previous
 
 

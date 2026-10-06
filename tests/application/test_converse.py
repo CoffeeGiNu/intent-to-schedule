@@ -81,12 +81,12 @@ class FakeSolver:
 
     def __init__(self, result: Schedule | Infeasible) -> None:
         self.result: Schedule | Infeasible = result
-        self.calls: list[tuple[SchedulingProblem, Schedule | None]] = []
+        self.calls: list[tuple[SchedulingProblem, Schedule | None, bool]] = []
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None
+        self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
     ) -> Schedule | Infeasible:
-        self.calls.append((problem, previous))
+        self.calls.append((problem, previous, stability))
         return self.result
 
 
@@ -154,6 +154,7 @@ def test_message_ends_without_solving() -> None:
     assert solver.calls == []
 
 
+@pytest.mark.parametrize("saved", [True, False])
 @pytest.mark.parametrize("stability", [True, False])
 @pytest.mark.parametrize(
     ("result", "outcome"),
@@ -166,11 +167,11 @@ def test_message_ends_without_solving() -> None:
     ],
 )
 def test_apply_then_solve_uses_working_problem_and_stability(
-    stability: bool, result: Schedule | Infeasible, outcome: SolveResult
+    saved: bool, stability: bool, result: Schedule | Infeasible, outcome: SolveResult
 ) -> None:
-    """Pass successful edits and the selected previous schedule to solve."""
+    """Pass successful edits, the saved schedule, and the stability choice to solve."""
     problem: SchedulingProblem = make_problem()
-    previous: Schedule = Schedule((), ())
+    previous: Schedule | None = Schedule((), ()) if saved else None
     task: Task = make_task()
     step: ApplyStep = ApplyStep((AddTask(task),))
     translator: FakeStepTranslator = FakeStepTranslator(
@@ -183,10 +184,10 @@ def test_apply_then_solve_uses_working_problem_and_stability(
     assert response.problem.tasks == (task,)
     assert problem.tasks == ()
     assert response.outcome == outcome
-    assert solver.calls == [(response.problem, previous if stability else None)]
+    assert solver.calls == [(response.problem, previous, stability)]
     assert [call[1] for call in translator.calls] == [
-        Summary(problem.calendar.grid, 0, 0, 0, 0, True),
-        Summary(problem.calendar.grid, 0, 1, 0, 0, True),
+        Summary(problem.calendar.grid, 0, 0, 0, 0, saved),
+        Summary(problem.calendar.grid, 0, 1, 0, 0, saved),
     ]
     assert translator.calls[1][2] == (ApplyRecord(step, Executed(response.problem)),)
 
