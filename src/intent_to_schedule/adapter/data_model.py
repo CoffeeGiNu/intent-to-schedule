@@ -2,7 +2,7 @@ import re
 from calendar import Day
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
-from typing import Annotated, Literal, cast
+from typing import Annotated, ClassVar, Literal, cast
 
 from pydantic import (
     AwareDatetime,
@@ -116,6 +116,59 @@ from intent_to_schedule.domain.violation import (
     ViolationUnit,
 )
 
+APPLY_OPERATION_DESCRIPTION: str = (
+    "Use apply to add, replace, or remove tasks and constraints in the stored problem. "
+    "Use remove_task to undo a fixed task and free its participants. "
+    "For existing objects, use identifiers from a query or successful result; a new object may have a supplied identifier, "
+    "which later commands in the same batch can reference. Commands run in order as one batch. "
+    "An accepted batch is saved immediately as the stored problem; a rejected batch changes nothing. "
+    "Applying commands leaves the previous schedule unchanged. "
+    "Success returns {executed: [...]}; rejection returns {rejected: [...]}. "
+    "Successful records report each created or affected identifier and any time window rounding note. "
+    "An add or replace of a time_window constraint that remains in the final problem warns with the names and identifiers "
+    "of movable tasks that have no available start within its rounded windows (or outside them for avoid) after all batch commands. "
+    "Warnings do not reject the batch; it is still saved. "
+    "Resending an add without an id can create a second object. "
+    "A second remove of the same object is rejected. "
+    "replace is a full replacement, so resending an old replace can overwrite newer edits. "
+    "If the result is lost after the request, query the state before resending."
+)
+
+QUERY_OPERATION_DESCRIPTION: str = (
+    "Use query to inspect the stored problem, discover identifiers before changing existing objects with apply, "
+    "and examine the most recently saved schedule; queries do not change state. "
+    "It returns the requested result; a rejected query returns {rejected: [...]} and leaves the stored problem and saved schedule unchanged. "
+    "Use people to resolve names, then tasks to find movable or fixed tasks by name and participants; "
+    "the task date filter applies to fixed tasks, while previous_schedule can filter saved placements by date. "
+    "Use previous_schedule to inspect saved task placements. "
+    "select one when exactly one match is needed and narrow ambiguous matches with filters. "
+    "Query constraints before changing them with apply. "
+    "If an apply or schedule result is lost after the request, query the state before resending."
+)
+
+SCHEDULE_OPERATION_DESCRIPTION: str = (
+    "Use schedule to create a schedule from the stored problem after applying requested changes. "
+    "Its status is optimal, feasible, no_feasible_solution, or solution_not_found. "
+    "Optimal and feasible results return {status, summary, items} and replace the saved schedule; "
+    "no_feasible_solution returns {status, conflicts}, and solution_not_found returns {status, reason}. "
+    "A reason is time_limit when a time limit stops the solve; otherwise it is the MathOpt termination reason in lowercase, such as numerical_error. "
+    "These unsuccessful results leave the saved schedule unchanged. "
+    "summary contains total_cost, costs (dropped_tasks, soft_constraints, stability), "
+    "and counts (scheduled_tasks, dropped_tasks, violated_soft_constraints, moved_tasks). "
+    "Use query evaluation for constraint breakdowns and query objective_policy for current coefficients. "
+    "When no feasible schedule exists, conflicts explain the result through a relaxed solve that permits hard constraint violations and drops of required tasks. "
+    "If the relaxed solve finds a schedule, conflicts.status is found; conflicts.constraints lists broken hard constraints in the evaluation item shape "
+    "plus related_constraint_ids for other hard constraints referencing the same tasks; "
+    "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
+    "The relaxed solve minimizes its violation and drop costs alongside ordinary schedule costs, but may not reach its minimum if it stops before proving optimality. "
+    "Its conflicts are one set of changes, not necessarily the fewest conflicts or every party to a conflict; inspect related_constraint_ids. "
+    "Making every listed item soft or optional, or removing it, makes the problem solvable. "
+    "If the relaxed solve finds no schedule, conflicts is {status: not_found, reason}; reason is time_limit when the time limit stopped it, "
+    "otherwise the lowercase MathOpt termination reason, such as numerical_error. "
+    "A successful schedule replaces the previous schedule, so rerunning it with the same arguments may not compute from the same starting point. "
+    "If the result is lost after the request, query the state before resending."
+)
+
 
 def _parse_id(
     value: object, id_type: type[TaskId] | type[PersonId] | type[ConstraintId]
@@ -133,7 +186,10 @@ type TaskIdField = Annotated[
     PlainValidator(lambda value: _parse_id(value, TaskId)),
     PlainSerializer(lambda value: value.value),
     WithJsonSchema(
-        {"type": "string", "description": "Non-empty identifier of a movable or fixed task."}
+        {
+            "type": "string",
+            "description": "Non-empty identifier of a movable or fixed task. For an existing task, use an ID from a query or successful apply result; add_task may use a new ID that later commands in the same batch can reference.",
+        }
     ),
 ]
 """Task ID encoded as a JSON string."""
@@ -143,7 +199,10 @@ type PersonIdField = Annotated[
     PlainValidator(lambda value: _parse_id(value, PersonId)),
     PlainSerializer(lambda value: value.value),
     WithJsonSchema(
-        {"type": "string", "description": "Non-empty identifier of a person from the calendar."}
+        {
+            "type": "string",
+            "description": "Non-empty identifier of a person in the calendar; obtain existing person IDs from the people query.",
+        }
     ),
 ]
 """Person ID encoded as a JSON string."""
@@ -153,7 +212,10 @@ type ConstraintIdField = Annotated[
     PlainValidator(lambda value: _parse_id(value, ConstraintId)),
     PlainSerializer(lambda value: value.value),
     WithJsonSchema(
-        {"type": "string", "description": "Non-empty identifier of a constraint."}
+        {
+            "type": "string",
+            "description": "Non-empty identifier of a constraint. For an existing constraint, use an ID from a query or successful apply result; add_constraint may use a new ID that later commands in the same batch can reference.",
+        }
     ),
 ]
 """Constraint ID encoded as a JSON string."""
@@ -260,8 +322,12 @@ class TimeIntervalData(DataModel):
 class DateRangeData(DataModel):
     """Calendar dates from an inclusive start to an exclusive end."""
 
-    start: date = Field(description="First included date, written as YYYY-MM-DD.")
-    end: date = Field(description="First excluded date, written as YYYY-MM-DD.")
+    start: date = Field(
+        description="First included date, written as YYYY-MM-DD. Resolve relative dates using the current time supplied with the request."
+    )
+    end: date = Field(
+        description="First excluded date, written as YYYY-MM-DD. Resolve relative dates using the current time supplied with the request."
+    )
 
     @model_validator(mode="after")
     def validate_dates(self) -> "DateRangeData":
@@ -274,7 +340,7 @@ class TimeRangeData(DataModel):
     """Time of day from an inclusive start to an exclusive end."""
 
     start: TimeOfDayField = Field(
-        description="Included start as HH:MM from 00:00 to 23:59 without an offset, in the calendar horizon's starting offset."
+        description="Included start as HH:MM from 00:00 to 23:59 without an offset, in the calendar horizon's starting offset. No default hours are defined for phrases such as afternoon."
     )
     end: TimeOfDayField = Field(
         description="Excluded end as HH:MM, or 24:00 for the end of the day. Must be later than start; split overnight ranges into separate windows."
@@ -333,13 +399,13 @@ class TaskContentData(DataModel):
         description="Existing people who take part. Schedule places the task only where every participant is available and free of fixed tasks, and keeps each person's movable tasks from overlapping. With an empty array, availability does not limit the start."
     )
     importance: Literal["low", "medium", "high"] = Field(
-        description="Cost of dropping the task: low, medium, or high selects a value from drop_costs in the objective_policy query. Schedule pays it when an optional task is unscheduled. It also bounds the stability cost, for required tasks too."
+        description="How much it matters that the task is done at all, represented as a cost of dropping it: low, medium, or high selects a value from drop_costs in the objective_policy query. Schedule pays it when an optional task is unscheduled. It also bounds the stability cost, for required tasks too."
     )
     required: bool = Field(
-        description="true requires schedule to place the task; if no feasible schedule exists, the result is no_feasible_solution. false makes the task optional: schedule may drop it and pay its importance-based drop cost."
+        description="true requires schedule to place the task; if no feasible schedule exists, the result is no_feasible_solution. false makes the task optional: schedule may drop it and pay its importance-based drop cost. Treat clear requests that a task must or definitely happen as required; this does not make its placement preferences hard."
     )
     stability: Literal["weak", "normal", "strong"] = Field(
-        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task and stability is enabled (schedule --no-stability disables it); moved-task counts still include changed starts whenever a previous schedule exists."
+        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task and schedule stability is true; moved-task counts still include changed starts whenever a previous schedule exists."
     )
 
 
@@ -348,7 +414,7 @@ class NewTaskData(TaskContentData):
 
     id: TaskIdField | None = Field(
         default=None,
-        description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
+        description="Identifier to use instead of a generated one; omit to generate an identifier. Later commands in the same batch can reference it.",
     )
 
 
@@ -373,7 +439,7 @@ class FixedTaskContentData(DataModel):
         description="Length as an ISO 8601 duration, such as PT1H30M. Must not be negative; it need not be a multiple of the calendar slot."
     )
     participant_ids: tuple[PersonIdField, ...] = Field(
-        description="Existing people whose time it occupies. Every slot the task touches is unavailable to them in available_starts and schedule."
+        description="Existing people whose time it occupies. Every slot the task touches is unavailable to them in available_starts and schedule, for existing and future tasks. To register an absence or appointment missing from the calendar, add a fixed task with its name, start, duration, and the person's identifier."
     )
 
 
@@ -382,7 +448,7 @@ class NewFixedTaskData(FixedTaskContentData):
 
     id: TaskIdField | None = Field(
         default=None,
-        description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
+        description="Identifier to use instead of a generated one; omit to generate an identifier. Later commands in the same batch can reference it.",
     )
 
 
@@ -415,17 +481,17 @@ class TimeWindowConditionData(DataModel):
     """Whole tasks kept within or away from the combined windows."""
 
     kind: Literal["time_window"] = Field(
-        description="time_window restricts whole task intervals, rather than only their start times."
+        description="time_window restricts whole task intervals, rather than only their start times. Use it for date, weekday, or time-of-day wishes."
     )
     task_ids: tuple[TaskIdField, ...] = Field(
         min_length=1,
         description="Existing movable or fixed task identifiers sharing this condition. Unscheduled tasks have no violation."
     )
     relation: Literal["within", "avoid"] = Field(
-        description="within keeps each whole task inside the combined windows; avoid keeps it from overlapping them. Soft violations sum hours outside for within, or overlapping for avoid, across tasks."
+        description="within keeps each whole task inside the combined windows; avoid keeps it from overlapping them. Soft violations sum hours outside for within, or overlapping for avoid, across tasks. Use avoid only when the time is available but particular tasks must stay out; represent absences as fixed tasks."
     )
     windows: tuple[TimeWindowData, ...] = Field(
-        description="Alternative windows combined with or, clipped to the horizon and merged. within rounds inward to whole slots; avoid rounds outward to touched slots; an empty expansion is rejected."
+        description="Alternative windows combined with or, clipped to the horizon and merged. within rounds inward to whole slots; avoid rounds outward to touched slots; an empty expansion is rejected. Fixed tasks use their real intervals against the rounded windows."
     )
 
 
@@ -433,7 +499,7 @@ class TimeBoundConditionData(DataModel):
     """Start or end bounds for each scheduled task."""
 
     kind: Literal["time_bound"] = Field(
-        description="time_bound compares each task's selected boundary with one date and time."
+        description="time_bound compares each task's selected boundary with one date and time. Use it for a deadline or earliest start-time request; deadlines use end with at_or_before, and earliest starts use start with at_or_after."
     )
     task_ids: tuple[TaskIdField, ...] = Field(
         min_length=1,
@@ -479,7 +545,7 @@ class DailyLimitConditionData(DataModel):
     )
     task_ids: tuple[TaskIdField, ...] = Field(
         min_length=1,
-        description="Existing movable or fixed tasks to count; unscheduled tasks contribute zero. Only these tasks are included; list a person's meeting tasks to cap that person's new meetings."
+        description="Existing movable or fixed tasks to count; unscheduled tasks contribute zero. Only these tasks are included, and constraints have no person field. For a person's meeting cap, query their movable meeting tasks and include every intended ID; check total and truncated to ensure the list is complete. Tasks added later must be included by replacing the constraint."
     )
     quantity: Literal["count", "total_duration"] = Field(
         description="count counts tasks; total_duration sums their whole durations on their start date, even across midnight. Fixed tasks use their real durations and start dates without rounding. A fixed task counts when its start date is covered, even if its start time is outside the horizon; durations are not clipped."
@@ -517,7 +583,9 @@ type ConditionData = Annotated[
     | TimeBoundConditionData
     | TaskGapConditionData
     | DailyLimitConditionData,
-    Field(description="One time window, time bound, task gap, or daily limit condition."),
+    Field(
+        description="One time_window, time_bound, task_gap, or daily_limit condition. References must name tasks that exist when the command executes; each task_ids list must be non-empty. Group tasks that share a condition in one constraint. Condition values need not align to slots; time-window windows are rounded, while bounds, gaps, and duration maxima are compared without rounding."
+    ),
 ]
 """A time window, time bound, task gap, or daily limit."""
 
@@ -546,7 +614,7 @@ class ConstraintContentData(DataModel):
 
     label: str | None = Field(
         default=None,
-        description="Optional text describing the request, returned by the constraints query. It has no effect on scheduling."
+        description="Optional text describing the request, returned by the constraints query. Omit or use null for no label; it has no effect on scheduling."
     )
     requirement: HardRequirementData | SoftRequirementData = Field(
         description="hard enforces zero violation; soft adds a violation penalty using its required strength. Neither requires optional tasks to be scheduled."
@@ -561,7 +629,7 @@ class NewConstraintData(ConstraintContentData):
 
     id: ConstraintIdField | None = Field(
         default=None,
-        description="Identifier to use instead of a generated one; later commands in the same batch can reference it.",
+        description="Identifier to use instead of a generated one; omit to generate an identifier. Later commands in the same batch can reference it.",
     )
 
 
@@ -578,7 +646,7 @@ class AddTaskData(DataModel):
 
     kind: Literal["add_task"] = Field(description="add_task creates a task.")
     task: NewTaskData | NewFixedTaskData = Field(
-        description="Movable task without start, or fixed task with start. Input mixing fields from both shapes is rejected. A supplied identifier must be a non-empty string unique among movable and fixed tasks."
+        description="Movable shape without start includes importance, required, and stability; fixed shape with start omits them. Mixing fields from both shapes is rejected. A supplied identifier must be a non-empty string unique among movable and fixed tasks. Constraints may reference either shape."
     )
 
 
@@ -587,7 +655,7 @@ class ReplaceTaskData(DataModel):
 
     kind: Literal["replace_task"] = Field(description="replace_task edits a task with the same identifier.")
     task: TaskData | FixedTaskData = Field(
-        description="Complete replacement with the existing id. The fixed shape with start fixes the task; the movable shape without start makes it movable. Constraints referencing the identifier are kept."
+        description="Complete replacement with the existing id. The fixed shape includes start and omits importance, required, and stability; the movable shape omits start and includes those fields. Switching shapes fixes or makes the task movable. Constraints referencing the identifier are kept."
     )
 
 
@@ -637,19 +705,27 @@ type CommandData = (
 
 
 class CommandsData(DataModel):
-    """A batch of task and constraint commands applied in order."""
+    """Input model for apply commands."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        json_schema_extra={"description": APPLY_OPERATION_DESCRIPTION}
+    )
 
     commands: tuple[Annotated[CommandData, Field(discriminator="kind")], ...] = Field(
-        description="Commands executed in order; the entire accepted batch is saved, or rejected without changing state."
+        description="Task and constraint commands to apply."
     )
 
 
 class ScheduleData(DataModel):
-    """Input for scheduling the current problem."""
+    """Input model for schedule options."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        json_schema_extra={"description": SCHEDULE_OPERATION_DESCRIPTION}
+    )
 
     stability: bool = Field(
         default=True,
-        description="true, the default, adds a cost for moving each task away from its previous start, so tasks stay put unless moving improves the result; tasks can still move. false ignores previous starts when placing tasks but keeps the previous schedule and every constraint. Use false only when the whole schedule should be rearranged.",
+        description="true, the default, adds a cost for moving each task away from its previous start, so tasks stay put unless moving improves the result; tasks can still move. Keep true for partial changes and additions. false ignores previous starts when placing tasks but keeps the previous schedule and every constraint. Use false only for a clear request to rearrange the whole schedule, such as 'redo everything' or 'start over'.",
     )
 
 
@@ -711,7 +787,7 @@ class EvaluationFilterData(ConstraintsFilterData):
 
     violated_only: bool = Field(
         default=False,
-        description="Return only constraints with a positive violation, including hard violations. Task filters select complete constraints and do not shorten breakdowns.",
+        description="Defaults to false. When true, return only constraints with a positive violation, including hard violations. Task filters select complete constraints and do not shorten breakdowns.",
     )
 
 
@@ -727,7 +803,7 @@ class EvaluationQueryData(DataModel):
     )
     limit: int = Field(
         20,
-        description="Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting; truncated indicates omitted items. Only constraints are limited; their breakdowns are complete.",
+        description="Defaults to 20. Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting; truncated indicates omitted items. Only constraints are limited; their breakdowns are complete.",
     )
 
 
@@ -777,7 +853,8 @@ class PeopleQueryData(DataModel):
         description="all, the default, returns matches up to limit. one requires exactly one match before limiting; zero or multiple matches are rejected with up to five candidates.",
     )
     limit: int = Field(
-        20, description="Limit from 1 to 100; out-of-range values are rejected."
+        20,
+        description="Defaults to 20. Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting, and truncated indicates omitted items.",
     )
 
 
@@ -796,7 +873,8 @@ class TasksQueryData(DataModel):
         description="all, the default, returns matches up to limit. one requires exactly one match before limiting; zero or multiple matches are rejected with up to five candidates.",
     )
     limit: int = Field(
-        20, description="Limit from 1 to 100; out-of-range values are rejected."
+        20,
+        description="Defaults to 20. Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting, and truncated indicates omitted items.",
     )
 
 
@@ -811,7 +889,8 @@ class ConstraintsQueryData(DataModel):
         description="Optional filters combined with and; omitted filters match all constraints."
     )
     limit: int = Field(
-        20, description="Limit from 1 to 100; out-of-range values are rejected."
+        20,
+        description="Defaults to 20. Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting, and truncated indicates omitted items.",
     )
 
 
@@ -826,7 +905,8 @@ class PreviousScheduleQueryData(DataModel):
         description="Optional filters combined with and; omitted filters match all entries.",
     )
     limit: int = Field(
-        20, description="Limit from 1 to 100; out-of-range values are rejected."
+        20,
+        description="Defaults to 20. Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting, and truncated indicates omitted items.",
     )
 
 
@@ -847,11 +927,12 @@ class AvailableStartsQueryData(DataModel):
         description="Alternative windows combined with or; the whole task from start to end must fit within them. Omit for one window with every field omitted, covering the whole horizon; an empty array allows no times.",
     )
     limit: int = Field(
-        20, description="Limit from 1 to 100; out-of-range values are rejected."
+        20,
+        description="Defaults to 20. Limit from 1 to 100; out-of-range values are rejected. total counts matches before limiting, and truncated indicates omitted items.",
     )
 
 
-type QueryData = (
+type QueryData = Annotated[
     SummaryQueryData
     | PeopleQueryData
     | TasksQueryData
@@ -860,8 +941,9 @@ type QueryData = (
     | AvailableStartsQueryData
     | EvaluationQueryData
     | ObjectivePolicyQueryData
-    | AgendaQueryData
-)
+    | AgendaQueryData,
+    Field(description=QUERY_OPERATION_DESCRIPTION),
+]
 """JSON form of SchedulingQuery."""
 
 

@@ -16,9 +16,12 @@ from intent_to_schedule.adapter.local.store import (
     load_state,
 )
 from intent_to_schedule.adapter.data_model import (
+    APPLY_OPERATION_DESCRIPTION,
     CalendarInputData,
     CommandsData,
     QueryData,
+    QUERY_OPERATION_DESCRIPTION,
+    SCHEDULE_OPERATION_DESCRIPTION,
     ScheduleData,
     answer_result_record,
     answer_record,
@@ -94,60 +97,29 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "apply": (
         "Apply a batch of commands",
         "Reads JSON from --file or standard input. "
-        "Constraints use time_window, time_bound, task_gap, or daily_limit conditions; see `schema apply` for fields. "
-        "Prints created identifiers and any time window rounding note. "
-        "A time_window command whose constraint the batch keeps also gets warnings naming movable tasks "
-        "that no available start keeps within (or out of) its rounded windows after the whole batch; "
-        "the batch is still saved. "
-        "Register absences missing from the calendar as fixed tasks (add_task with start), not as avoid constraints. "
-        "Exits 1 on rejection without saving changes.",
+        "See `schema apply` for input fields. "
+        + APPLY_OPERATION_DESCRIPTION
+        + " Exits 1 on rejection.",
     ),
     "query": (
         "Read a summary, records, or available start times",
         "Reads JSON from --file or standard input; see `schema query`. "
-        "evaluation measures current constraints against the last saved solution, with violation amounts, units, soft costs (hard items and their breakdown parts have no cost), and task or date breakdowns. "
-        "Filters are violated_only (default false), constraint_ids, and task_ids, combined with and. "
-        "Hard violations come first, then highest soft costs. Without a saved solution, has_previous is false and items are empty. "
-        "objective_policy returns the current drop_costs, weights, per_count, stability_drop_cost_ratio, hard_violation_weight, and required_drop_cost. "
-        "agenda returns one person's working intervals, items, and free intervals for each date in date_range, \"horizon\" by default or start and end dates, including dates without working time. "
-        "Items are the person's fixed tasks and the tasks placed for the person in the last saved solution, with participants recorded when scheduled; they may predate current changes. "
-        "Listing limit defaults to 20, with a maximum of 100; total counts matches before limiting and truncated indicates omitted items. Exits 1 on rejection.",
+        + QUERY_OPERATION_DESCRIPTION
+        + " Exits 1 on rejection.",
     ),
     "schedule": (
         "Schedule the problem and store the schedule",
-        "Prints one JSON document. status is optimal, feasible, no_feasible_solution, or solution_not_found. "
-        "Exit codes: 0, 2, and 3 for optimal or feasible, no_feasible_solution, and solution_not_found respectively. "
-        "Optimal and feasible results return {status, summary, items}; both replace the previous schedule. "
-        "A no_feasible_solution result returns {status, conflicts}; a solution_not_found result returns {status, reason}. "
-        "A reason is time_limit when a time limit stops scheduling, otherwise the MathOpt termination reason in lowercase, such as numerical_error. "
-        "Those two results leave the previous schedule unchanged. "
-        "summary contains total_cost, costs (dropped_tasks, soft_constraints, stability), "
-        "and counts (scheduled_tasks, dropped_tasks, violated_soft_constraints, moved_tasks). "
-        "The objective adds importance-based optional drop costs, weighted soft violations in hours (daily counts scaled by per_count), "
-        "and stability costs from previous starts, weight * hours / (1 + weight * hours / limit) with the stability strength weight and limit = stability_drop_cost_ratio times the drop cost; "
-        "they grow with every hour moved but stay below limit. Hard constraints require zero violation. "
-        "Moved counts include changed starts whenever a previous schedule exists; --no-stability disables stability costs. "
-        "Use query evaluation for constraint breakdowns and query objective_policy for current weights. "
-        "If no feasible schedule exists, conflicts come from a relaxed solve that permits hard violations and required drops at costs that each exceed every single soft coefficient but not necessarily a sum of soft costs; a dropped required task also pays its importance-based drop cost. "
-        "When the relaxed solve finds a schedule, conflicts.status is found; "
-        "conflicts.constraints lists broken hard constraints in the evaluation item shape plus related_constraint_ids, the other hard constraints referencing the same tasks; "
-        "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
-        "The relaxed schedule minimizes these costs together with the ordinary costs, and may not reach that minimum if the relaxed solve stops before proving optimality; it is one set of changes, not the fewest conflicts or every party to a conflict, so check related_constraint_ids. "
-        "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. "
-        "If the relaxed solve finds no schedule, conflicts is {status: not_found, reason}, where reason is time_limit if the time limit stopped it "
-        "and otherwise the MathOpt termination reason in lowercase, such as numerical_error. The previous schedule is kept.",
+        "Prints one JSON document. Exit codes: 0, 2, and 3 for optimal or feasible, no_feasible_solution, and solution_not_found respectively. "
+        + SCHEDULE_OPERATION_DESCRIPTION
+        + " `--no-stability` disables stability costs.",
     ),
     "chat": (
         "Run a demonstration conversation turn with OpenAI",
         "Uses query, apply, schedule, or message steps, with a limit of 12. "
-        "A schedule result has status optimal, feasible, no_feasible_solution, or solution_not_found. "
-        "Schedule results return {status, summary, items}, {status, conflicts}, or {status, reason}, according to the status. "
-        "A reason is time_limit when a time limit stops scheduling, otherwise the MathOpt termination reason in lowercase, such as numerical_error. "
+        "query, apply, and schedule steps behave like those commands; accepted applies stay saved however the turn ends. "
         "Exit codes: 0, 2, and 3 for optimal or feasible, no_feasible_solution, and solution_not_found respectively. "
         "The assistant text is Scheduled. for optimal or feasible, No feasible solution. for no_feasible_solution, and Solution not found. for solution_not_found. "
-        "Accepted apply batches are saved immediately and stay saved however the turn ends; rejected batches change nothing. "
         "Every outcome saves the dialogue. "
-        "An optimal or feasible result also saves the previous schedule; no_feasible_solution and solution_not_found keep it. "
         "Reads OPENAI_API_KEY and OPENAI_BASE_URL from the environment.",
     ),
     "help": ("Print this message or the help of the given subcommand", ""),
