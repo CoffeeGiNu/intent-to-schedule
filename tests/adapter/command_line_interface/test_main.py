@@ -38,6 +38,7 @@ from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolic
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import (
     Conflicts,
+    ConflictsNotFound,
     DroppedRequiredTask,
     DropReason,
     Infeasible,
@@ -1271,6 +1272,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
             assert output == {
                 "infeasible": True,
                 "conflicts": {
+                    "status": "found",
                     "constraints": [],
                     "dropped_required_tasks": [
                         {"task_id": "added", "name": "Added", "reason": "conflict"}
@@ -1949,6 +1951,7 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
     assert output == {
         "infeasible": True,
         "conflicts": {
+            "status": "found",
             "constraints": [
                 {
                     "constraint_id": "late",
@@ -1967,18 +1970,41 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
     assert path.read_text(encoding="utf-8") == before
 
 
-def test_infeasible_solve_without_relaxed_solution_prints_null_conflicts(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("reason", ["time_limit", "numerical_error"])
+@pytest.mark.parametrize("command", ["solve", "chat"])
+def test_infeasible_without_relaxed_solution_prints_reason(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    reason: str,
 ) -> None:
-    """Exit 2 with null conflicts when the relaxed solve found no solution."""
+    """Exit 2 with conflicts not found and the reason the relaxed solve gave."""
     path: Path = initialized(tmp_path, capsys)
-    before: str = path.read_text(encoding="utf-8")
+    before: State = load_state(path)
     monkeypatch.setattr(
-        MathOptSchedulingSolver, "solve", MagicMock(return_value=Infeasible(None))
+        MathOptSchedulingSolver,
+        "solve",
+        MagicMock(return_value=Infeasible(ConflictsNotFound(reason))),
+    )
+    translator: MagicMock = MagicMock()
+    translator.translate.return_value = SolveStep(True)
+    monkeypatch.setattr(
+        main_module, "OpenAIStepTranslator", MagicMock(return_value=translator)
+    )
+    monkeypatch.setattr(openai, "OpenAI", MagicMock())
+    arguments: tuple[str, ...] = (
+        ("chat", "Schedule it", "--model", "demo-model")
+        if command == "chat"
+        else ("solve",)
     )
     status: int
     output: dict[str, object]
-    status, output = invoke(capsys, "--state", str(path), "solve")
+    status, output = invoke(capsys, "--state", str(path), *arguments)
     assert status == 2
-    assert output == {"infeasible": True, "conflicts": None}
-    assert path.read_text(encoding="utf-8") == before
+    assert output == {
+        "infeasible": True,
+        "conflicts": {"status": "not_found", "reason": reason},
+    }
+    after: State = load_state(path)
+    assert (after.problem, after.previous) == (before.problem, before.previous)

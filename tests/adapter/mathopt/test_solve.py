@@ -24,6 +24,7 @@ from intent_to_schedule.application.query import (
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import (
     Conflicts,
+    ConflictsNotFound,
     DroppedRequiredTask,
     DropReason,
     Infeasible,
@@ -889,6 +890,7 @@ def test_infeasible_reports_contradictory_deadlines() -> None:
     )
     result: SolveResult = SOLVER.solve(value)
     assert isinstance(result, Infeasible)
+    assert isinstance(result.conflicts, Conflicts)
     assert result.conflicts.dropped_required_tasks == ()
     assert result.conflicts.constraints
     assert sum(
@@ -928,6 +930,7 @@ def test_infeasible_reports_required_task_conflicting_with_another() -> None:
     second: Task = task("second", duration=HOUR, people=PEOPLE)
     result: SolveResult = SOLVER.solve(problem(first, second, end=START + HOUR))
     assert isinstance(result, Infeasible)
+    assert isinstance(result.conflicts, Conflicts)
     assert result.conflicts.constraints == ()
     dropped: tuple[DroppedRequiredTask, ...] = result.conflicts.dropped_required_tasks
     assert len(dropped) == 1
@@ -958,10 +961,35 @@ def test_solver_relaxes_only_after_infeasible(feasible: bool) -> None:
     ] == [limit] * (1 if feasible else 2)
 
 
-def test_infeasible_without_relaxed_solution_has_no_conflicts() -> None:
-    """Return infeasible without conflicts when the relaxed solve finds nothing."""
+@pytest.mark.parametrize(
+    ("termination", "reason"),
+    [
+        (
+            mathopt.Termination(
+                reason=mathopt.TerminationReason.NO_SOLUTION_FOUND,
+                limit=mathopt.Limit.TIME,
+            ),
+            "time_limit",
+        ),
+        (
+            mathopt.Termination(
+                reason=mathopt.TerminationReason.NO_SOLUTION_FOUND,
+                limit=mathopt.Limit.INTERRUPTED,
+            ),
+            "no_solution_found",
+        ),
+        (
+            mathopt.Termination(reason=mathopt.TerminationReason.NUMERICAL_ERROR),
+            "numerical_error",
+        ),
+    ],
+)
+def test_infeasible_without_relaxed_solution_reports_termination(
+    termination: mathopt.Termination, reason: str
+) -> None:
+    """Report why the relaxed solve found nothing from its MathOpt termination."""
     unsolved: MagicMock = MagicMock()
-    unsolved.termination.reason = mathopt.TerminationReason.NO_SOLUTION_FOUND
+    unsolved.termination = termination
     results: list[mathopt.SolveResult] = []
     original_solve: Callable[..., mathopt.SolveResult] = mathopt.solve
 
@@ -984,5 +1012,5 @@ def test_infeasible_without_relaxed_solution_has_no_conflicts() -> None:
         result: SolveResult = SOLVER.solve(
             problem(item, availabilities=(Availability(PERSON, ()),))
         )
-    assert result == Infeasible(None)
+    assert result == Infeasible(ConflictsNotFound(reason))
     assert len(results) == 2
