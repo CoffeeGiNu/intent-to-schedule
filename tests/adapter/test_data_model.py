@@ -22,6 +22,7 @@ from intent_to_schedule.adapter.data_model import (
     NewTaskData,
     QueryData,
     ReplaceTaskData,
+    ScheduleData,
     ScheduleEntryData,
     ScheduledTaskData,
     TaskContentData,
@@ -1567,3 +1568,12 @@ def test_evaluation_without_previous_and_with_empty_previous() -> None:
     )
     assert record["has_previous"] is True
     assert record["total"] == 4
+
+
+def test_schedule_input_keeps_previous_starts_by_default() -> None:
+    """Default schedule input enables stability and describes it."""
+    schema: dict[str, Any] = ScheduleData.model_json_schema()
+    assert ScheduleData().stability is True
+    assert ScheduleData.model_validate({}).stability is True
+    assert schema["properties"]["stability"]["default"] is True
+    assert "previous" in schema["properties"]["stability"]["description"]

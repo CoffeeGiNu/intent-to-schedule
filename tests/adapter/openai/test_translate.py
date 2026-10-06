@@ -12,6 +12,7 @@ from openai.lib._parsing._responses import type_to_text_format_param
 from openai.types.responses import ResponseFormatTextConfigParam
 from pydantic import ValidationError
 
+from intent_to_schedule.adapter.data_model import ScheduleData
 from intent_to_schedule.adapter.openai.translate import (
     OpenAIStepTranslator,
     StepOutput,
@@ -333,4 +334,21 @@ def test_explicit_window_values_from_the_strict_schema_convert() -> None:
     )
     assert convert_step_output(agenda) == QueryStep(
         AgendaQuery(PersonId("alice"), WholeHorizon())
+    )
+
+
+def test_schedule_output_shares_the_schedule_input_field() -> None:
+    """Describe chat schedule stability with the shared schedule input field."""
+    text_format: ResponseFormatTextConfigParam = type_to_text_format_param(StepOutput)
+    assert text_format["type"] == "json_schema"
+    definition: dict[str, object] = cast(
+        dict[str, dict[str, object]], text_format["schema"]["$defs"]
+    )["ScheduleOutput"]
+    properties: dict[str, dict[str, object]] = cast(
+        dict[str, dict[str, object]], definition["properties"]
+    )
+    assert set(cast(list[str], definition["required"])) == {"kind", "stability"}
+    assert (
+        properties["stability"]["description"]
+        == ScheduleData.model_fields["stability"].description
     )
