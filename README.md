@@ -22,7 +22,7 @@ uv run intent-to-schedule schema query
 uv run intent-to-schedule --state example-state.json show
 uv run intent-to-schedule --state example-state.json query --file query.json
 uv run intent-to-schedule --state example-state.json apply --file commands.json
-uv run intent-to-schedule --state example-state.json solve
+uv run intent-to-schedule --state example-state.json schedule
 ```
 
 `help <command>` describes each command. `schema` (or `schema apply`) prints the command input schema; `schema query` prints the query input schema. `show` prints the complete problem, previous schedule, and dialogue. Results are one JSON document; help is plain text.
@@ -70,7 +70,7 @@ Save any of these nine inputs as `query.json`. Filters combine with **and**. Lis
 {"kind":"constraints"}
 ```
 
-`previous_schedule` returns `has_previous` and entries with `status: "scheduled"`, `task_id`, `name`, `start`, `end`, and `participant_ids`, or `status: "dropped"`, `task_id`, and `name`. Names, end times, and participants are recorded at solve time and remain unchanged after a task is edited or removed. Optional filters are `task_ids` and `start_range`; a start range excludes dropped entries. This is the last saved solution, which may predate current problem changes:
+`previous_schedule` returns `has_previous` and entries with `status: "scheduled"`, `task_id`, `name`, `start`, `end`, and `participant_ids`, or `status: "dropped"`, `task_id`, and `name`. Names, end times, and participants are recorded when scheduled and remain unchanged after a task is edited or removed. Optional filters are `task_ids` and `start_range`; a start range excludes dropped entries. This is the last saved solution, which may predate current problem changes:
 
 ```json
 {"kind":"previous_schedule"}
@@ -82,7 +82,7 @@ Save any of these nine inputs as `query.json`. Filters combine with **and**. Lis
 {"kind":"agenda","person_id":"ito","date_range":{"start":"2026-10-19","end":"2026-10-24"}}
 ```
 
-**Scheduled items come from the last saved solution, as in `previous_schedule`, and may predate current problem changes.** They keep the names, times, and participants recorded at solve time. Movable tasks added or edited since then appear only after the next `solve`, and `free` does not account for them.
+**Scheduled items come from the last saved solution, as in `previous_schedule`, and may predate current problem changes.** They keep the names, times, and participants recorded when scheduled. Movable tasks added or edited since then appear only after the next `schedule`, and `free` does not account for them.
 
 `evaluation` measures the **current constraints against the last saved solution**. Each item has `constraint_id`, `label`, `requirement`, `violation` (`amount` and `unit`, either `hours` or `count`), `cost` (soft constraints only), and `breakdown`. Hard constraints have no cost: their items and breakdown parts omit `cost`, so tell them apart by `requirement.kind`. Time windows and bounds break down violations by `task_id`; daily limits break them down by `date`; task gaps have an empty breakdown. Parts include their violation, and for soft constraints their cost, including zero amounts. Daily breakdowns include every horizon date.
 
@@ -96,7 +96,7 @@ Filter by `violated_only` (default false), `constraint_ids`, or `task_ids`. A ta
 {"kind":"evaluation","filter":{"violated_only":true,"task_ids":["review"]},"limit":10}
 ```
 
-Movable tasks use their recorded start and end, even after their duration changes. Missing or dropped movable tasks contribute zero; removed tasks are ignored. Fixed tasks use their current intervals rounded outward to slots. Changes after a solve can therefore produce hard violations in this query. Evaluations are computed from placements, using the same slot, window, gap, and daily rules as the solver.
+Movable tasks use their recorded start and end, even after their duration changes. Missing or dropped movable tasks contribute zero; removed tasks are ignored. Fixed tasks use their current intervals rounded outward to slots. Changes after scheduling can therefore produce hard violations in this query. Evaluations are computed from placements, using the same slot, window, gap, and daily rules as the solver.
 
 `objective_policy` returns the coefficients actually used by the default solver: `drop_costs` by importance, `weights` by strength, `per_count` for daily count limits, and `stability_drop_cost_ratio`. `hard_violation_weight` (per hour or count) and `required_drop_cost` (per task) apply only to the relaxed solve that explains an infeasible solve; both exceed every soft cost. Use it for current values when comparing trade-offs:
 
@@ -115,9 +115,9 @@ Movable tasks use their recorded start and end, even after their duration change
 }
 ```
 
-**Available starts do not consider movable tasks, their previous placements, or constraints.** The answer includes a `note` explaining this; `solve` makes the final scheduling decision.
+**Available starts do not consider movable tasks, their previous placements, or constraints.** The answer includes a `note` explaining this; `schedule` makes the final scheduling decision.
 
-## Apply and solve
+## Apply and schedule
 
 Query person and fixed appointment identifiers first, narrowing ambiguous names with dates and participants. Reference those identifiers in `apply`; command references use identifiers, not names. To create a movable task, save this as `commands.json` and run `apply`:
 
@@ -141,7 +141,7 @@ Query person and fixed appointment identifiers first, narrowing ambiguous names 
 }
 ```
 
-Fixed tasks occupy their participants' time for `available_starts` and `solve`, including for tasks added later. Their starts and durations may fall between slot boundaries; every touched slot is occupied. Omit `importance`, `required`, and `stability` for fixed tasks. Use `remove_task` with the appointment's identifier to restore that time.
+Fixed tasks occupy their participants' time for `available_starts` and `schedule`, including for tasks added later. Their starts and durations may fall between slot boundaries; every touched slot is occupied. Omit `importance`, `required`, and `stability` for fixed tasks. Use `remove_task` with the appointment's identifier to restore that time.
 
 Prefer a fixed task over `avoid` constraints for such absences. An `avoid` constraint covers only the tasks listed when it is added, so tasks added later ignore it, and `available_starts` still reports the absent time as free. A fixed task covers every task, now and later, and shows up in the `tasks` query under its name. Recurring absences, such as every Tuesday 9:30 to 10:00, become one fixed task per occurrence. A half day off is strictly a change of working hours, which commands cannot edit; register it as a fixed task too.
 
@@ -164,10 +164,11 @@ To fix an existing movable task at a given time, use `replace_task` with its ide
 
 The task moves into `fixed_tasks` and keeps constraints referencing its identifier. To make it movable again, replace the same identifier without `start`, supplying `importance`, `required`, and `stability`. Both commands reject input mixing fields from the fixed and movable shapes.
 
-Run `solve` after applying changes. It prints `{"summary":{...},"items":[...]}` with scheduled entries first in start order, then dropped entries, using the same entry shape as `previous_schedule`, and saves those entries as the previous schedule. The summary has `total_cost`, `costs` split into `dropped_tasks`, `soft_constraints`, and `stability`, and `counts` of `scheduled_tasks`, `dropped_tasks`, `violated_soft_constraints`, and `moved_tasks`. Counts concern movable tasks; fixed appointments contribute to constraint costs when referenced. For example, two scheduled tasks, one dropped task, and one normal soft constraint violated by half an hour can produce:
+Run `schedule` after applying changes. An optimal result prints `{"status":"optimal","summary":{...},"items":[...]}` with scheduled entries first in start order, then dropped entries, using the same entry shape as `previous_schedule`, and saves those entries as the previous schedule. A feasible result means MathOpt found a schedule but stopped before proving optimality; it uses `"status":"feasible"` with the same fields and also exits 0 and saves the previous schedule. The summary has `total_cost`, `costs` split into `dropped_tasks`, `soft_constraints`, and `stability`, and `counts` of `scheduled_tasks`, `dropped_tasks`, `violated_soft_constraints`, and `moved_tasks`. Counts concern movable tasks; fixed appointments contribute to constraint costs when referenced. For example, two scheduled tasks, one dropped task, and one normal soft constraint violated by half an hour can produce:
 
 ```json
 {
+  "status":"optimal",
   "summary":{
     "total_cost":7.5,
     "costs":{"dropped_tasks":5.0,"soft_constraints":2.5,"stability":0.0},
@@ -185,13 +186,13 @@ The objective adds three costs: the importance-based drop cost of every dropped 
 
 For a small trade-off using the current default policy, dropping a low-importance optional task costs 5, and violating a normal soft constraint costs 5 per hour. Scheduling it with a 1.5-hour violation costs 7.5, so dropping it is cheaper if everything else stays equal. At one hour the costs tie and either result is possible. Query `objective_policy` for the current coefficients rather than assuming these example values.
 
-`solve --no-stability` solves from scratch. Stability cost and moved count are zero with this option or without a previous schedule. Dropped tasks do not count as moved. An infeasible solve leaves the previous schedule intact. Use `evaluation` after solving to inspect the constraints behind the reported soft cost.
+`schedule --no-stability` schedules from scratch. Stability cost and moved count are zero with this option or without a previous schedule. Dropped tasks do not count as moved. A proven infeasible result keeps the previous schedule intact. Use `evaluation` after scheduling to inspect the constraints behind the reported soft cost.
 
-An infeasible solve exits with status 2 and solves again with relaxed rules: each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so a relaxed schedule always exists. Its schedule is neither printed nor saved; the output has `conflicts.status` set to `found` and lists what it gave up:
+A proven infeasible result exits with status 2, saves nothing, and reports conflicts from a relaxed schedule. Each hour or count of hard violation costs `hard_violation_weight`, and each dropped required task costs `required_drop_cost`. Both exceed every soft cost, and dropping every task always satisfies the relaxed rules, so a relaxed schedule always exists. That schedule is neither printed nor saved; the output has `status` set to `no_feasible_solution`, `conflicts.status` set to `found`, and lists what it gave up:
 
 ```json
 {
-  "infeasible":true,
+  "status":"no_feasible_solution",
   "conflicts":{
     "status":"found",
     "constraints":[{
@@ -209,7 +210,9 @@ An infeasible solve exits with status 2 and solves again with relaxed rules: eac
 
 `constraints` lists the hard constraints broken by the relaxed schedule, in the `evaluation` item shape and measured the same way, plus `related_constraint_ids`: the other hard constraints referencing any of the same tasks. `dropped_required_tasks` lists the required tasks it dropped. `reason` is `no_free_start` when no start has every participant available and free of fixed appointments, as `available_starts` checks over the whole horizon, and `conflict` otherwise. The relaxed schedule is one way that breaks the least, not a list of everything involved in a conflict: of two contradictory deadlines, only one may appear, so check `related_constraint_ids`. Relaxing everything listed, by making constraints soft, making tasks optional, or removing them, makes the problem solvable.
 
-If the relaxed solve ends without a schedule, for example when a solver time limit stops it first, the output is `{"infeasible":true,"conflicts":{"status":"not_found","reason":"time_limit"}}` and the exit status is still 2. `conflicts.reason` is `time_limit` when the time limit stopped it, and otherwise MathOpt's termination reason in lowercase, such as `numerical_error`.
+If a proven infeasible result has no relaxed schedule available, for example when a solver time limit stops the relaxed solve, the output is `{"status":"no_feasible_solution","conflicts":{"status":"not_found","reason":"time_limit"}}` and the exit status is still 2. `conflicts.reason` is `time_limit` when the time limit stopped the relaxed solve, and otherwise MathOpt's termination reason in lowercase, such as `numerical_error`.
+
+If scheduling stops without finding a solution or proving that none exists, the output is `{"status":"solution_not_found","reason":"time_limit"}` and the exit status is 3. A standalone `schedule` saves nothing for this outcome. `reason` is `time_limit` when a time limit stopped scheduling, and otherwise MathOpt's termination reason in lowercase.
 
 ## Constraints
 
@@ -238,7 +241,7 @@ Within each window, `date_range`, `weekdays`, and `time_range` combine with **an
 
 Times of day must have no offset and are interpreted in the calendar horizon's starting offset. Resolve words such as “tomorrow” into dates yourself. Windows are clipped to the horizon and overlapping or adjacent intervals are merged before rounding: `within` rounds inward to complete slots, while `avoid` rounds outward to include touched slots. A changed boundary produces a rounding `note` beside the returned `constraint_id` on add or replace. An empty expansion is rejected. The state keeps the entered windows; rounding is applied when solving.
 
-After the whole batch is applied, `add_constraint` and `replace_constraint` with a `time_window` condition check each listed movable task against the starts the `available_starts` query would return for its participants and duration, including fixed tasks and tasks from the same batch. If no such start keeps the whole task within the rounded windows, or out of them for `avoid`, that command's entry gets `warnings`, a list of messages naming the task. A constraint replaced or removed later in the same batch is not checked for that earlier command; only the version the batch keeps can warn. The batch is still saved and `apply` exits 0. A hard constraint then keeps the task unscheduled, or makes `solve` infeasible if the task is required; a soft constraint is violated whenever the task is scheduled.
+After the whole batch is applied, `add_constraint` and `replace_constraint` with a `time_window` condition check each listed movable task against the starts the `available_starts` query would return for its participants and duration, including fixed tasks and tasks from the same batch. If no such start keeps the whole task within the rounded windows, or out of them for `avoid`, that command's entry gets `warnings`, a list of messages naming the task. A constraint replaced or removed later in the same batch is not checked for that earlier command; only the version the batch keeps can warn. The batch is still saved and `apply` exits 0. A hard constraint then keeps the task unscheduled, or makes `schedule` report no feasible solution if the task is required; a soft constraint is violated whenever the task is scheduled.
 
 Each example below is a separate `apply` input. Replace task placeholders with identifiers from `query` or `apply`.
 
@@ -373,9 +376,9 @@ uv run intent-to-schedule --state example-state.json chat \
   "Schedule a review on Friday afternoon" --model <MODEL>
 ```
 
-`chat` is a light demonstration loop using OpenAI. Set `OPENAI_API_KEY` and, for a different service endpoint, `OPENAI_BASE_URL`. `--model` is required; `--now` accepts a date and time for relative words, defaulting to the horizon start. Each turn allows up to 12 translator steps: query reads the working problem, apply attempts a batch and passes its result to the next step, solve ends with a scheduling result, and message ends with text. Query and apply results inform subsequent steps. A successful chat solve prints the same `{"summary":{...},"items":[...]}` result as `solve`, honoring the solve step's stability setting.
+`chat` is a light demonstration loop using OpenAI. Set `OPENAI_API_KEY` and, for a different service endpoint, `OPENAI_BASE_URL`. `--model` is required; `--now` accepts a date and time for relative words, defaulting to the horizon start. Each turn allows up to 12 translator steps: query reads the working problem, apply attempts a batch and passes its result to the next step, schedule ends with a scheduling result, and message ends with text. Query and apply results inform subsequent steps. An optimal or feasible chat result prints the same `{"status":"optimal","summary":{...},"items":[...]}` or `{"status":"feasible","summary":{...},"items":[...]}` document as `schedule`, honoring the schedule step's stability setting.
 
-On a successful solve, chat saves the working problem and previous schedule. On an infeasible solve, it saves the working problem, retains the previous schedule, and prints the same `{"infeasible":true,"conflicts":{...}}` result as `solve`. A message or step limit saves no problem changes. These completed turns save the user request and final assistant text in dialogue; intermediate step records are not saved. A message prints `{"message":"..."}`; the step limit prints `{"exhausted":true}`.
+For an optimal or feasible result, chat saves the working problem, previous schedule, and dialogue; the assistant text is `Scheduled.` For a no-feasible-solution result, chat saves the working problem and dialogue, keeps the previous schedule, and prints `{"status":"no_feasible_solution","conflicts":{...}}`; the assistant text is `No feasible solution.` For a solution-not-found result, chat saves the working problem and dialogue, keeps the previous schedule, and prints `{"status":"solution_not_found","reason":"time_limit"}`; the assistant text is `Solution not found.` These scheduling outcomes save the user request and final assistant text in dialogue; intermediate step records are not saved. A message or step limit saves no problem changes. A message prints `{"message":"..."}`; the step limit prints `{"exhausted":true}`.
 
 ## Exit status
 
@@ -383,4 +386,5 @@ On a successful solve, chat saves the working problem and previous schedule. On 
 |---|---|
 | 0 | Success, including empty queries, messages, and help |
 | 1 | Rejection (`rejected` contains messages), input or runtime error (`error` contains text), or chat step limit |
-| 2 | Infeasible solve or chat solve (`{"infeasible":true,"conflicts":{...}}`) |
+| 2 | No feasible solution from `schedule` or `chat` (`{"status":"no_feasible_solution","conflicts":{...}}`) |
+| 3 | Solution not found from `schedule` or `chat` (`{"status":"solution_not_found","reason":"..."}`) |
