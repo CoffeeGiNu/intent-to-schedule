@@ -1,14 +1,19 @@
 [project]
 name = "intent-to-schedule"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turn intent into a schedule."
 readme = "README.md"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 requires-python = ">=3.13"
 dependencies = [
     "openai>=3.22.1",
     "ortools>=9.15.6755",
     "pydantic>=2.13.5",
 ]
+
+[project.urls]
+Repository = "https://github.com/CoffeeGiNu/intent-to-schedule"
 
 [project.scripts]
 intent-to-schedule = "intent_to_schedule.adapter.command_line_interface.main:main"
