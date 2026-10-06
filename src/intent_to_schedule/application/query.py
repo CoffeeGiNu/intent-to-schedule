@@ -13,6 +13,7 @@ from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolic
 from intent_to_schedule.domain.time_windows import (
     DateRange,
     TimeWindow,
+    WholeHorizon,
     complement,
     window_times,
 )
@@ -453,8 +454,8 @@ class AvailableStartsQuery:
 
     participant_ids: frozenset[PersonId]
     duration: timedelta
-    windows: tuple[TimeWindow, ...] | None
-    """Windows the whole Task must fall within, or None for the whole horizon."""
+    windows: tuple[TimeWindow, ...]
+    """Windows the whole Task must fall within."""
     limit: int
 
     def answer(
@@ -504,11 +505,7 @@ class AvailableStartsQuery:
         starts: tuple[int, ...] = available_start_slots(
             grid, participants_free, self.duration
         )
-        intervals: tuple[TimeInterval, ...] = (
-            (grid.horizon,)
-            if self.windows is None
-            else window_times(self.windows, grid)
-        )
+        intervals: tuple[TimeInterval, ...] = window_times(self.windows, grid)
         items: list[datetime] = []
         start: int
         for start in sorted(starts):
@@ -524,8 +521,7 @@ class AgendaQuery:
     """Query for a person's working time, items, and free time on each date."""
 
     person_id: PersonId
-    date_range: DateRange | None
-    """Dates to include, or None for every date of the horizon."""
+    date_range: DateRange | WholeHorizon
 
     def answer(
         self,
@@ -572,9 +568,7 @@ class AgendaQuery:
         days: list[AgendaDay] = []
         day: date
         for day in grid.dates:
-            if self.date_range is not None and not (
-                self.date_range.start <= day < self.date_range.end
-            ):
+            if not self.date_range.includes(day):
                 continue
             midnight: datetime = datetime.combine(day, time.min, grid.starting_offset)
             span: TimeInterval = TimeInterval(midnight, midnight + timedelta(days=1))

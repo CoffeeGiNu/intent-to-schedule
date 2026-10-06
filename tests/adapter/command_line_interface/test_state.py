@@ -104,7 +104,8 @@ def test_state_round_trip_every_condition(tmp_path: Path) -> None:
     assert to_problem(load_state(path).problem) == original
     stored: str = path.read_text()
     assert "measure" not in stored
-    assert "09:10:00" in stored
+    assert '"start": "09:10"' in stored
+    assert '"date_range": "horizon"' in stored
 
 
 @pytest.mark.parametrize("model", [CalendarInput, ScheduleState])

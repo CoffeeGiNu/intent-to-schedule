@@ -1,7 +1,7 @@
 from calendar import Day
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
@@ -28,28 +28,44 @@ class DateRange:
                 f"{self.start.isoformat()}."
             )
 
+    def includes(self, day: date) -> bool:
+        """Whether a date lies in the range."""
+        return self.start <= day < self.end
+
+
+@dataclass(frozen=True)
+class WholeHorizon:
+    """Every date of the calendar horizon."""
+
+    def includes(self, day: date) -> bool:
+        """Whether a date lies in the range; every horizon date does."""
+        return True
+
+
+def format_time_of_day(value: timedelta) -> str:
+    """Time since midnight written as HH:MM."""
+    minutes: int = value // timedelta(minutes=1)
+    return f"{minutes // 60:02}:{minutes % 60:02}"
+
 
 @dataclass(frozen=True)
 class TimeRange:
-    """Times of day from start up to but not including end."""
+    """Times of day from start up to but not including end, as time since midnight."""
 
-    start: time
-    end: time | None
-    """End time, or None for the end of the day."""
+    start: timedelta
+    end: timedelta
 
     def __post_init__(self) -> None:
-        if self.start.tzinfo is not None or (
-            self.end is not None and self.end.tzinfo is not None
-        ):
+        start: str = format_time_of_day(self.start)
+        end: str = format_time_of_day(self.end)
+        if self.start < timedelta(0) or self.end > timedelta(days=1):
             raise ValueError(
-                f"Time range start {self.start.isoformat()} and end "
-                f"{self.end.isoformat() if self.end is not None else 'null'} "
-                "must be times without a time zone."
+                f"Time range start {start} and end {end} must lie between 00:00 and 24:00."
             )
-        if self.end is not None and self.end <= self.start:
+        if self.end <= self.start:
             raise ValueError(
-                f"Time range end {self.end.isoformat()} must be after start "
-                f"{self.start.isoformat()}; use null for the end of the day."
+                f"Time range end {end} must be after start {start}; "
+                "split overnight ranges into separate windows."
             )
 
 
@@ -57,12 +73,10 @@ class TimeRange:
 class TimeWindow:
     """Times on the given dates and weekdays within a time of day."""
 
-    date_range: DateRange | None
-    """Dates covered, or None for the whole horizon."""
-    weekdays: frozenset[Day] | None
-    """Weekdays covered, or None for every day."""
-    time_range: TimeRange | None
-    """Time of day covered, or None for the whole day."""
+    date_range: DateRange | WholeHorizon
+    weekdays: frozenset[Day]
+    """Weekdays covered; an empty set covers no day."""
+    time_range: TimeRange
 
 
 @dataclass(frozen=True)
@@ -78,33 +92,19 @@ def window_times(
     windows: Sequence[TimeWindow], grid: TimeGrid
 ) -> tuple[TimeInterval, ...]:
     """Times in the horizon covered by any window, merged into disjoint intervals."""
-    calendar_timezone: timezone = grid.starting_offset
     intervals: list[TimeInterval] = []
     window: TimeWindow
+    day: date
     for window in windows:
-        current: date = grid.date_of(grid.horizon.start)
-        if window.date_range is not None:
-            current = max(current, window.date_range.start)
-        while current <= grid.date_of(grid.horizon.end):
-            if window.date_range is not None and current >= window.date_range.end:
-                break
-            following: date = current + timedelta(days=1)
-            if window.weekdays is None or Day(current.weekday()) in window.weekdays:
-                start: datetime = datetime.combine(
-                    current,
-                    window.time_range.start
-                    if window.time_range is not None
-                    else time.min,
-                    calendar_timezone,
+        for day in grid.dates:
+            if window.date_range.includes(day) and Day(day.weekday()) in window.weekdays:
+                midnight: datetime = datetime.combine(day, time.min, grid.starting_offset)
+                intervals.append(
+                    TimeInterval(
+                        midnight + window.time_range.start,
+                        midnight + window.time_range.end,
+                    )
                 )
-                end: datetime = (
-                    datetime.combine(current, window.time_range.end, calendar_timezone)
-                    if window.time_range is not None
-                    and window.time_range.end is not None
-                    else datetime.combine(following, time.min, calendar_timezone)
-                )
-                intervals.append(TimeInterval(start, end))
-            current = following
     return _merge(intervals, grid.horizon)
 
 

@@ -1,5 +1,6 @@
+import re
 from calendar import Day
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated, Literal, cast
 
 from pydantic import (
@@ -88,7 +89,9 @@ from intent_to_schedule.domain.time_windows import (
     TimeRange,
     TimeRelation,
     TimeWindow,
+    WholeHorizon,
     expand,
+    format_time_of_day,
 )
 from intent_to_schedule.domain.violation import (
     DateViolationPart,
@@ -139,17 +142,32 @@ type ConstraintIdField = Annotated[
 ]
 """Constraint ID encoded as a JSON string."""
 
+_TIME_OF_DAY_PATTERN: str = "^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+"""HH:MM from 00:00 to 23:59, or 24:00 for the end of the day."""
+
+
+def _parse_time_of_day(value: object) -> timedelta:
+    """Accept HH:MM or 24:00 as time since midnight, or an existing duration."""
+    if isinstance(value, timedelta):
+        return value
+    if isinstance(value, str) and re.fullmatch(_TIME_OF_DAY_PATTERN, value):
+        return timedelta(hours=int(value[:2]), minutes=int(value[3:]))
+    raise ValueError("Time of day must be HH:MM from 00:00 to 24:00, without an offset")
+
+
 type TimeOfDayField = Annotated[
-    time,
+    timedelta,
+    PlainValidator(_parse_time_of_day),
+    PlainSerializer(format_time_of_day),
     WithJsonSchema(
         {
             "type": "string",
-            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
-            "description": "Time of day as HH:MM or HH:MM:SS, without an offset.",
+            "pattern": _TIME_OF_DAY_PATTERN,
+            "description": "Time of day as HH:MM, or 24:00 for the end of the day, without an offset.",
         }
     ),
 ]
-"""Time of day without a UTC offset, encoded as HH:MM or HH:MM:SS."""
+"""Time since midnight encoded as HH:MM or 24:00."""
 
 
 class DataModel(BaseModel):
@@ -240,10 +258,10 @@ class TimeRangeData(DataModel):
     """Time of day from an inclusive start to an exclusive end."""
 
     start: TimeOfDayField = Field(
-        description="Included start as HH:MM or HH:MM:SS without an offset, in the calendar horizon's starting offset."
+        description="Included start as HH:MM from 00:00 to 23:59 without an offset, in the calendar horizon's starting offset."
     )
-    end: TimeOfDayField | None = Field(
-        description="Excluded end in the same local time format, or null for the end of the day. Must be later than start; split overnight ranges into separate windows."
+    end: TimeOfDayField = Field(
+        description="Excluded end as HH:MM, or 24:00 for the end of the day. Must be later than start; split overnight ranges into separate windows."
     )
 
     @model_validator(mode="after")
@@ -263,19 +281,19 @@ type WeekdayField = Annotated[
 
 
 class TimeWindowData(DataModel):
-    """Times matching all supplied date, weekday, and time of day fields."""
+    """Times matching all of the date, weekday, and time of day fields."""
 
-    date_range: DateRangeData | None = Field(
-        default=None,
-        description="Included start date and excluded end date. Omit or use null for the whole horizon."
+    date_range: DateRangeData | Literal["horizon"] = Field(
+        default="horizon",
+        description="Included start date and excluded end date, or horizon for every date of the horizon. Omit for horizon."
     )
-    weekdays: tuple[WeekdayField, ...] | None = Field(
-        default=None,
-        description="Allowed named weekdays: monday, tuesday, wednesday, thursday, friday, saturday, sunday. Omit or use null for every day; an empty array matches no day."
+    weekdays: tuple[WeekdayField, ...] = Field(
+        default=tuple(cast(WeekdayField, day.name.lower()) for day in Day),
+        description="Allowed named weekdays: monday, tuesday, wednesday, thursday, friday, saturday, sunday. Omit for all seven; an empty array matches no day."
     )
-    time_range: TimeRangeData | None = Field(
-        default=None,
-        description="Included start time and excluded end time on each matching date. Omit or use null for the whole day."
+    time_range: TimeRangeData = Field(
+        default=TimeRangeData(start=timedelta(0), end=timedelta(hours=24)),
+        description="Included start time and excluded end time on each matching date. Omit for the whole day, 00:00 to 24:00."
     )
 
 
@@ -688,9 +706,9 @@ class AgendaQueryData(DataModel):
     person_id: PersonIdField = Field(
         description="Existing person identifier; an unknown identifier is rejected."
     )
-    date_range: DateRangeData | None = Field(
-        default=None,
-        description="Included start date and excluded end date in the calendar horizon's starting offset. Omit or use null for every date of the horizon; dates outside the horizon are omitted.",
+    date_range: DateRangeData | Literal["horizon"] = Field(
+        default="horizon",
+        description="Included start date and excluded end date in the calendar horizon's starting offset, or horizon for every date of the horizon. Omit for horizon; dates outside the horizon are omitted.",
     )
 
 
@@ -782,9 +800,9 @@ class AvailableStartsQueryData(DataModel):
     duration: timedelta = Field(
         description="Length as an ISO 8601 duration, such as PT1H. Must be positive and a multiple of the calendar slot."
     )
-    windows: tuple[TimeWindowData, ...] | None = Field(
-        default=None,
-        description="Alternative windows combined with or; the whole task from start to end must fit within them. Omit or use null for the whole horizon; an empty array allows no times.",
+    windows: tuple[TimeWindowData, ...] = Field(
+        default=(TimeWindowData(),),
+        description="Alternative windows combined with or; the whole task from start to end must fit within them. Omit for one window with every field omitted, covering the whole horizon; an empty array allows no times.",
     )
     limit: int = Field(
         20, description="Limit from 1 to 100; out-of-range values are rejected."
@@ -822,12 +840,7 @@ def convert_query(data: QueryData) -> SchedulingQuery:
         case ObjectivePolicyQueryData():
             return ObjectivePolicyQuery()
         case AgendaQueryData():
-            return AgendaQuery(
-                data.person_id,
-                DateRange(data.date_range.start, data.date_range.end)
-                if data.date_range is not None
-                else None,
-            )
+            return AgendaQuery(data.person_id, convert_date_range(data.date_range))
         case SummaryQueryData():
             return SummaryQuery()
         case PeopleQueryData():
@@ -879,25 +892,26 @@ def convert_query(data: QueryData) -> SchedulingQuery:
             return AvailableStartsQuery(
                 frozenset(data.participant_ids),
                 data.duration,
-                tuple(convert_time_window(window) for window in data.windows)
-                if data.windows is not None
-                else None,
+                tuple(convert_time_window(window) for window in data.windows),
                 data.limit,
             )
+
+
+def convert_date_range(
+    data: DateRangeData | Literal["horizon"],
+) -> DateRange | WholeHorizon:
+    """Convert a structured date range or the whole horizon."""
+    if isinstance(data, DateRangeData):
+        return DateRange(data.start, data.end)
+    return WholeHorizon()
 
 
 def convert_time_window(data: TimeWindowData) -> TimeWindow:
     """Convert a structured time window."""
     return TimeWindow(
-        DateRange(data.date_range.start, data.date_range.end)
-        if data.date_range is not None
-        else None,
-        frozenset(Day[weekday.upper()] for weekday in data.weekdays)
-        if data.weekdays is not None
-        else None,
-        TimeRange(data.time_range.start, data.time_range.end)
-        if data.time_range is not None
-        else None,
+        convert_date_range(data.date_range),
+        frozenset(Day[weekday.upper()] for weekday in data.weekdays),
+        TimeRange(data.time_range.start, data.time_range.end),
     )
 
 
@@ -1332,18 +1346,14 @@ def to_time_window_data(window: TimeWindow) -> TimeWindowData:
         date_range=DateRangeData(
             start=window.date_range.start, end=window.date_range.end
         )
-        if window.date_range is not None
-        else None,
+        if isinstance(window.date_range, DateRange)
+        else "horizon",
         weekdays=tuple(
             cast(WeekdayField, day.name.lower()) for day in sorted(window.weekdays)
-        )
-        if window.weekdays is not None
-        else None,
+        ),
         time_range=TimeRangeData(
             start=window.time_range.start, end=window.time_range.end
-        )
-        if window.time_range is not None
-        else None,
+        ),
     )
 
 
