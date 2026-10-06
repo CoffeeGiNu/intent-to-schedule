@@ -47,8 +47,7 @@ def compile_problem(
     presences: dict[TaskId, mathopt.Variable] = {}
     placements: dict[TaskId, dict[int, mathopt.Variable]] = {}
     durations: dict[TaskId, int] = {
-        task.id: grid.slots_of(task.duration)
-        for task in problem.tasks
+        task.id: grid.slots_of(task.duration) for task in problem.tasks
     }
     participant_ids: set[PersonId] = {
         person_id for task in problem.tasks for person_id in task.participant_ids

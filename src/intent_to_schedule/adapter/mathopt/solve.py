@@ -44,9 +44,7 @@ class MathOptSchedulingSolver(SchedulingSolver):
         """Solve a problem and explain proven infeasibility with a relaxed solve."""
         termination: mathopt.Termination
         schedule: Schedule | None
-        termination, schedule = self._solve(
-            problem, policy, previous, stability, False
-        )
+        termination, schedule = self._solve(problem, policy, previous, stability, False)
         if schedule is not None:
             summary: ScheduleSummary = summarize_schedule(
                 problem, schedule, policy, previous, stability
@@ -59,9 +57,7 @@ class MathOptSchedulingSolver(SchedulingSolver):
         if termination.reason is not mathopt.TerminationReason.INFEASIBLE:
             raise RuntimeError(f"MathOpt solve failed: {termination.reason}")
         relaxed: Schedule | None
-        termination, relaxed = self._solve(
-            problem, policy, previous, stability, True
-        )
+        termination, relaxed = self._solve(problem, policy, previous, stability, True)
         if relaxed is None:
             return NoFeasibleSolution(
                 ConflictsNotFound(_termination_reason(termination))
