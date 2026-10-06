@@ -94,7 +94,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "apply": (
         "Apply a batch of commands",
         "Reads JSON from --file or standard input. "
-        "Constraints use time_window, time_bound, task_gap, or daily_limit conditions; see `schema apply` and README.md for fields and examples. "
+        "Constraints use time_window, time_bound, task_gap, or daily_limit conditions; see `schema apply` for fields. "
         "Prints created identifiers and any time window rounding note. "
         "A time_window command whose constraint the batch keeps also gets warnings naming movable tasks "
         "that no available start keeps within (or out of) its rounded windows after the whole batch; "
