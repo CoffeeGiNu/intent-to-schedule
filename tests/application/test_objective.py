@@ -1,6 +1,8 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from intent_to_schedule.application.objective import (
     ConstraintEvaluation,
     HardConstraintEvaluation,
@@ -110,3 +112,49 @@ def test_hard_evaluations_have_no_cost_and_do_not_change_soft_totals() -> None:
     )
     assert summary.soft_constraints_cost == DEFAULT_POLICY.weight(Strength.STRONG)
     assert summary.violated_soft_constraints == 1
+
+
+@pytest.mark.parametrize(
+    ("has_previous", "stability"), [(True, False), (True, True), (False, False)]
+)
+def test_summary_counts_moves_independently_of_stability(
+    has_previous: bool, stability: bool
+) -> None:
+    """Count changed starts whenever a previous schedule exists."""
+    item: Task = Task(
+        TaskId("task"), "task", HOUR, frozenset({PERSON}), Importance.LOW, True
+    )
+    grid: TimeGrid = TimeGrid(TimeInterval(START, START + 4 * HOUR), HOUR)
+    value: SchedulingProblem = SchedulingProblem(
+        Calendar(grid, (Availability(PERSON, (grid.horizon,)),)),
+        (Person(PERSON, "Person"),),
+        (item,),
+        (),
+        (),
+    )
+    previous_schedule: Schedule = Schedule(
+        (ScheduledTask(item.id, item.name, START, START + HOUR, item.participant_ids),),
+        (),
+    )
+    previous: Schedule | None = previous_schedule if has_previous else None
+    schedule: Schedule = Schedule(
+        (
+            ScheduledTask(
+                item.id,
+                item.name,
+                START + HOUR,
+                START + 2 * HOUR,
+                item.participant_ids,
+            ),
+        ),
+        (),
+    )
+
+    summary: ScheduleSummary = summarize_schedule(
+        value, schedule, DEFAULT_POLICY, previous, stability
+    )
+
+    assert summary.moved_tasks == (1 if has_previous else 0)
+    assert summary.stability_cost == (
+        DEFAULT_POLICY.stability_cost(item, HOUR) if has_previous and stability else 0.0
+    )

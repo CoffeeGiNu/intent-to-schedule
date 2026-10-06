@@ -814,8 +814,8 @@ def test_solver_summarizes_with_its_objective_policy() -> None:
 
 
 @pytest.mark.parametrize("stability", [False, True])
-def test_solver_summary_counts_moves_only_with_stability(stability: bool) -> None:
-    """Charge moves from the saved schedule only when stability is on."""
+def test_solver_summary_counts_moves_with_or_without_stability(stability: bool) -> None:
+    """Count moves from the saved schedule independently of stability."""
     item: Task = task("move", people=PEOPLE)
     previous: Schedule = Schedule(
         (ScheduledTask(item.id, item.name, START, START + SLOT, PEOPLE),), ()
@@ -840,7 +840,8 @@ def test_solver_summary_counts_moves_only_with_stability(stability: bool) -> Non
 
     assert isinstance(result, OptimalSolution)
     assert (result.summary.stability_cost, result.summary.moved_tasks) == (
-        (DEFAULT_POLICY.stability_cost(item, HOUR), 1) if stability else (0.0, 0)
+        DEFAULT_POLICY.stability_cost(item, HOUR) if stability else 0.0,
+        1,
     )
 
 
@@ -976,8 +977,8 @@ def test_summary_matches_objective_of_the_same_solve(
         assert solved.summary.stability_cost == pytest.approx(
             105 / 67 if custom_policy else 15 / 7
         )
-    assert summarize_schedule(value, solved.schedule, policy, previous, False) == (
-        replace(solved.summary, stability_cost=0.0, moved_tasks=0)
+    assert summarize_schedule(value, solved.schedule, policy, previous, False) == replace(
+        solved.summary, stability_cost=0.0
     )
 
 

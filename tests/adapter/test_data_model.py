@@ -1091,6 +1091,10 @@ def test_task_descriptions_name_the_schedule_command() -> None:
     assert stability_description is not None
     assert "schedule --no-stability" in stability_description
     assert "solve --no-stability" not in stability_description
+    assert (
+        "moved-task counts still include changed starts whenever a previous schedule exists"
+        in stability_description
+    )
 
 
 def test_objective_policy_record_lists_every_coefficient() -> None:

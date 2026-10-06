@@ -1350,7 +1350,7 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
         2,
         0,
         0,
-        1 if stability else 0,
+        1,
     )
     schedule_result: OptimalSolution | FeasibleSolution | NoFeasibleSolution | SolutionNotFound = (
         NoFeasibleSolution(
@@ -1428,7 +1428,7 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
                 "summary": schedule_summary(
                     scheduled_tasks=2,
                     stability_cost=5 / (1 + 5 / 50) if stability else 0.0,
-                    moved_tasks=1 if stability else 0,
+                    moved_tasks=1,
                 ),
                 "items": [
                     {
@@ -2100,7 +2100,7 @@ def test_command_line_summary_and_queries_use_saved_solution(
             "scheduled_tasks": 1,
             "dropped_tasks": 0,
             "violated_soft_constraints": 0,
-            "moved_tasks": 1 if stability else 0,
+            "moved_tasks": 1,
         },
     }
     saved: State = load_state(path)
