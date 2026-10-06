@@ -59,7 +59,7 @@ class MathOptSchedulingSolver(SchedulingSolver):
         stability: bool,
         relaxed: bool,
     ) -> tuple[mathopt.Termination, Schedule | None]:
-        """Solve the compiled problem and read its termination and any schedule found."""
+        """Solve the compiled problem and read its termination and any usable schedule."""
         compiled: CompiledProblem = compile_problem(
             problem, policy, previous, stability, relaxed
         )
@@ -69,34 +69,38 @@ class MathOptSchedulingSolver(SchedulingSolver):
         result: mathopt.SolveResult = mathopt.solve(
             compiled.model, self.solver_type, params=parameters
         )
-        match result.termination.reason:
-            case mathopt.TerminationReason.OPTIMAL | mathopt.TerminationReason.FEASIBLE:
-                values: dict[mathopt.Variable, float] = result.variable_values()
-                scheduled: list[ScheduledTask] = []
-                dropped: list[DroppedTask] = []
-                task: Task
-                for task in problem.tasks:
-                    if values[compiled.presences[task.id]] > 0.5:
-                        start: int = next(
-                            slot
-                            for slot, variable in compiled.placements[task.id].items()
-                            if values[variable] > 0.5
-                        )
-                        start_time: datetime = problem.calendar.grid.time_at(start)
-                        scheduled.append(
-                            ScheduledTask(
-                                task.id,
-                                task.name,
-                                start_time,
-                                start_time + task.duration,
-                                task.participant_ids,
-                            )
-                        )
-                    else:
-                        dropped.append(DroppedTask(task.id, task.name))
-                return result.termination, Schedule(tuple(scheduled), tuple(dropped))
-            case _:
-                return result.termination, None
+        found: bool = (
+            result.has_primal_feasible_solution()
+            if relaxed
+            else result.termination.reason
+            in (mathopt.TerminationReason.OPTIMAL, mathopt.TerminationReason.FEASIBLE)
+        )
+        if not found:
+            return result.termination, None
+        values: dict[mathopt.Variable, float] = result.variable_values()
+        scheduled: list[ScheduledTask] = []
+        dropped: list[DroppedTask] = []
+        task: Task
+        for task in problem.tasks:
+            if values[compiled.presences[task.id]] > 0.5:
+                start: int = next(
+                    slot
+                    for slot, variable in compiled.placements[task.id].items()
+                    if values[variable] > 0.5
+                )
+                start_time: datetime = problem.calendar.grid.time_at(start)
+                scheduled.append(
+                    ScheduledTask(
+                        task.id,
+                        task.name,
+                        start_time,
+                        start_time + task.duration,
+                        task.participant_ids,
+                    )
+                )
+            else:
+                dropped.append(DroppedTask(task.id, task.name))
+        return result.termination, Schedule(tuple(scheduled), tuple(dropped))
 
 
 def _termination_reason(termination: mathopt.Termination) -> str:
