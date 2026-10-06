@@ -22,12 +22,14 @@ from intent_to_schedule.adapter.data_model import (
     NewTaskData,
     QueryData,
     ReplaceTaskData,
+    ScheduleEntryData,
     ScheduledTaskData,
     TaskContentData,
     TaskData,
     TimeBoundConditionData,
     TimeIntervalData,
     TimeWindowData,
+    answer_result_record,
     answer_record,
     command_record,
     convert_command,
@@ -35,17 +37,25 @@ from intent_to_schedule.adapter.data_model import (
     convert_fixed_task,
     convert_query,
     convert_time_window,
+    execute_result_record,
+    rejected_record,
+    solution_record,
     to_fixed_task_data,
+    to_schedule_entries_data,
 )
 from intent_to_schedule.application.command import (
     AddConstraint,
     AddTask,
+    ExecuteResult,
+    Executed,
+    Rejected,
     RemoveConstraint,
     RemoveTask,
     ReplaceConstraint,
     ReplaceTask,
     SchedulingCommand,
 )
+from intent_to_schedule.application.objective import ScheduleSummary
 from intent_to_schedule.application.policy import DEFAULT_POLICY
 from intent_to_schedule.application.query import (
     AgendaAnswer,
@@ -67,6 +77,15 @@ from intent_to_schedule.application.query import (
     TasksQuery,
     TaskType,
 )
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    ConflictsNotFound,
+    FeasibleSolution,
+    NoFeasibleSolution,
+    OptimalSolution,
+    Solution,
+    SolutionNotFound,
+)
 from intent_to_schedule.domain.calendar import (
     Availability,
     Calendar,
@@ -87,6 +106,7 @@ from intent_to_schedule.domain.constraint import (
     HardConstraint,
     SoftConstraint,
 )
+from intent_to_schedule.domain.consistency import Violation, Violations
 from intent_to_schedule.domain.measure import AggregateQuantity, Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -1038,6 +1058,131 @@ def test_previous_schedule_record_lists_scheduled_then_dropped() -> None:
         "truncated": False,
         "has_previous": False,
     }
+
+
+def test_rejected_record_lists_violation_messages() -> None:
+    """Render a rejected result as its messages."""
+    result: Rejected = Rejected(
+        Violations((Violation("First problem"), Violation("Second problem")))
+    )
+    assert rejected_record(result) == {
+        "rejected": ["First problem", "Second problem"]
+    }
+
+
+def test_execute_result_record_renders_executed_and_rejected_results() -> None:
+    """Render both outcomes of a command batch."""
+    added: Task = task("added")
+    problem: SchedulingProblem = SchedulingProblem(
+        Calendar(GRID, ()), (), (added,), (), ()
+    )
+    commands: tuple[SchedulingCommand, ...] = (AddTask(added),)
+    executed: ExecuteResult = Executed(problem)
+    rejected: ExecuteResult = Rejected(
+        Violations((Violation("Task added already exists"),))
+    )
+    assert execute_result_record(commands, executed) == {
+        "executed": [{"kind": "add_task", "task_id": "added", "name": "added"}]
+    }
+    assert execute_result_record(commands, rejected) == {
+        "rejected": ["Task added already exists"]
+    }
+
+
+def test_answer_result_record_renders_answered_and_rejected_results() -> None:
+    """Render answers directly and rejected query results as messages."""
+    answer: Summary = Summary(GRID, 2, 1, 0, 0, False)
+    answered: AnswerResult = Answered(answer)
+    rejected: AnswerResult = Rejected(
+        Violations((Violation("No matching task"),))
+    )
+    assert answer_result_record(answered) == answer_record(answer)
+    assert answer_result_record(rejected) == {"rejected": ["No matching task"]}
+
+
+def test_solution_record_renders_each_solution_status() -> None:
+    """Render every schedule outcome with the command line JSON shape."""
+    scheduled: ScheduledTask = ScheduledTask(
+        TaskId("scheduled"), "Scheduled", at(9), at(10), frozenset()
+    )
+    dropped: DroppedTask = DroppedTask(TaskId("dropped"), "Dropped")
+    schedule: Schedule = Schedule((scheduled,), (dropped,))
+    summary: ScheduleSummary = ScheduleSummary(2.0, 3.0, 4.0, 1, 1, 2, 3)
+    summary_record: dict[str, object] = {
+        "total_cost": 9.0,
+        "costs": {"dropped_tasks": 2.0, "soft_constraints": 3.0, "stability": 4.0},
+        "counts": {
+            "scheduled_tasks": 1,
+            "dropped_tasks": 1,
+            "violated_soft_constraints": 2,
+            "moved_tasks": 3,
+        },
+    }
+    items: list[dict[str, object]] = [
+        {
+            "status": "scheduled",
+            "task_id": "scheduled",
+            "name": "Scheduled",
+            "start": at(9).isoformat(),
+            "end": at(10).isoformat(),
+            "participant_ids": [],
+        },
+        {"status": "dropped", "task_id": "dropped", "name": "Dropped"},
+    ]
+    optimal: Solution = OptimalSolution(schedule, summary)
+    feasible: Solution = FeasibleSolution(schedule, summary)
+    conflicts_found: Solution = NoFeasibleSolution(Conflicts((), ()))
+    conflicts_missing: Solution = NoFeasibleSolution(ConflictsNotFound("time_limit"))
+    solution_missing: Solution = SolutionNotFound("numerical_error")
+    cases: tuple[tuple[Solution, dict[str, object]], ...] = (
+        (
+            optimal,
+            {"status": "optimal", "summary": summary_record, "items": items},
+        ),
+        (
+            feasible,
+            {"status": "feasible", "summary": summary_record, "items": items},
+        ),
+        (
+            conflicts_found,
+            {
+                "status": "no_feasible_solution",
+                "conflicts": {"status": "found", "constraints": [], "dropped_required_tasks": []},
+            },
+        ),
+        (
+            conflicts_missing,
+            {
+                "status": "no_feasible_solution",
+                "conflicts": {"status": "not_found", "reason": "time_limit"},
+            },
+        ),
+        (
+            solution_missing,
+            {"status": "solution_not_found", "reason": "numerical_error"},
+        ),
+    )
+    case: tuple[Solution, dict[str, object]]
+    for case in cases:
+        assert solution_record(case[0]) == case[1]
+
+
+def test_to_schedule_entries_data_orders_scheduled_then_dropped_entries() -> None:
+    """Order scheduled entries by start and ID, then dropped entries by ID."""
+    scheduled: tuple[ScheduledTask, ...] = (
+        ScheduledTask(TaskId("same-z"), "Same Z", at(10), at(11), frozenset()),
+        ScheduledTask(TaskId("late"), "Late", at(12), at(13), frozenset()),
+        ScheduledTask(TaskId("same-a"), "Same A", at(10), at(11), frozenset()),
+        ScheduledTask(TaskId("early"), "Early", at(9), at(10), frozenset()),
+    )
+    dropped: tuple[DroppedTask, ...] = (
+        DroppedTask(TaskId("drop-z"), "Drop Z"),
+        DroppedTask(TaskId("drop-a"), "Drop A"),
+    )
+    schedule: Schedule = Schedule(scheduled, dropped)
+    entries: tuple[ScheduleEntryData, ...] = to_schedule_entries_data(schedule)
+    task_ids: list[str] = [entry.task_id.value for entry in entries]
+    assert task_ids == ["early", "same-a", "same-z", "late", "drop-a", "drop-z"]
 
 
 def test_summary_record() -> None:

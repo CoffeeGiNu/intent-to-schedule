@@ -214,12 +214,10 @@ def test_translate_sends_summary_dialogue_and_step_results() -> None:
         {
             "kind": "query",
             "result": {
-                "answered": {
-                    "kind": "people",
-                    "items": [{"id": "alice", "name": "Alice"}],
-                    "total": 1,
-                    "truncated": False,
-                }
+                "kind": "people",
+                "items": [{"id": "alice", "name": "Alice"}],
+                "total": 1,
+                "truncated": False,
             },
         },
         {
