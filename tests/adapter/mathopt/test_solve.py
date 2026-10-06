@@ -145,9 +145,9 @@ def bound(
 
 
 def schedule_for(value: SchedulingProblem) -> Schedule:
-    result: Solved | Infeasible = SOLVER.solve(value)
-    assert isinstance(result, Solved)
-    return result.schedule
+    result: Schedule | Infeasible = SOLVER.solve(value)
+    assert isinstance(result, Schedule)
+    return result
 
 
 def starts(schedule: Schedule) -> dict[TaskId, datetime]:
@@ -383,11 +383,11 @@ def test_count_penalty_scales_soft_objective() -> None:
         Strength.WEAK,
     )
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=10.0)
-    result: Solved | Infeasible = MathOptSchedulingSolver(policy).solve(
+    result: Schedule | Infeasible = MathOptSchedulingSolver(policy).solve(
         problem(item, constraints=(preference,))
     )
-    assert isinstance(result, Solved)
-    assert result.schedule.dropped == (DroppedTask(item.id, item.name),)
+    assert isinstance(result, Schedule)
+    assert result.dropped == (DroppedTask(item.id, item.name),)
 
 
 def test_solver_passes_time_limit() -> None:
@@ -396,10 +396,10 @@ def test_solver_passes_time_limit() -> None:
     with patch(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", wraps=mathopt.solve
     ) as solve_mock:
-        result: Solved | Infeasible = MathOptSchedulingSolver(
+        result: Schedule | Infeasible = MathOptSchedulingSolver(
             DEFAULT_POLICY, time_limit=limit
         ).solve(problem(task("timed")))
-    assert isinstance(result, Solved)
+    assert isinstance(result, Schedule)
     assert solve_mock.call_args.kwargs["params"].time_limit == limit
 
 
@@ -557,9 +557,9 @@ def test_stability_prefers_nearer_of_two_distant_starts() -> None:
         end=far + SLOT,
         availabilities=(availability,),
     )
-    result: Solved | Infeasible = SOLVER.solve(changed, previous)
-    assert isinstance(result, Solved)
-    assert starts(result.schedule) == {item.id: near}
+    result: Schedule | Infeasible = SOLVER.solve(changed, previous)
+    assert isinstance(result, Schedule)
+    assert starts(result) == {item.id: near}
 
 
 @pytest.mark.parametrize("boundary", list(Boundary))
@@ -845,9 +845,10 @@ def test_summary_matches_objective_of_the_same_solve(
     with patch(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", side_effect=capture
     ):
-        solved = MathOptSchedulingSolver(policy).solve(value, previous)
+        solved = Scheduling(MathOptSchedulingSolver(policy), AllOf(), policy).solve(
+            value, previous
+        )
     assert isinstance(solved, Solved)
-    assert solved.summary is not None
     assert solved.summary.total_cost == pytest.approx(captured[0].objective_value())
     assert solved.summary.total_cost == pytest.approx(
         solved.summary.dropped_tasks_cost
@@ -888,7 +889,7 @@ def test_infeasible_reports_contradictory_deadlines() -> None:
         start=day - timedelta(days=1),
         end=day + timedelta(days=1),
     )
-    result: SolveResult = SOLVER.solve(value)
+    result: Schedule | Infeasible = SOLVER.solve(value)
     assert isinstance(result, Infeasible)
     assert isinstance(result.conflicts, Conflicts)
     assert result.conflicts.dropped_required_tasks == ()
@@ -928,7 +929,9 @@ def test_infeasible_reports_required_task_conflicting_with_another() -> None:
     """Report one of two required tasks competing for the only free hour."""
     first: Task = task("first", duration=HOUR, people=PEOPLE)
     second: Task = task("second", duration=HOUR, people=PEOPLE)
-    result: SolveResult = SOLVER.solve(problem(first, second, end=START + HOUR))
+    result: Schedule | Infeasible = SOLVER.solve(
+        problem(first, second, end=START + HOUR)
+    )
     assert isinstance(result, Infeasible)
     assert isinstance(result.conflicts, Conflicts)
     assert result.conflicts.constraints == ()
@@ -952,10 +955,10 @@ def test_solver_relaxes_only_after_infeasible(feasible: bool) -> None:
     with patch(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", wraps=mathopt.solve
     ) as solve_mock:
-        result: SolveResult = MathOptSchedulingSolver(
+        result: Schedule | Infeasible = MathOptSchedulingSolver(
             DEFAULT_POLICY, time_limit=limit
         ).solve(problem(item, availabilities=availabilities))
-    assert isinstance(result, Solved if feasible else Infeasible)
+    assert isinstance(result, Schedule if feasible else Infeasible)
     assert [
         call.kwargs["params"].time_limit for call in solve_mock.call_args_list
     ] == [limit] * (1 if feasible else 2)
@@ -1009,7 +1012,7 @@ def test_infeasible_without_relaxed_solution_reports_termination(
     with patch(
         "intent_to_schedule.adapter.mathopt.solve.mathopt.solve", side_effect=first_only
     ):
-        result: SolveResult = SOLVER.solve(
+        result: Schedule | Infeasible = SOLVER.solve(
             problem(item, availabilities=(Availability(PERSON, ()),))
         )
     assert result == Infeasible(ConflictsNotFound(reason))

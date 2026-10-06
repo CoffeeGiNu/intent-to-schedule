@@ -9,6 +9,7 @@ from intent_to_schedule.application.command import (
     Rejected,
     RemoveTask,
 )
+from intent_to_schedule.application.objective import ScheduleSummary
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import (
     Answered,
@@ -19,7 +20,12 @@ from intent_to_schedule.application.query import (
     ObjectivePolicyQuery,
 )
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import Conflicts, Infeasible
+from intent_to_schedule.application.solve import (
+    Conflicts,
+    Infeasible,
+    Solved,
+    SolveResult,
+)
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import (
     DailyLimitCondition,
@@ -58,16 +64,19 @@ def problem(
 
 
 class Solver:
-    def __init__(self) -> None:
+    def __init__(
+        self, result: Schedule | Infeasible = Infeasible(Conflicts((), ()))
+    ) -> None:
+        self.result: Schedule | Infeasible = result
         self.problem: SchedulingProblem | None = None
         self.previous: Schedule | None = None
 
     def solve(
         self, problem: SchedulingProblem, previous: Schedule | None
-    ) -> Infeasible:
+    ) -> Schedule | Infeasible:
         self.problem = problem
         self.previous = previous
-        return Infeasible(Conflicts((), ()))
+        return self.result
 
 
 class Validator:
@@ -109,6 +118,33 @@ def test_scheduling_passes_previous_schedule_to_solver(stability: bool) -> None:
     )
     assert solver.problem is original
     assert solver.previous is previous
+
+
+def test_solved_requires_summary() -> None:
+    """Reject a solved result without its summary."""
+    with pytest.raises(TypeError):
+        Solved(Schedule((), ()))  # type: ignore[call-arg]
+
+
+def test_scheduling_summarizes_solver_schedule_with_its_policy() -> None:
+    """Build the solved result from the solver's schedule and the service policy."""
+    policy: ObjectivePolicy = replace(
+        DEFAULT_POLICY, drop_costs={**DEFAULT_POLICY.drop_costs, Importance.HIGH: 70.0}
+    )
+    first: Task = task("a")
+    second: Task = task("b")
+    schedule: Schedule = Schedule(
+        (
+            ScheduledTask(
+                first.id, first.name, START, START + first.duration, first.participant_ids
+            ),
+        ),
+        (DroppedTask(second.id, second.name),),
+    )
+    result: SolveResult = Scheduling(Solver(schedule), AllOf(), policy).solve(
+        problem(first, second), None
+    )
+    assert result == Solved(schedule, ScheduleSummary(70.0, 0.0, 0.0, 1, 1, 0, 0))
 
 
 def test_scheduling_execute_returns_command_rejection() -> None:

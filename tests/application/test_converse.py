@@ -79,13 +79,13 @@ class FakeStepTranslator:
 class FakeSolver:
     """Return a chosen solve result and capture its inputs."""
 
-    def __init__(self, result: SolveResult) -> None:
-        self.result: SolveResult = result
+    def __init__(self, result: Schedule | Infeasible) -> None:
+        self.result: Schedule | Infeasible = result
         self.calls: list[tuple[SchedulingProblem, Schedule | None]] = []
 
     def solve(
         self, problem: SchedulingProblem, previous: Schedule | None
-    ) -> SolveResult:
+    ) -> Schedule | Infeasible:
         self.calls.append((problem, previous))
         return self.result
 
@@ -156,14 +156,17 @@ def test_message_ends_without_solving() -> None:
 
 @pytest.mark.parametrize("stability", [True, False])
 @pytest.mark.parametrize(
-    "result",
+    ("result", "outcome"),
     [
-        Solved(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
-        Infeasible(Conflicts((), ())),
+        (
+            Schedule((), ()),
+            Solved(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+        ),
+        (Infeasible(Conflicts((), ())), Infeasible(Conflicts((), ()))),
     ],
 )
 def test_apply_then_solve_uses_working_problem_and_stability(
-    stability: bool, result: SolveResult
+    stability: bool, result: Schedule | Infeasible, outcome: SolveResult
 ) -> None:
     """Pass successful edits and the selected previous schedule to solve."""
     problem: SchedulingProblem = make_problem()
@@ -179,7 +182,7 @@ def test_apply_then_solve_uses_working_problem_and_stability(
     )
     assert response.problem.tasks == (task,)
     assert problem.tasks == ()
-    assert response.outcome == result
+    assert response.outcome == outcome
     assert solver.calls == [(response.problem, previous if stability else None)]
     assert [call[1] for call in translator.calls] == [
         Summary(problem.calendar.grid, 0, 0, 0, 0, True),
@@ -197,7 +200,7 @@ def test_rejected_batch_is_recorded_and_can_be_corrected() -> None:
     translator: FakeStepTranslator = FakeStepTranslator(
         (rejected, corrected, SolveStep(True))
     )
-    solver: FakeSolver = FakeSolver(Solved(Schedule((), ())))
+    solver: FakeSolver = FakeSolver(Schedule((), ()))
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
         (), problem, None
     )

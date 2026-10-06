@@ -42,7 +42,6 @@ from intent_to_schedule.application.solve import (
     DroppedRequiredTask,
     DropReason,
     Infeasible,
-    Solved,
 )
 from intent_to_schedule.application.translate import (
     ApplyStep,
@@ -1233,7 +1232,7 @@ def test_chat_persists_only_solve_changes_and_uses_clock(
             )
         )
         if outcome == "infeasible"
-        else Solved(replacement)
+        else replacement
     )
     now: datetime | None = start - timedelta(days=2) if explicit_now else None
     status: int = chat(
@@ -1467,7 +1466,7 @@ def test_solve_option_passes_previous_schedule(
     state: State = load_state(path)
     previous: Schedule = Schedule((), ())
     save_state(path, state.model_copy(update={"previous": to_schedule_state(previous)}))
-    solver: MagicMock = MagicMock(return_value=Solved(previous))
+    solver: MagicMock = MagicMock(return_value=previous)
     monkeypatch.setattr(MathOptSchedulingSolver, "solve", solver)
     arguments: tuple[str, ...] = () if stability else ("--no-stability",)
     status: int
