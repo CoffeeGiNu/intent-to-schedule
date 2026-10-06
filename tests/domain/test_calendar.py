@@ -128,6 +128,19 @@ def test_grid_rejects_nonpositive_horizon(end: datetime, message: str) -> None:
         TimeGrid(TimeInterval(START, end), SLOT)
 
 
+def test_grid_rejects_horizon_without_offset() -> None:
+    naive: datetime = START.replace(tzinfo=None)
+    with pytest.raises(ValueError, match="horizon.*offset"):
+        TimeGrid(TimeInterval(naive, naive + 4 * SLOT), SLOT)
+
+
+def test_grid_starting_offset_is_the_fixed_offset_of_the_horizon_start() -> None:
+    grid: TimeGrid = TimeGrid(
+        TimeInterval(START, (START + 4 * SLOT).astimezone(timezone.utc)), SLOT
+    )
+    assert grid.starting_offset == timezone(timedelta(hours=9))
+
+
 def test_grid_rejects_unaligned_horizon_end() -> None:
     with pytest.raises(ValueError, match="horizon end.*aligned"):
         TimeGrid(interval(0, 31), SLOT)
