@@ -20,44 +20,48 @@ class MathOptSchedulingSolver(SchedulingSolver):
 
     def __init__(
         self,
-        policy: ObjectivePolicy,
         solver_type: mathopt.SolverType = mathopt.SolverType.GSCIP,
         time_limit: timedelta | None = None,
     ) -> None:
-        self.policy: ObjectivePolicy = policy
         self.solver_type: mathopt.SolverType = solver_type
         self.time_limit: timedelta | None = time_limit
 
     def solve(
         self,
         problem: SchedulingProblem,
-        previous: Schedule | None = None,
-        stability: bool = True,
+        policy: ObjectivePolicy,
+        previous: Schedule | None,
+        stability: bool,
     ) -> Schedule | Infeasible:
         """Solve a SchedulingProblem, explaining infeasibility with a relaxed solve."""
         termination: mathopt.Termination
         schedule: Schedule | None
-        termination, schedule = self._schedule(problem, previous, stability, False)
+        termination, schedule = self._schedule(
+            problem, policy, previous, stability, False
+        )
         if schedule is not None:
             return schedule
         if termination.reason is not mathopt.TerminationReason.INFEASIBLE:
             raise RuntimeError(f"MathOpt solve failed: {termination.reason}")
         relaxed: Schedule | None
-        termination, relaxed = self._schedule(problem, previous, stability, True)
+        termination, relaxed = self._schedule(
+            problem, policy, previous, stability, True
+        )
         if relaxed is None:
             return Infeasible(ConflictsNotFound(_termination_reason(termination)))
-        return Infeasible(find_conflicts(problem, relaxed, self.policy))
+        return Infeasible(find_conflicts(problem, relaxed, policy))
 
     def _schedule(
         self,
         problem: SchedulingProblem,
+        policy: ObjectivePolicy,
         previous: Schedule | None,
         stability: bool,
         relaxed: bool,
     ) -> tuple[mathopt.Termination, Schedule | None]:
         """Solve the compiled problem and read its termination and any schedule found."""
         compiled: CompiledProblem = compile_problem(
-            problem, self.policy, previous, stability, relaxed
+            problem, policy, previous, stability, relaxed
         )
         parameters: mathopt.SolveParameters = mathopt.SolveParameters(
             time_limit=self.time_limit

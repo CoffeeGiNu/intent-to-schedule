@@ -263,7 +263,7 @@ def reject(violations: Violations) -> int:
 def scheduling(validator: Validator) -> Scheduling:
     """Wire the scheduling use case."""
     policy: ObjectivePolicy = DEFAULT_POLICY
-    return Scheduling(MathOptSchedulingSolver(policy), validator, policy)
+    return Scheduling(MathOptSchedulingSolver(), validator, policy)
 
 
 def init(path: Path, calendar_path: Path, service: Scheduling) -> int:

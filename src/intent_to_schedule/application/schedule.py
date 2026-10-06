@@ -58,7 +58,9 @@ class Scheduling:
         self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
     ) -> SolveResult:
         """Solve a problem, keeping Tasks near their previous start with stability."""
-        result: Schedule | Infeasible = self._solver.solve(problem, previous, stability)
+        result: Schedule | Infeasible = self._solver.solve(
+            problem, self._policy, previous, stability
+        )
         if isinstance(result, Infeasible):
             return result
         return Solved(

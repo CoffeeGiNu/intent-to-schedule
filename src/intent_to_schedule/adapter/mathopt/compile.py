@@ -35,8 +35,8 @@ class CompiledProblem:
 def compile_problem(
     problem: SchedulingProblem,
     policy: ObjectivePolicy,
-    previous: Schedule | None = None,
-    stability: bool = True,
+    previous: Schedule | None,
+    stability: bool,
     relaxed: bool = False,
 ) -> CompiledProblem:
     """Build a MathOpt model, optionally relaxing hard constraints and required tasks."""
