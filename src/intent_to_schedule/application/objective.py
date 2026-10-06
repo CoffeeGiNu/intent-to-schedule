@@ -124,7 +124,7 @@ def summarize_schedule(
     tasks: dict[TaskId, Task] = {task.id: task for task in problem.tasks}
     previous_starts: dict[TaskId, datetime] = (
         {item.task_id: item.start for item in previous.scheduled}
-        if stability and previous is not None
+        if previous is not None
         else {}
     )
     stability_cost: float = 0.0
@@ -135,7 +135,8 @@ def summarize_schedule(
             continue
         moved: timedelta = item.start - previous_starts[item.task_id]
         moved_tasks += int(moved != timedelta(0))
-        stability_cost += policy.stability_cost(tasks[item.task_id], moved)
+        if stability:
+            stability_cost += policy.stability_cost(tasks[item.task_id], moved)
     return ScheduleSummary(
         sum(
             policy.drop_cost(tasks[item.task_id].importance)

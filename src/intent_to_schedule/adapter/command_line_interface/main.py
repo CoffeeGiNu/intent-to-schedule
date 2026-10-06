@@ -126,7 +126,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "The objective adds importance-based optional drop costs, weighted soft violations in hours (daily counts scaled by per_count), "
         "and stability costs from previous starts, weight * hours / (1 + weight * hours / limit) with the stability strength weight and limit = stability_drop_cost_ratio times the drop cost; "
         "they grow with every hour moved but stay below limit. Hard constraints require zero violation. "
-        "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
+        "Moved counts include changed starts whenever a previous schedule exists; --no-stability disables stability costs. "
         "Use query evaluation for constraint breakdowns and query objective_policy for current weights. "
         "If no feasible schedule exists, conflicts come from a relaxed solve that permits hard violations and required drops at costs that each exceed every single soft coefficient but not necessarily a sum of soft costs; a dropped required task also pays its importance-based drop cost. "
         "When the relaxed solve finds a schedule, conflicts.status is found; "
@@ -226,7 +226,7 @@ def parser() -> JsonParser:
                 command.add_argument(
                     "--no-stability",
                     action="store_true",
-                    help="Ignore the previous schedule and schedule from scratch",
+                    help="Disable stability costs and schedule from scratch",
                 )
             case "chat":
                 command.add_argument(

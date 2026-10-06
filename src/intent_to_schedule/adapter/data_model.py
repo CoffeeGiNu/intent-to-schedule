@@ -323,7 +323,7 @@ class TaskContentData(DataModel):
         description="true requires schedule to place the task; if no feasible schedule exists, the result is no_feasible_solution. false makes the task optional: schedule may drop it and pay its importance-based drop cost."
     )
     stability: Literal["weak", "normal", "strong"] = Field(
-        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task, and not with schedule --no-stability."
+        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task and stability is enabled (schedule --no-stability disables it); moved-task counts still include changed starts whenever a previous schedule exists."
     )
 
 
