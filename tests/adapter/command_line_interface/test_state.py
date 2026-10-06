@@ -1,5 +1,6 @@
+from calendar import Day
 import json
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,12 @@ from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance, Task, TaskId
-from intent_to_schedule.domain.time_windows import TimeRange, TimeRelation, TimeWindow
+from intent_to_schedule.domain.time_windows import (
+    TimeRange,
+    TimeRelation,
+    TimeWindow,
+    WholeHorizon,
+)
 
 START: datetime = datetime(2026, 10, 29, 9, tzinfo=timezone(timedelta(hours=9)))
 
@@ -55,7 +61,7 @@ def test_state_round_trip_every_condition(tmp_path: Path) -> None:
         TimeWindowCondition(
             task_ids,
             TimeRelation.WITHIN,
-            (TimeWindow(None, None, TimeRange(time(9, 10), time(15, 20))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9, minutes=10), timedelta(hours=15, minutes=20))),),
         ),
         TimeBoundCondition(
             task_ids,

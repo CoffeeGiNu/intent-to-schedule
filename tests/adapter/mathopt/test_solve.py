@@ -1,8 +1,9 @@
 """Tests for schedules returned by the MathOpt solver."""
 
+from calendar import Day
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -71,6 +72,7 @@ from intent_to_schedule.domain.time_windows import (
     TimeRange,
     TimeRelation,
     TimeWindow,
+    WholeHorizon,
 )
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
@@ -187,7 +189,7 @@ def test_soft_interval_intrusion_avoids_region() -> None:
         TimeWindowCondition(
             frozenset({item.id}),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9), time(10))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9), timedelta(hours=10))),),
         ),
         Strength.STRONG,
     )
@@ -373,7 +375,7 @@ def test_fixed_task_point_and_interval_measures_use_real_interval() -> None:
         TimeWindowCondition(
             frozenset({fixed.id}),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9, 30), time(10))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9, minutes=30), timedelta(hours=10))),),
         ),
     )
     assert isinstance(
@@ -692,7 +694,7 @@ def test_hard_time_window_places_whole_task_in_allowed_region(
     condition: TimeWindowCondition = TimeWindowCondition(
         frozenset({item.id}),
         relation,
-        (TimeWindow(None, None, TimeRange(time(9), time(11))),),
+        (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9), timedelta(hours=11))),),
     )
     value: SchedulingProblem = problem(
         item, constraints=(hard(condition),), end=START + 4 * HOUR, slot=HOUR
@@ -739,7 +741,12 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
         True,
     )
     expected: tuple[datetime, ...] = (START, START + SLOT, START + 3 * HOUR)
-    query: AvailableStartsQuery = AvailableStartsQuery(PEOPLE, HOUR, None, 100)
+    query: AvailableStartsQuery = AvailableStartsQuery(
+        PEOPLE,
+        HOUR,
+        (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(0), timedelta(hours=24))),),
+        100,
+    )
     assert query.answer(added.problem, None) == Answered(
         AvailableStartsAnswer(expected, len(expected))
     )
@@ -790,7 +797,7 @@ def test_summary_matches_objective_of_the_same_solve(
         condition = TimeWindowCondition(
             frozenset({item.id}),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9, 15), time(12, 45))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9, minutes=15), timedelta(hours=12, minutes=45))),),
         )
     elif scenario in {"deadline", "drop"}:
         condition = TimeBoundCondition(

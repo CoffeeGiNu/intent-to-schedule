@@ -1,7 +1,8 @@
 """Tests for the compiled MathOpt model and its agreement with plain evaluation."""
 
+from calendar import Day
 from dataclasses import replace
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from ortools.math_opt.python import mathopt
@@ -50,6 +51,7 @@ from intent_to_schedule.domain.time_windows import (
     TimeRange,
     TimeRelation,
     TimeWindow,
+    WholeHorizon,
 )
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
@@ -257,7 +259,7 @@ def test_avoid_window_counts_fixed_partial_slot_overlap() -> None:
     condition: TimeWindowCondition = TimeWindowCondition(
         frozenset({FIXED.id, MOVABLE.id}),
         TimeRelation.AVOID,
-        (TimeWindow(None, None, TimeRange(time(10), time(10, 30))),),
+        (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=10), timedelta(hours=10, minutes=30))),),
     )
     assert_costs(appointment_problem(condition), 0.25)
 
@@ -400,7 +402,7 @@ def test_fixed_intrusion_clips_real_overlap_to_horizon(
     condition: TimeWindowCondition = TimeWindowCondition(
         frozenset({fixed.id}),
         TimeRelation.AVOID,
-        (TimeWindow(None, None, None),),
+        (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(0), timedelta(hours=24))),),
     )
     assert_costs(
         replace(appointment_problem(condition, movable=False), fixed_tasks=(fixed,)),
@@ -771,7 +773,10 @@ def test_available_starts_match_compiled_start_candidates() -> None:
     )
     compiled: CompiledProblem = compile_problem(given, DEFAULT_POLICY, None, True)
     result: AnswerResult = AvailableStartsQuery(
-        item.participant_ids, item.duration, None, 100
+        item.participant_ids,
+        item.duration,
+        (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(0), timedelta(hours=24))),),
+        100,
     ).answer(given, None)
     assert isinstance(result, Answered) and isinstance(
         result.answer, AvailableStartsAnswer
@@ -802,11 +807,9 @@ def test_multi_task_intrusion_matches_separate_constraints(
         TimeRelation.AVOID,
         (
             TimeWindow(
-                None,
-                None,
-                TimeRange(
-                    START.time(), (START + SLOT * (2 if strength is None else 6)).time()
-                ),
+                WholeHorizon(),
+                frozenset(Day),
+                TimeRange(timedelta(hours=9), timedelta(hours=9) + SLOT * (2 if strength is None else 6)),
             ),
         ),
     )
@@ -859,7 +862,7 @@ def test_multi_task_soft_intrusion_matches_separate_drops() -> None:
         TimeWindowCondition(
             frozenset(item.id for item in tasks),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9), time(12))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9), timedelta(hours=12))),),
         ),
         Strength.NORMAL,
     )
@@ -912,7 +915,7 @@ def test_multi_task_intrusion_sums_real_fixed_and_movable_overlap() -> None:
         TimeWindowCondition(
             frozenset({first.id, fixed.id}),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9), time(12))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9), timedelta(hours=12))),),
         ),
         Strength.NORMAL,
     )
@@ -945,7 +948,7 @@ def test_multi_task_hard_intrusion_matches_separate_infeasibility() -> None:
         TimeWindowCondition(
             frozenset(item.id for item in base.tasks),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9), time(12))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9), timedelta(hours=12))),),
         ),
     )
     separate: tuple[Constraint, ...] = tuple(

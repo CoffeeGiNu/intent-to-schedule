@@ -1,7 +1,8 @@
 """Tests for scheduling queries."""
 
+from calendar import Day
 from dataclasses import replace
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -61,6 +62,13 @@ from intent_to_schedule.domain.time_windows import (
     TimeRange,
     TimeRelation,
     TimeWindow,
+    WholeHorizon,
+)
+
+DEFAULT_WINDOWS: tuple[TimeWindow, ...] = (
+    TimeWindow(
+        WholeHorizon(), frozenset(Day), TimeRange(timedelta(0), timedelta(hours=24))
+    ),
 )
 
 LIMITED_QUERIES: tuple[SchedulingQuery, ...] = (
@@ -68,7 +76,7 @@ LIMITED_QUERIES: tuple[SchedulingQuery, ...] = (
     TasksQuery(None, None, None, None, None, False, 20),
     ConstraintsQuery(None, None, 20),
     PreviousScheduleQuery(None, None, 20),
-    AvailableStartsQuery(frozenset(), timedelta(minutes=30), None, 20),
+    AvailableStartsQuery(frozenset(), timedelta(minutes=30), DEFAULT_WINDOWS, 20),
     EvaluationQuery(False, None, None, 20),
 )
 
@@ -326,8 +334,11 @@ def test_constraints_filter_identifiers_and_referenced_tasks(
                             interval.start.date(),
                             interval.start.date() + timedelta(days=1),
                         ),
-                        None,
-                        TimeRange(interval.start.time(), interval.end.time()),
+                        frozenset(Day),
+                        TimeRange(
+                            interval.start - at(0),
+                            interval.end - at(0),
+                        ),
                     )
                     for interval in region
                 ),
@@ -425,7 +436,7 @@ def test_available_starts_rejects_invalid_inputs(
 ) -> None:
     """Reject unknown participants and invalid durations."""
     query: AvailableStartsQuery = AvailableStartsQuery(
-        frozenset(PersonId(person) for person in participants), duration, None, 20
+        frozenset(PersonId(person) for person in participants), duration, DEFAULT_WINDOWS, 20
     )
     assert message in rejection(query.answer(problem, None)).lower()
 
@@ -445,7 +456,7 @@ def test_available_starts_uses_requested_people_and_limits_afterward(
         fixed_tasks=(),
     )
     query: AvailableStartsQuery = AvailableStartsQuery(
-        frozenset({PersonId("bob"), PersonId("alice")}), timedelta(hours=1), None, 1
+        frozenset({PersonId("bob"), PersonId("alice")}), timedelta(hours=1), DEFAULT_WINDOWS, 1
     )
     assert query.answer(given, Schedule((), ())) == Answered(
         AvailableStartsAnswer((at(10),), 3)
@@ -457,7 +468,7 @@ def test_available_starts_window_filter_uses_whole_duration(
 ) -> None:
     """Require the whole task to fit a merged window."""
     windows: tuple[TimeWindow, ...] = (
-        TimeWindow(None, None, TimeRange(time(10, 15), time(12))),
+        TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=10, minutes=15), timedelta(hours=12))),
     )
     result: AnswerResult = AvailableStartsQuery(
         frozenset(), timedelta(hours=1), windows, 1
@@ -465,10 +476,10 @@ def test_available_starts_window_filter_uses_whole_duration(
     assert result == Answered(AvailableStartsAnswer((at(10, 30),), 2))
 
 
-@pytest.mark.parametrize("windows, total", [(None, 7), ((), 0)])
-def test_available_starts_omitted_and_empty_windows(
+@pytest.mark.parametrize("windows, total", [(DEFAULT_WINDOWS, 7), ((), 0)])
+def test_available_starts_default_and_empty_windows(
     problem: SchedulingProblem,
-    windows: tuple[TimeWindow, ...] | None,
+    windows: tuple[TimeWindow, ...],
     total: int,
 ) -> None:
     """Distinguish the whole horizon from an empty set of windows."""
@@ -499,7 +510,7 @@ def test_available_starts_shared_availability_intersection(
         fixed_tasks=(occupied, unrelated),
     )
     query: AvailableStartsQuery = AvailableStartsQuery(
-        frozenset({PersonId("alice"), PersonId("bob")}), timedelta(hours=1), None, 20
+        frozenset({PersonId("alice"), PersonId("bob")}), timedelta(hours=1), DEFAULT_WINDOWS, 20
     )
     assert query.answer(given, None) == Answered(
         AvailableStartsAnswer((at(11), at(11, 30)), 2)
@@ -520,7 +531,7 @@ def test_available_starts_no_participants_shared_horizon(
     problem: SchedulingProblem, duration: timedelta, expected: tuple[datetime, ...]
 ) -> None:
     """Return overlapping starts without participants or none for excess duration."""
-    assert AvailableStartsQuery(frozenset(), duration, None, 20).answer(
+    assert AvailableStartsQuery(frozenset(), duration, DEFAULT_WINDOWS, 20).answer(
         problem, None
     ) == Answered(AvailableStartsAnswer(expected, len(expected)))
 
@@ -530,8 +541,8 @@ def test_available_starts_shared_windows_merge_before_containment(
 ) -> None:
     """Fit across adjacent windows before checking the whole duration."""
     windows: tuple[TimeWindow, ...] = (
-        TimeWindow(None, None, TimeRange(time(10, 15), time(11))),
-        TimeWindow(None, None, TimeRange(time(11), time(12))),
+        TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=10, minutes=15), timedelta(hours=11))),
+        TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=11), timedelta(hours=12))),
     )
     assert AvailableStartsQuery(frozenset(), timedelta(hours=1), windows, 20).answer(
         problem, None
@@ -615,7 +626,7 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
         TimeWindowCondition(
             frozenset({task.id}),
             TimeRelation.AVOID,
-            (TimeWindow(None, None, TimeRange(time(9), time(13))),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9), timedelta(hours=13))),),
         ),
     )
     previous: Schedule = Schedule(
@@ -630,7 +641,7 @@ def test_available_starts_ignores_movable_tasks_constraints_and_previous(
         problem, tasks=(task,), fixed_tasks=(), constraints=(constraint,)
     )
     result: AnswerResult = AvailableStartsQuery(
-        frozenset({PersonId("alice")}), timedelta(hours=1), None, 2
+        frozenset({PersonId("alice")}), timedelta(hours=1), DEFAULT_WINDOWS, 2
     ).answer(given, previous)
     assert result == Answered(AvailableStartsAnswer((at(9), at(9, 30)), 7))
 
@@ -745,7 +756,7 @@ def test_agenda_orders_items_and_subtracts_them_from_working_time(
     agenda_problem: SchedulingProblem,
 ) -> None:
     """List fixed and previous items in time order with the remaining free time."""
-    assert AgendaQuery(ALICE, None).answer(agenda_problem, AGENDA_PREVIOUS) == Answered(
+    assert AgendaQuery(ALICE, WholeHorizon()).answer(agenda_problem, AGENDA_PREVIOUS) == Answered(
         AgendaAnswer(
             ALICE,
             True,
@@ -875,7 +886,7 @@ def test_agenda_uses_participants_recorded_in_the_previous_schedule(
         "bob-only",
         "bob-task",
     ]
-    result = AgendaQuery(ALICE, None).answer(changed, AGENDA_PREVIOUS)
+    result = AgendaQuery(ALICE, WholeHorizon()).answer(changed, AGENDA_PREVIOUS)
     assert isinstance(result, Answered) and isinstance(result.answer, AgendaAnswer)
     assert agenda_item(
         False, "review", on(5, 10), on(5, 11), ALICE
@@ -931,6 +942,6 @@ def test_agenda_merges_overlapping_working_intervals(
 def test_agenda_rejects_unknown_person(agenda_problem: SchedulingProblem) -> None:
     """Reject a person identifier missing from the problem."""
     message: str = rejection(
-        AgendaQuery(PersonId("missing"), None).answer(agenda_problem, None)
+        AgendaQuery(PersonId("missing"), WholeHorizon()).answer(agenda_problem, None)
     )
     assert "missing" in message and "agenda" in message

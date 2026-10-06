@@ -1,6 +1,7 @@
 """Tests for OpenAI conversation steps."""
 
 import json
+from calendar import Day
 from datetime import datetime, timedelta, timezone
 from typing import cast
 from unittest.mock import MagicMock
@@ -22,7 +23,9 @@ from intent_to_schedule.application.command import (
     RemoveTask,
 )
 from intent_to_schedule.application.query import (
+    AgendaQuery,
     Answered,
+    AvailableStartsQuery,
     PeopleAnswer,
     Summary,
     SummaryQuery,
@@ -45,6 +48,7 @@ from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance, Task, TaskId
+from intent_to_schedule.domain.time_windows import TimeRange, TimeWindow, WholeHorizon
 
 
 def make_summary() -> Summary:
@@ -238,6 +242,9 @@ def test_installed_structured_output_helper_marks_defaulted_fields_required() ->
         "ConstraintsQueryData",
         "PreviousScheduleQueryData",
         "AvailableStartsQueryData",
+        "AgendaQueryData",
+        "TimeWindowData",
+        "TimeRangeData",
         "NewConstraintData",
         "ConstraintData",
         "TimeWindowConditionData",
@@ -251,9 +258,60 @@ def test_installed_structured_output_helper_marks_defaulted_fields_required() ->
         )
         assert set(cast(list[str], definition["required"])) == set(properties)
         assert definition["additionalProperties"] is False
-    window_properties: dict[str, dict[str, object]] = cast(
-        dict[str, dict[str, object]], definitions["TimeWindowData"]["properties"]
+    for name in ("TimeWindowData", "TimeRangeData"):
+        assert '"null"' not in json.dumps(definitions[name])
+    agenda_properties: dict[str, dict[str, object]] = cast(
+        dict[str, dict[str, object]], definitions["AgendaQueryData"]["properties"]
     )
-    assert all("default" not in value for value in window_properties.values())
+    assert '"null"' not in json.dumps(agenda_properties["date_range"])
+    assert '"horizon"' in json.dumps(agenda_properties["date_range"])
     assert "oneOf" not in json.dumps(schema)
     assert "discriminator" not in json.dumps(schema)
+
+
+def test_explicit_window_values_from_the_strict_schema_convert() -> None:
+    """Convert windows and date ranges written out in full, as strict output requires."""
+    window: dict[str, object] = {
+        "date_range": "horizon",
+        "weekdays": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ],
+        "time_range": {"start": "00:00", "end": "24:00"},
+    }
+    whole: TimeWindow = TimeWindow(
+        WholeHorizon(), frozenset(Day), TimeRange(timedelta(0), timedelta(hours=24))
+    )
+    starts: StepOutput = StepOutput.model_validate(
+        {
+            "result": {
+                "kind": "query",
+                "query": {
+                    "kind": "available_starts",
+                    "participant_ids": [],
+                    "duration": "PT1H",
+                    "windows": [window],
+                    "limit": 20,
+                },
+            }
+        }
+    )
+    assert convert_step_output(starts) == QueryStep(
+        AvailableStartsQuery(frozenset(), timedelta(hours=1), (whole,), 20)
+    )
+    agenda: StepOutput = StepOutput.model_validate(
+        {
+            "result": {
+                "kind": "query",
+                "query": {"kind": "agenda", "person_id": "alice", "date_range": "horizon"},
+            }
+        }
+    )
+    assert convert_step_output(agenda) == QueryStep(
+        AgendaQuery(PersonId("alice"), WholeHorizon())
+    )

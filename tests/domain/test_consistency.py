@@ -1,3 +1,4 @@
+from calendar import Day
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -26,7 +27,12 @@ from intent_to_schedule.domain.measure import Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.task import FixedTask, Importance, Task, TaskId
-from intent_to_schedule.domain.time_windows import TimeRelation, TimeWindow
+from intent_to_schedule.domain.time_windows import (
+    TimeRange,
+    TimeRelation,
+    TimeWindow,
+    WholeHorizon,
+)
 
 
 def make_problem() -> SchedulingProblem:
@@ -209,7 +215,7 @@ def test_references_exist_reports_every_missing_task_of_a_condition() -> None:
                 {problem.tasks[0].id, TaskId("missing-one"), TaskId("missing-two")}
             ),
             TimeRelation.WITHIN,
-            (TimeWindow(None, None, None),),
+            (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(0), timedelta(hours=24))),),
         ),
     )
     given: SchedulingProblem = replace(problem, constraints=(constraint,))

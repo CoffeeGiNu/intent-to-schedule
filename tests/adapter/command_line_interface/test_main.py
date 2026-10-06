@@ -6,7 +6,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import openai
@@ -71,6 +71,15 @@ START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 HOUR: timedelta = timedelta(hours=1)
 SLOT: timedelta = timedelta(minutes=30)
 PERSON: PersonId = PersonId("person")
+WEEKDAY_NAMES: list[str] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
 
 
 def task(identifier: str, duration: timedelta = HOUR) -> Task:
@@ -718,12 +727,52 @@ def test_apply_time_window_constraint_persists_windows_and_reports_rounding(
         "relation": relation_value,
         "windows": [
             {
-                "date_range": None,
-                "weekdays": None,
-                "time_range": {"start": "09:10:00", "end": "11:10:00"},
+                "date_range": "horizon",
+                "weekdays": WEEKDAY_NAMES,
+                "time_range": {"start": "09:10", "end": "11:10"},
             }
         ],
     }
+
+
+def test_show_and_constraints_query_write_omitted_window_fields_explicitly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Write the defaults of omitted window fields instead of null."""
+    path: Path = tmp_path / "state.json"
+    save_problem(path, problem(task("review")))
+    condition: dict[str, object] = {
+        "kind": "time_window",
+        "task_ids": ["review"],
+        "relation": "within",
+        "windows": [{}, {"date_range": "horizon", "weekdays": []}],
+    }
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(json.dumps({"commands": [constraint_command(condition)]})),
+    )
+    status: int
+    output: dict[str, object]
+    status, output = invoke(capsys, "--state", str(path), "apply")
+    assert status == 0
+    whole_day: dict[str, str] = {"start": "00:00", "end": "24:00"}
+    windows: list[dict[str, object]] = [
+        {"date_range": "horizon", "weekdays": WEEKDAY_NAMES, "time_range": whole_day},
+        {"date_range": "horizon", "weekdays": [], "time_range": whole_day},
+    ]
+    status, output = invoke(capsys, "--state", str(path), "show")
+    assert status == 0
+    shown: dict[str, Any] = cast(dict[str, Any], output)["problem"]["constraints"][0]
+    assert shown["condition"]["windows"] == windows
+    assert "null" not in json.dumps(shown["condition"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"kind": "constraints"})))
+    status, output = invoke(capsys, "--state", str(path), "query")
+    assert status == 0
+    listed: dict[str, Any] = cast(list[dict[str, Any]], output["items"])[0]
+    assert listed["condition"]["windows"] == windows
 
 
 UNSCHEDULED: str = "this hard constraint keeps the task unscheduled."
@@ -772,14 +821,14 @@ def window_warning(task_id: str, relation: str, consequence: str) -> str:
     [
         ("within", {"start": "00:00", "end": "12:00"}, True),
         ("within", {"start": "00:00", "end": "14:00"}, False),
-        ("avoid", {"start": "10:00", "end": None}, True),
-        ("avoid", {"start": "14:00", "end": None}, False),
+        ("avoid", {"start": "10:00", "end": "24:00"}, True),
+        ("avoid", {"start": "14:00", "end": "24:00"}, False),
     ],
 )
 def test_apply_warns_when_no_available_start_satisfies_time_window(
     kind: str,
     relation: str,
-    time_range: dict[str, str | None],
+    time_range: dict[str, str],
     warned: bool,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1821,9 +1870,9 @@ def test_apply_and_query_multi_task_constraint(
             "relation": "avoid",
             "windows": [
                 {
-                    "date_range": None,
-                    "weekdays": None,
-                    "time_range": {"start": "09:00:00", "end": "10:00:00"},
+                    "date_range": "horizon",
+                    "weekdays": WEEKDAY_NAMES,
+                    "time_range": {"start": "09:00", "end": "10:00"},
                 }
             ],
         }

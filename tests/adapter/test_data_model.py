@@ -2,7 +2,7 @@
 
 import json
 from calendar import Day
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, cast
 from unittest.mock import Mock, patch
 
@@ -98,6 +98,7 @@ from intent_to_schedule.domain.time_windows import (
     TimeRange,
     TimeRelation,
     TimeWindow,
+    WholeHorizon,
 )
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
@@ -105,6 +106,16 @@ HOUR: timedelta = timedelta(hours=1)
 GRID: TimeGrid = TimeGrid(TimeInterval(START, START + 8 * HOUR), HOUR)
 EMPTY_PROBLEM: SchedulingProblem = SchedulingProblem(Calendar(GRID, ()), (), (), (), ())
 PERSON: PersonId = PersonId("person")
+WEEKDAY_NAMES: list[str] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
+WHOLE_DAY: TimeRange = TimeRange(timedelta(0), timedelta(hours=24))
 QUERY_ADAPTER: TypeAdapter[QueryData] = TypeAdapter(
     Annotated[QueryData, Field(discriminator="kind")]
 )
@@ -516,9 +527,9 @@ def test_constraints_record_keeps_entered_windows_before_rounding() -> None:
                     **CONDITIONS[0],
                     "windows": [
                         {
-                            "date_range": None,
-                            "weekdays": None,
-                            "time_range": {"start": "09:10:00", "end": "15:20:00"},
+                            "date_range": "horizon",
+                            "weekdays": WEEKDAY_NAMES,
+                            "time_range": {"start": "09:10", "end": "15:20"},
                         }
                     ],
                 },
@@ -555,7 +566,7 @@ def test_time_window_constraint_conversion_generates_id_once(
                         {
                             "date_range": {"start": "2026-10-12", "end": "2026-10-17"},
                             "weekdays": ["friday", "friday"],
-                            "time_range": {"start": "13:00", "end": None},
+                            "time_range": {"start": "13:00", "end": "24:00"},
                         }
                     ],
                 },
@@ -588,7 +599,7 @@ def test_time_window_constraint_conversion_generates_id_once(
             TimeWindow(
                 DateRange(date(2026, 10, 12), date(2026, 10, 17)),
                 frozenset({Day.FRIDAY}),
-                TimeRange(time(13), None),
+                TimeRange(timedelta(hours=13), timedelta(hours=24)),
             ),
         )
         assert command_record(
@@ -601,17 +612,57 @@ def test_time_window_constraint_conversion_generates_id_once(
     generation.assert_called_once_with()
 
 
-def test_time_window_constraint_conversion_preserves_omitted_and_empty_window_fields() -> (
-    None
-):
-    assert convert_time_window(TimeWindowData()) == TimeWindow(None, None, None)
-    assert convert_time_window(TimeWindowData(weekdays=())) == TimeWindow(
-        None, frozenset(), None
+@pytest.mark.parametrize("data", [{}, {"date_range": "horizon"}])
+def test_time_window_defaults_cover_every_date_every_day_and_the_whole_day(
+    data: dict[str, object],
+) -> None:
+    assert convert_time_window(TimeWindowData.model_validate(data)) == TimeWindow(
+        WholeHorizon(), frozenset(Day), WHOLE_DAY
     )
 
 
-@pytest.mark.parametrize("end", ["13:00", "12:00"])
-def test_time_window_constraint_input_rejects_nonincreasing_times(end: str) -> None:
+def test_time_window_empty_weekdays_match_no_day() -> None:
+    assert convert_time_window(
+        TimeWindowData.model_validate({"weekdays": []})
+    ) == TimeWindow(WholeHorizon(), frozenset(), WHOLE_DAY)
+
+
+def test_time_window_end_at_24_00_is_the_end_of_the_day() -> None:
+    window: TimeWindowData = TimeWindowData.model_validate(
+        {"time_range": {"start": "22:00", "end": "24:00"}}
+    )
+    assert convert_time_window(window).time_range == TimeRange(
+        timedelta(hours=22), timedelta(hours=24)
+    )
+    assert window.model_dump(mode="json")["time_range"] == {
+        "start": "22:00",
+        "end": "24:00",
+    }
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"date_range": None},
+        {"weekdays": None},
+        {"time_range": None},
+        {"time_range": {"start": None, "end": "10:00"}},
+        {"time_range": {"start": "09:00", "end": None}},
+        {"date_range": "all"},
+    ],
+)
+def test_time_window_rejects_null_and_unknown_values(window: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        TimeWindowData.model_validate(window)
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [("13:00", "13:00"), ("13:00", "12:00"), ("24:00", "24:00")],
+)
+def test_time_window_constraint_input_rejects_nonincreasing_times(
+    start: str, end: str
+) -> None:
     with pytest.raises(ValidationError) as error:
         AddConstraintData.model_validate(
             {
@@ -622,38 +673,34 @@ def test_time_window_constraint_input_rejects_nonincreasing_times(end: str) -> N
                         "kind": "time_window",
                         "task_ids": ["review"],
                         "relation": "within",
-                        "windows": [{"time_range": {"start": "13:00", "end": end}}],
-                    },
-                },
-            }
-        )
-    message: str = str(error.value)
-    assert "windows" in message and "time_range" in message
-    assert "13:00" in message and end in message and "after" in message
-
-
-@pytest.mark.parametrize("start,end", [("13:00+09:00", None), ("13:00", "18:00+09:00")])
-def test_time_window_constraint_input_rejects_zoned_times(
-    start: str, end: str | None
-) -> None:
-    with pytest.raises(ValidationError) as error:
-        AddConstraintData.model_validate(
-            {
-                "kind": "add_constraint",
-                "constraint": {
-                    "requirement": {"kind": "soft", "strength": "normal"},
-                    "condition": {
-                        "kind": "time_window",
-                        "task_ids": ["review"],
-                        "relation": "avoid",
                         "windows": [{"time_range": {"start": start, "end": end}}],
                     },
                 },
             }
         )
     message: str = str(error.value)
-    assert "time_range" in message and "+09:00" in message
-    assert "without a time zone" in message
+    assert "windows" in message and "time_range" in message
+    assert f"end {end}" in message and f"start {start}" in message
+    assert "after" in message
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [
+        ("23:00", "24:01"),
+        ("23:00", "25:00"),
+        ("13:00+09:00", "18:00"),
+        ("13:00", "18:00+09:00"),
+        ("9:00", "18:00"),
+        ("09:00:00", "18:00"),
+    ],
+)
+def test_time_range_input_rejects_times_other_than_hh_mm_up_to_24_00(
+    start: str, end: str
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        TimeWindowData.model_validate({"time_range": {"start": start, "end": end}})
+    assert "HH:MM" in str(error.value)
 
 
 def test_convert_query_shared_time_window() -> None:
@@ -668,9 +715,34 @@ def test_convert_query_shared_time_window() -> None:
     ) == AvailableStartsQuery(
         frozenset(),
         timedelta(hours=1),
-        (TimeWindow(None, None, TimeRange(time(10), time(12))),),
+        (
+            TimeWindow(
+                WholeHorizon(),
+                frozenset(Day),
+                TimeRange(timedelta(hours=10), timedelta(hours=12)),
+            ),
+        ),
         20,
     )
+
+
+def test_available_starts_windows_default_to_one_whole_horizon_window() -> None:
+    query: dict[str, object] = {
+        "kind": "available_starts",
+        "participant_ids": [],
+        "duration": "PT1H",
+    }
+    assert parse_query(query) == AvailableStartsQuery(
+        frozenset(),
+        timedelta(hours=1),
+        (TimeWindow(WholeHorizon(), frozenset(Day), WHOLE_DAY),),
+        20,
+    )
+    assert parse_query({**query, "windows": []}) == AvailableStartsQuery(
+        frozenset(), timedelta(hours=1), (), 20
+    )
+    with pytest.raises(ValidationError):
+        parse_query({**query, "windows": None})
 
 
 @pytest.mark.parametrize(
@@ -885,8 +957,8 @@ def test_time_window_query_keeps_all_windows(count: int) -> None:
             (
                 TimeWindow(
                     DateRange(date(2026, 10, 1), date(2026, 10, 2)),
-                    None,
-                    TimeRange(time(9), time(10)),
+                    frozenset({Day.FRIDAY, Day.MONDAY}),
+                    TimeRange(timedelta(hours=9), timedelta(hours=10)),
                 ),
             )
             * count,
@@ -894,8 +966,8 @@ def test_time_window_query_keeps_all_windows(count: int) -> None:
     )
     window: dict[str, object] = {
         "date_range": {"start": "2026-10-01", "end": "2026-10-02"},
-        "weekdays": None,
-        "time_range": {"start": "09:00:00", "end": "10:00:00"},
+        "weekdays": ["monday", "friday"],
+        "time_range": {"start": "09:00", "end": "10:00"},
     }
     assert answer_record(ConstraintsAnswer((constraint,), 1)) == {
         "kind": "constraints",
@@ -1020,8 +1092,13 @@ def test_objective_policy_record_lists_every_coefficient() -> None:
 def test_agenda_query_conversion_and_record() -> None:
     """Convert an agenda query and serialize dates, intervals, and items."""
     assert parse_query({"kind": "agenda", "person_id": "alice"}) == AgendaQuery(
-        PersonId("alice"), None
+        PersonId("alice"), WholeHorizon()
     )
+    assert parse_query(
+        {"kind": "agenda", "person_id": "alice", "date_range": "horizon"}
+    ) == AgendaQuery(PersonId("alice"), WholeHorizon())
+    with pytest.raises(ValidationError):
+        parse_query({"kind": "agenda", "person_id": "alice", "date_range": None})
     assert parse_query(
         {
             "kind": "agenda",
@@ -1144,7 +1221,16 @@ def evaluation_problem() -> tuple[SchedulingProblem, Schedule]:
             TimeWindowCondition(
                 identifiers,
                 TimeRelation.WITHIN,
-                (TimeWindow(None, None, TimeRange(time(9, 15), time(10, 45))),),
+                (
+                    TimeWindow(
+                        WholeHorizon(),
+                        frozenset(Day),
+                        TimeRange(
+                            timedelta(hours=9, minutes=15),
+                            timedelta(hours=10, minutes=45),
+                        ),
+                    ),
+                ),
             ),
             Strength.NORMAL,
         ),

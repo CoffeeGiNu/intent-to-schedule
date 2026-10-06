@@ -1,5 +1,6 @@
+from calendar import Day
 from dataclasses import replace
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -30,7 +31,12 @@ from intent_to_schedule.domain.measure import (
     PointMeasure,
 )
 from intent_to_schedule.domain.task import TaskId
-from intent_to_schedule.domain.time_windows import TimeRange, TimeRelation, TimeWindow
+from intent_to_schedule.domain.time_windows import (
+    TimeRange,
+    TimeRelation,
+    TimeWindow,
+    WholeHorizon,
+)
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 GRID: TimeGrid = TimeGrid(
@@ -60,7 +66,7 @@ def test_time_window_criteria_round_inward_or_outward(
     condition: TimeWindowCondition = TimeWindowCondition(
         TASK_IDS,
         relation,
-        (TimeWindow(None, None, TimeRange(time(9, 10), time(11, 10))),),
+        (TimeWindow(WholeHorizon(), frozenset(Day), TimeRange(timedelta(hours=9, minutes=10), timedelta(hours=11, minutes=10))),),
     )
     assert condition.criteria(GRID) == (
         Criterion(IntervalMeasure(TASK_IDS), Intrusion(region)),
