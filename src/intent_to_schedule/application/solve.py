@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Protocol
 
 from intent_to_schedule.application.objective import (
-    ConstraintEvaluation,
+    HardConstraintEvaluation,
     ScheduleSummary,
     evaluate_constraints,
 )
@@ -34,7 +34,7 @@ class DropReason(Enum):
 class ConstraintConflict:
     """Hard constraint broken by the relaxed schedule."""
 
-    evaluation: ConstraintEvaluation
+    evaluation: HardConstraintEvaluation
     related_constraint_ids: tuple[ConstraintId, ...]
     """Other hard constraints referencing any of the same tasks."""
 
@@ -85,11 +85,11 @@ def find_conflicts(
         for constraint in problem.constraints
         if isinstance(constraint, HardConstraint)
     )
-    broken: list[ConstraintEvaluation] = sorted(
+    broken: list[HardConstraintEvaluation] = sorted(
         (
             item
             for item in evaluate_constraints(problem, relaxed, policy)
-            if isinstance(item.constraint, HardConstraint)
+            if isinstance(item, HardConstraintEvaluation)
             and item.violation.amount > 0
         ),
         key=lambda item: (-item.violation.amount, item.constraint.id.value),
