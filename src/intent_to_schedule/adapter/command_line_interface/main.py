@@ -125,7 +125,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
         "This is one least-breaking way and may not name every party to a conflict, so check related_constraint_ids. "
         "Relaxing every listed item (making it soft or optional, or removing it) makes the problem solvable. "
-        "Otherwise conflicts is {status: not_found, reason}, where reason is time_limit if the time limit stopped the relaxed solve "
+        "If the relaxed solve finds no schedule, conflicts is {status: not_found, reason}, where reason is time_limit if the time limit stopped it "
         "and otherwise the MathOpt termination reason in lowercase, such as numerical_error. The previous schedule is kept.",
     ),
     "chat": (
