@@ -1,0 +1,1445 @@
+{
+ "horizon": {
+  "start": "2026-10-12T00:00:00+09:00",
+  "end": "2026-10-24T00:00:00+09:00"
+ },
+ "slot": "PT30M",
+ "people": [
+  {
+   "id": "takahashi",
+   "name": "Misaki Takahashi"
+  },
+  {
+   "id": "ito",
+   "name": "Kenta Ito"
+  },
+  {
+   "id": "yamamoto",
+   "name": "Sakura Yamamoto"
+  },
+  {
+   "id": "nakamura",
+   "name": "Sho Nakamura"
+  },
+  {
+   "id": "kobayashi",
+   "name": "Aoi Kobayashi"
+  },
+  {
+   "id": "kato",
+   "name": "Daisuke Kato"
+  },
+  {
+   "id": "yoshida",
+   "name": "Yu Yoshida"
+  },
+  {
+   "id": "sasaki",
+   "name": "Jun Sasaki"
+  }
+ ],
+ "availabilities": [
+  {
+   "person_id": "takahashi",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:30:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:30:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:30:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-16T09:30:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:30:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:30:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:30:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:30:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:30:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:30:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "ito",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:30:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:30:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:30:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-16T09:30:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:30:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:30:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:30:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:30:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:30:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:30:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "yamamoto",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:30:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:30:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:30:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-16T09:30:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:30:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:30:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:30:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:30:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:30:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:30:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "nakamura",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:30:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:30:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:30:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-16T09:30:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:30:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:30:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:30:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:30:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:30:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:30:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "kobayashi",
+   "intervals": [
+    {
+     "start": "2026-10-13T10:00:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T10:00:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T10:00:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T10:00:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T10:00:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T10:00:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T10:00:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T10:00:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T16:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T10:00:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T16:00:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "kato",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:30:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:30:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:30:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:30:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:30:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:30:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:30:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:30:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:30:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "yoshida",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:30:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:30:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:30:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-16T09:30:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:30:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:30:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:30:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:30:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:30:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:30:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:30:00+09:00"
+    }
+   ]
+  },
+  {
+   "person_id": "sasaki",
+   "intervals": [
+    {
+     "start": "2026-10-13T09:00:00+09:00",
+     "end": "2026-10-13T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-13T13:00:00+09:00",
+     "end": "2026-10-13T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T09:00:00+09:00",
+     "end": "2026-10-14T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-14T13:00:00+09:00",
+     "end": "2026-10-14T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T09:00:00+09:00",
+     "end": "2026-10-15T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-15T13:00:00+09:00",
+     "end": "2026-10-15T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T09:00:00+09:00",
+     "end": "2026-10-16T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-16T13:00:00+09:00",
+     "end": "2026-10-16T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T09:00:00+09:00",
+     "end": "2026-10-19T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-19T13:00:00+09:00",
+     "end": "2026-10-19T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T09:00:00+09:00",
+     "end": "2026-10-20T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-20T13:00:00+09:00",
+     "end": "2026-10-20T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T09:00:00+09:00",
+     "end": "2026-10-21T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-21T13:00:00+09:00",
+     "end": "2026-10-21T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T09:00:00+09:00",
+     "end": "2026-10-22T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-22T13:00:00+09:00",
+     "end": "2026-10-22T18:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T09:00:00+09:00",
+     "end": "2026-10-23T12:00:00+09:00"
+    },
+    {
+     "start": "2026-10-23T13:00:00+09:00",
+     "end": "2026-10-23T18:00:00+09:00"
+    }
+   ]
+  }
+ ],
+ "fixed_tasks": [
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-13T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Team meeting",
+   "start": "2026-10-13T14:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Managers' meeting",
+   "start": "2026-10-13T09:30:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-14T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-15T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Client meeting",
+   "start": "2026-10-15T15:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "ito"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-16T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Retrospective",
+   "start": "2026-10-16T16:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-19T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Managers' meeting",
+   "start": "2026-10-19T09:30:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-20T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Team meeting",
+   "start": "2026-10-20T14:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-21T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-22T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Client meeting",
+   "start": "2026-10-22T15:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "ito"
+   ]
+  },
+  {
+   "name": "Morning stand-up",
+   "start": "2026-10-23T10:15:00+09:00",
+   "duration": "PT15M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Retrospective",
+   "start": "2026-10-23T16:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Company all-hands",
+   "start": "2026-10-22T17:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yamamoto",
+    "nakamura",
+    "kobayashi",
+    "kato",
+    "yoshida",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-21T09:30:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-23T17:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-13T12:00:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-23T14:30:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi",
+    "ito",
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-20T13:45:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "takahashi",
+    "kato",
+    "ito"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-14T10:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi",
+    "sasaki",
+    "kobayashi"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-19T10:00:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-15T15:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "kato"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-22T10:30:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-23T13:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-16T10:15:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Hiring sync",
+   "start": "2026-10-23T10:00:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi",
+    "yamamoto",
+    "nakamura"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-22T17:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-14T17:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-15T13:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-22T13:30:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-21T09:45:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "takahashi",
+    "kato",
+    "ito"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-14T10:15:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Doctor's appointment",
+   "start": "2026-10-16T16:00:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "ito"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-16T14:15:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "ito"
+   ]
+  },
+  {
+   "name": "Doctor's appointment",
+   "start": "2026-10-23T16:15:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "ito",
+    "nakamura"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-23T14:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "ito"
+   ]
+  },
+  {
+   "name": "Doctor's appointment",
+   "start": "2026-10-13T12:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "ito",
+    "yoshida",
+    "kato"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-20T16:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "ito",
+    "kobayashi",
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-13T14:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "ito"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-15T13:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "ito",
+    "takahashi",
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-21T10:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "ito",
+    "yamamoto",
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-13T12:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "ito"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-22T15:00:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "yamamoto",
+    "sasaki",
+    "takahashi"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-16T09:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "yamamoto",
+    "kobayashi"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-23T16:30:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "yamamoto"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-15T14:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "yamamoto"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-13T15:15:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "yamamoto"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-16T13:00:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "yamamoto"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-20T15:00:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "nakamura"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-14T12:00:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "nakamura"
+   ]
+  },
+  {
+   "name": "Hiring sync",
+   "start": "2026-10-22T11:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "nakamura",
+    "kato"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-23T17:30:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "nakamura",
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-22T12:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "kobayashi",
+    "nakamura",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-21T12:30:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "kobayashi",
+    "nakamura",
+    "ito"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-22T14:30:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "kobayashi",
+    "nakamura",
+    "yamamoto"
+   ]
+  },
+  {
+   "name": "Doctor's appointment",
+   "start": "2026-10-23T14:15:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "kobayashi"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-14T10:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "kobayashi",
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-14T15:00:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "kobayashi"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-15T15:15:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "kato"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-20T17:00:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "kato"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-23T17:30:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "kato"
+   ]
+  },
+  {
+   "name": "Hiring sync",
+   "start": "2026-10-15T11:15:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "kato",
+    "sasaki",
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-13T13:15:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "kato",
+    "kobayashi"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-13T17:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "kato"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-23T12:00:00+09:00",
+   "duration": "PT45M",
+   "participant_ids": [
+    "yoshida",
+    "kobayashi",
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-15T12:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-13T09:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "yoshida",
+    "kobayashi"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-13T17:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Vendor meeting",
+   "start": "2026-10-16T10:00:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-19T13:00:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "yoshida"
+   ]
+  },
+  {
+   "name": "Customer call",
+   "start": "2026-10-21T17:30:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "sasaki",
+    "takahashi",
+    "nakamura"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-23T13:45:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Design sync",
+   "start": "2026-10-20T09:45:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Planning",
+   "start": "2026-10-20T10:30:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Hiring sync",
+   "start": "2026-10-14T14:45:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Doctor's appointment",
+   "start": "2026-10-20T10:00:00+09:00",
+   "duration": "PT30M",
+   "participant_ids": [
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Interview",
+   "start": "2026-10-13T12:30:00+09:00",
+   "duration": "PT60M",
+   "participant_ids": [
+    "sasaki"
+   ]
+  },
+  {
+   "name": "Code review",
+   "start": "2026-10-19T14:15:00+09:00",
+   "duration": "PT90M",
+   "participant_ids": [
+    "sasaki",
+    "kato"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,112 @@
+# Survey: plans for the second half of October
+
+From: Misaki Takahashi (team lead / project manager) / Sent: Friday, October 9, 2026
+
+Hi everyone, please tell me which meetings and solo focus blocks you want between Tue 10/13 and Fri 10/23. Include who, roughly how long, by when, and whether it is a must or nice to have. If there are times you want to avoid, or days off and outside appointments not yet on the calendar, add them to your reply. Rough wishes are fine.
+This round covers Mon 10/12 to Fri 10/23, but the 12th is Sports Day and everyone is off. All times are Japan time (Asia/Tokyo), and we plan in 30-minute slots. Normal hours are 9:30 to 18:30 with lunch from 12:00 to 13:00. Aoi works 10:00 to 16:00 and Jun works 9:00 to 18:00.
+We also have the stand-up from 10:15 to 10:30, the team meeting on Tuesdays from 14:00 to 15:00, the retrospective on Fridays from 16:30 to 17:15, and everyone's existing appointments, so please fit things in between. My managers' meeting is Mondays 9:30 to 10:30 (Tuesday in a holiday week), and Kenta and I have the client meeting on Thursdays 15:00 to 16:00. The company all-hands is Thu 10/22, 17:00 to 18:00.
+
+## Misaki Takahashi — team lead / project manager
+
+Here is my part too. I want to prioritize the checks for this month's release.
+- A 30-minute 1on1 with Sho, definitely sometime next week. This time I want to hear what's bothering him first, so early in the week if possible.
+- A 30-minute 1on1 with Aoi by the 23rd. This one only if there is room.
+- The design review for the new search screen: Aoi, Sakura, and me, 90 minutes, a must by the 14th.
+- The release go/no-go check with Kenta, Daisuke, Jun, and me, one hour, definitely by the 21st. I want to hold it after the test plan review is done.
+- Aligning our story for the client meeting on the 22nd: Kenta, Sakura, Yu, and me, one hour. It must come after the release go/no-go check and finish before 15:00 on the 22nd.
+  We want the demo and the evaluation results for that meeting to line up, so this alignment and the client meeting cannot be swapped.
+- I definitely need two consecutive hours alone to put together the release briefing deck, before the alignment meeting.
+Please lean new meetings toward the afternoon if you can.
+On mornings with the managers' meeting I'm busy following up afterwards, so I'd like to avoid new meetings then.
+
+## Kenta Ito — backend engineer (senior)
+
+Here is the backend side. I don't want to drop the reviews or the implementation support.
+- Search API design review: Sho, Sakura, Jun, and me, 90 minutes. I'd like it early next week, but it is a must by the end of the 15th at the latest.
+- Two 90-minute pair programming sessions with Sho on the search API. Both are musts.
+  The first after the API design review, within next week (by the 16th). The second in the week after, leaving time in between for Sho to fix things on his own.
+- Incident postmortem with Jun, Sho, and me, one hour, a must by the 20th. Please hold it after Jun's investigation is done.
+- I'll join Daisuke's test plan review, and Misaki's release go/no-go check and client alignment.
+- Three consecutive hours alone to move the search API implementation forward, once, definitely between the review and the 21st. If possible, another block of the same length by the 23rd.
+I'd prefer reviews and pair programming in the afternoon. I want to avoid first thing in the morning.
+Mon 10/19 10:30 to 12:00 is my health check. It's not on the calendar yet, so please don't put anything new there.
+Thursdays have the client meeting, so if possible put any additional long meetings on other days.
+
+## Sakura Yamamoto — frontend engineer
+
+I want to get the search screen into shape soon! Here is what I need.
+- The search screen design review with Aoi and Misaki would be great on Wednesday the 14th in the afternoon. There are many state branches, so I think 90 minutes is a must.
+- After the review, I definitely want a one-hour design handoff with Aoi, Sho, and me by the 19th.
+  I want to see the screens with the review feedback applied before the handoff, so on or after Thursday the 15th please.
+- I'll join Kenta's search API design review too. It's fine if it comes before the design review.
+- I'll bring a working demo to Misaki's alignment meeting before the client meeting on the 22nd.
+- After the handoff, I definitely want two blocks of three consecutive hours each for my own implementation, by the 23rd.
+I'm taking the morning of Monday the 19th off. I haven't updated the calendar yet. I can work from 13:00.
+Meetings in the afternoon if possible. But on Wednesday I can move other work to prioritize the review.
+I'd like to use 13:00 to 13:30 right after lunch to get ready, so I'd appreciate no meetings there.
+Non-urgent questions can go through chat. Having my implementation time chopped up is the worst.
+
+## Sho Nakamura — backend engineer (second year)
+
+I have a lot to ask Kenta about, so my list is a bit long. Thanks in advance.
+- I definitely want to discuss the search API design review (90 minutes) with Kenta, Sakura, and Jun by the 15th.
+- Please schedule both search API pair programming sessions with Kenta. 90 minutes each, both musts. Starting after the review, the first next week and the second the week after.
+- I'll attend the design handoff with Aoi and Sakura. I'll bring sample API responses.
+- I definitely want a 30-minute 1on1 with Misaki next week. If possible before the first pair programming session, so I can also ask how to approach it.
+- I'll attend the postmortem with Jun and Kenta. I'll prepare the logs from the last incident.
+- Please make sure I get two consecutive hours alone to fix things between the first and second pair programming sessions.
+- I'm interested in Yu's study session, but if implementation gets tight I can skip it this time.
+Every Tuesday from 9:30 to 10:00 I'm away accompanying a family member to the hospital. That isn't on the calendar yet. I'm back in time for the stand-up.
+Monday the 19th from 13:00 to 17:00 I'm at an external training and can't attend anything. Also not registered.
+Mornings take me a while to get going, so meetings at 10:30 or later if possible.
+
+## Aoi Kobayashi — designer
+
+I work shorter hours, so any new meetings with me should be between 10:00 and 16:00, outside lunch. I want to finish by 16:00.
+- The search screen design review with Sakura, Misaki, and me, 90 minutes, a must by the 14th.
+- The design handoff with Sakura, Sho, and me, one hour, a must by the 19th. I want to apply the review feedback first, so on or after Thursday the 15th please.
+- Between the review and the handoff, please make sure I have two consecutive hours alone for the fixes.
+- After the handoff, one block of three consecutive hours to draft the next screens, by the 23rd. This one is only if possible.
+- I'd be happy to have a 30-minute 1on1 with Misaki by the 23rd. Morning or afternoon is fine as long as it's within my hours.
+If possible I'd like Wednesdays to be days without new meetings. I want to focus on production.
+Please don't put new meetings on Tuesday afternoons. Existing ones like the team meeting are fine, but I use the rest of the time for production.
+Usually reviews are easier for me in the morning. In the afternoon I often have to leave before I can start on the fixes.
+
+## Daisuke Kato — QA
+
+I'm off all day on Friday the 16th. That's already on the calendar.
+I don't want to break the order in which testing starts, so please prioritize these three.
+- The test plan review for the search feature: Kenta, Sakura, and me, one hour, a must by the 20th.
+  Please hold it after both the search API design review and the design handoff are done. I don't need to attend those two myself.
+- Please hold the release go/no-go check with Misaki, Kenta, Jun, and me after this test plan review.
+- One block of three consecutive hours alone for regression testing, definitely once between the plan review and the 23rd. If there is room, I'd like another block of the same length.
+Please keep it to at most two additional meetings per day. The stand-up and existing meetings don't count.
+If possible, reviews in the morning and testing in the afternoon.
+Wednesday the 21st from 15:30 to 16:30 is a dentist appointment. It isn't on the calendar yet, but please put neither new meetings nor work blocks there.
+It would help to have 30 minutes alone to read the materials before the test plan review. This one is optional.
+
+## Yu Yoshida — data / machine learning
+
+From me: the evaluation results, and the study session if there is room.
+- An evaluation metrics check with Kenta, Sakura, and me, one hour, a must by the 20th. Preferably after the search API design review.
+- Before that check, I definitely need one block of three consecutive hours alone to run the comparison experiments and read the results.
+- I'll join the client alignment meeting with Misaki, Kenta, and Sakura. I'd like to have finished the metrics check before that.
+- A 30-minute 1on1 with Misaki by the 23rd if possible. I want to talk a bit about how to approach the evaluation.
+- A one-hour study session on "evaluating and monitoring search" with Kenta, Sho, Jun, and me, in the second half of the week after next if possible. It's optional this time, so it's fine to drop it entirely if things are tight.
+Meetings in the afternoon if possible. First thing in the morning I often haven't finished looking at the experiment results.
+I'm off on the afternoon of Wednesday the 21st. That's on the calendar too.
+Separately, on Thursday the 15th from 9:30 to 10:00 I'm away for a meeting at my child's daycare. That one isn't registered.
+I'd feel better if the client preparation is done before the all-hands on the 22nd. Please prioritize it over the study session.
+
+## Jun Sasaki — SRE
+
+I work 9:00 to 18:00. Please make sure new appointments end by 18:00.
+- I definitely want two consecutive hours alone to sort through the logs of the last incident, early next week, by the 14th at the latest.
+- After that investigation, a one-hour postmortem with Kenta, Sho, and me, a must by the 20th. If possible I'd like to finish it within next week.
+- I'll join the search API design review with Kenta, Sakura, and Sho. That's the one needed by the 15th, right? I'll check the timeouts and what to monitor.
+- I'll also join the release go/no-go check with Misaki, Kenta, and Daisuke. I'd like to have finished the postmortem before that.
+- I definitely want one block of three consecutive hours alone for monitoring improvements next week and one the week after.
+- If Yu's study session is optional, I'd like to join. Please prioritize the monitoring work.
+Please don't put new meetings on Thursday afternoons. I want to do operations work between existing appointments. Focus work blocks are fine.
+Every Monday from 9:00 to 10:00 I'm away on neighborhood disaster-prevention duty. It's not on the calendar yet.
+If there are meetings, I'd prefer the morning. It seems many people want afternoons, but for long reviews, morning if possible.
