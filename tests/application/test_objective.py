@@ -1,7 +1,14 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from intent_to_schedule.application.objective import evaluate_constraints
+from intent_to_schedule.application.objective import (
+    ConstraintEvaluation,
+    HardConstraintEvaluation,
+    ScheduleSummary,
+    SoftConstraintEvaluation,
+    evaluate_constraints,
+    summarize_schedule,
+)
 from intent_to_schedule.application.policy import DEFAULT_POLICY
 from intent_to_schedule.domain.calendar import (
     Availability,
@@ -10,7 +17,11 @@ from intent_to_schedule.domain.calendar import (
     TimeInterval,
 )
 from intent_to_schedule.domain.condition import TimeBoundCondition, TimeBoundRelation
-from intent_to_schedule.domain.constraint import ConstraintId, SoftConstraint
+from intent_to_schedule.domain.constraint import (
+    ConstraintId,
+    HardConstraint,
+    SoftConstraint,
+)
 from intent_to_schedule.domain.measure import Boundary
 from intent_to_schedule.domain.person import Person, PersonId
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -50,3 +61,54 @@ def test_saved_duration_is_used_after_current_task_edits() -> None:
     assert (
         evaluate_constraints(value, previous, DEFAULT_POLICY)[0].violation.amount == 1.0
     )
+
+
+def test_hard_evaluations_have_no_cost_and_do_not_change_soft_totals() -> None:
+    """Separate hard evaluations from costed soft evaluations."""
+    item: Task = Task(
+        TaskId("task"), "task", HOUR, frozenset({PERSON}), Importance.LOW, True
+    )
+    previous: Schedule = Schedule(
+        (
+            ScheduledTask(
+                item.id, item.name, START, START + HOUR, item.participant_ids
+            ),
+        ),
+        (),
+    )
+    late: TimeBoundCondition = TimeBoundCondition(
+        frozenset({item.id}), Boundary.END, TimeBoundRelation.AT_OR_BEFORE, START
+    )
+    early: TimeBoundCondition = TimeBoundCondition(
+        frozenset({item.id}),
+        Boundary.END,
+        TimeBoundRelation.AT_OR_BEFORE,
+        START + 2 * HOUR,
+    )
+    grid: TimeGrid = TimeGrid(TimeInterval(START, START + 4 * HOUR), HOUR)
+    value: SchedulingProblem = SchedulingProblem(
+        Calendar(grid, (Availability(PERSON, (grid.horizon,)),)),
+        (Person(PERSON, "Person"),),
+        (item,),
+        (),
+        (
+            HardConstraint(ConstraintId("hard"), late),
+            SoftConstraint(ConstraintId("soft"), late, Strength.STRONG),
+            SoftConstraint(ConstraintId("satisfied"), early, Strength.NORMAL),
+        ),
+    )
+    hard: ConstraintEvaluation
+    soft: ConstraintEvaluation
+    satisfied: ConstraintEvaluation
+    hard, soft, satisfied = evaluate_constraints(value, previous, DEFAULT_POLICY)
+    assert isinstance(hard, HardConstraintEvaluation)
+    assert hard.violation.amount == 1.0
+    assert not hasattr(hard, "cost") and not hasattr(hard, "coefficient")
+    assert isinstance(soft, SoftConstraintEvaluation)
+    assert soft.coefficient == DEFAULT_POLICY.weight(Strength.STRONG)
+    assert soft.cost == DEFAULT_POLICY.weight(Strength.STRONG)
+    assert isinstance(satisfied, SoftConstraintEvaluation)
+    assert satisfied.cost == 0.0
+    summary: ScheduleSummary = summarize_schedule(value, previous, DEFAULT_POLICY)
+    assert summary.soft_constraints_cost == DEFAULT_POLICY.weight(Strength.STRONG)
+    assert summary.violated_soft_constraints == 1

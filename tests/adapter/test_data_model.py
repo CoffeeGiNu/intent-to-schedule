@@ -1214,12 +1214,15 @@ def test_evaluation_amounts_units_costs_breakdowns_and_ordering() -> None:
     by_identifier: dict[str, dict[str, object]] = {
         str(item["constraint_id"]): item for item in items
     }
-    assert by_identifier["hard"]["cost"] is None
+    assert "cost" not in by_identifier["hard"]
+    assert "cost" not in by_identifier["satisfied"]
     assert by_identifier["hard"]["requirement"] == {"kind": "hard"}
-    hard_breakdown: list[dict[str, object]] = cast(
-        list[dict[str, object]], by_identifier["hard"]["breakdown"]
-    )
-    assert all(part["cost"] is None for part in hard_breakdown)
+    assert by_identifier["hard"]["breakdown"] == [
+        {"task_id": "dropped", "violation": {"amount": 0.0, "unit": "hours"}},
+        {"task_id": "first", "violation": {"amount": 1.5, "unit": "hours"}},
+        {"task_id": "fixed", "violation": {"amount": 2 / 3, "unit": "hours"}},
+        {"task_id": "missing", "violation": {"amount": 0.0, "unit": "hours"}},
+    ]
     assert by_identifier["weak"]["label"] == "Deadline"
     assert by_identifier["weak"]["violation"] == {"amount": 13 / 6, "unit": "hours"}
     assert by_identifier["weak"]["cost"] == 13 / 6

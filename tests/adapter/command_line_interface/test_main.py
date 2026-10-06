@@ -1955,10 +1955,7 @@ def test_infeasible_solve_reports_conflicts_and_keeps_previous(
                     "label": "Entered request",
                     "requirement": {"kind": "hard"},
                     "violation": hour,
-                    "cost": None,
-                    "breakdown": [
-                        {"task_id": "review", "violation": hour, "cost": None}
-                    ],
+                    "breakdown": [{"task_id": "review", "violation": hour}],
                     "related_constraint_ids": ["early"],
                 }
             ],
