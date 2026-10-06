@@ -16,7 +16,6 @@ from intent_to_schedule.application.converse import (
     STEP_LIMIT,
     Conversation,
     Exhausted,
-    Response,
 )
 from intent_to_schedule.application.objective import ScheduleSummary
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
@@ -59,9 +58,55 @@ from intent_to_schedule.domain.strength import Strength
 from intent_to_schedule.domain.task import Importance, Task, TaskId
 
 
-class FakeStepTranslator:
-    """Return scripted steps and capture their context."""
+class MemoryStateStore:
+    def __init__(
+        self,
+        problem: SchedulingProblem,
+        previous: Schedule | None = None,
+        events: list[str] | None = None,
+    ) -> None:
+        self.problem: SchedulingProblem = problem
+        self.previous: Schedule | None = previous
+        self.events: list[str] | None = events
+        self.saved_problems: list[SchedulingProblem] = []
+        self.saved_previous: list[Schedule | None] = []
 
+    def load_problem(self) -> SchedulingProblem:
+        return self.problem
+
+    def save_problem(self, problem: SchedulingProblem) -> None:
+        self.problem = problem
+        self.saved_problems.append(problem)
+        if self.events is not None:
+            self.events.append("save_problem")
+
+    def load_previous(self) -> Schedule | None:
+        return self.previous
+
+    def save_previous(self, previous: Schedule | None) -> None:
+        self.previous = previous
+        self.saved_previous.append(previous)
+
+
+class MemoryDialogueStore:
+    def __init__(
+        self, dialogue: tuple[Utterance, ...] = (), events: list[str] | None = None
+    ) -> None:
+        self.dialogue: tuple[Utterance, ...] = dialogue
+        self.events: list[str] | None = events
+        self.saved: list[tuple[Utterance, ...]] = []
+
+    def load(self) -> tuple[Utterance, ...]:
+        return self.dialogue
+
+    def save(self, dialogue: Sequence[Utterance]) -> None:
+        self.dialogue = tuple(dialogue)
+        self.saved.append(self.dialogue)
+        if self.events is not None:
+            self.events.append("save_dialogue")
+
+
+class FakeStepTranslator:
     def __init__(
         self,
         steps: Sequence[Step],
@@ -90,8 +135,6 @@ class FakeStepTranslator:
 
 
 class FakeSolver:
-    """Return a chosen solution and capture its inputs."""
-
     def __init__(self, result: Solution) -> None:
         self.result: Solution = result
         self.calls: list[tuple[SchedulingProblem, Schedule | None, bool]] = []
@@ -105,24 +148,6 @@ class FakeSolver:
     ) -> Solution:
         self.calls.append((problem, previous, stability))
         return self.result
-
-
-def ignore_save(problem: SchedulingProblem) -> None:
-    """Ignore a saved problem."""
-
-
-def test_conversation_queries_use_scheduling_policy() -> None:
-    """Answer conversation queries with the scheduling service policy."""
-    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
-    step: QueryStep = QueryStep(ObjectivePolicyQuery())
-    translator: FakeStepTranslator = FakeStepTranslator((step, MessageStep("done")))
-    service: Scheduling = Scheduling(
-        FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf(), policy
-    )
-    Conversation(translator, service).respond((), make_problem(), None, ignore_save)
-    assert translator.calls[1][2] == (
-        QueryRecord(step, Answered(ObjectivePolicyAnswer(policy))),
-    )
 
 
 def make_problem() -> SchedulingProblem:
@@ -155,20 +180,82 @@ def make_task() -> Task:
     )
 
 
-def test_message_ends_without_scheduling() -> None:
-    """Return the user's message without invoking the solver."""
+def make_conversation(
+    translator: FakeStepTranslator,
+    state_store: MemoryStateStore | None = None,
+    dialogue_store: MemoryDialogueStore | None = None,
+    solver: FakeSolver | None = None,
+) -> tuple[Conversation, MemoryStateStore, MemoryDialogueStore, FakeSolver]:
     problem: SchedulingProblem = make_problem()
+    states: MemoryStateStore = state_store or MemoryStateStore(problem)
+    dialogues: MemoryDialogueStore = dialogue_store or MemoryDialogueStore()
+    scheduling_solver: FakeSolver = solver or FakeSolver(
+        NoFeasibleSolution(Conflicts((), ()))
+    )
+    service: Scheduling = Scheduling(scheduling_solver, AllOf(), states)
+    return Conversation(translator, service, dialogues), states, dialogues, scheduling_solver
+
+
+def test_conversation_queries_use_scheduling_policy() -> None:
+    """Answer conversation queries with the scheduling service policy."""
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
+    step: QueryStep = QueryStep(ObjectivePolicyQuery())
+    translator: FakeStepTranslator = FakeStepTranslator((step, MessageStep("done")))
+    problem: SchedulingProblem = make_problem()
+    states: MemoryStateStore = MemoryStateStore(problem)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
+    solver: FakeSolver = FakeSolver(NoFeasibleSolution(Conflicts((), ())))
+    service: Scheduling = Scheduling(solver, AllOf(), states, policy)
+
+    Conversation(translator, service, dialogues).respond("question")
+
+    assert translator.calls[1][2] == (
+        QueryRecord(step, Answered(ObjectivePolicyAnswer(policy))),
+    )
+
+
+def test_each_step_gets_summary_from_current_stored_problem() -> None:
+    """Refresh the summary after an accepted apply is stored."""
+    problem: SchedulingProblem = make_problem()
+    states: MemoryStateStore = MemoryStateStore(problem)
+    task: Task = make_task()
+    query: QueryStep = QueryStep(SummaryQuery())
+    translator: FakeStepTranslator = FakeStepTranslator(
+        (ApplyStep((AddTask(task),)), query, MessageStep("done"))
+    )
+    conversation: Conversation = make_conversation(
+        translator, state_store=states
+    )[0]
+
+    conversation.respond("add a task")
+
+    assert [call[1].tasks for call in translator.calls] == [0, 1, 1]
+    assert translator.calls[2][2][1] == QueryRecord(
+        query, Answered(Summary(problem.calendar.grid, 0, 1, 0, 0, False))
+    )
+
+
+def test_message_ends_without_scheduling() -> None:
+    """End the turn on a message without invoking the solver."""
+    problem: SchedulingProblem = make_problem()
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     translator: FakeStepTranslator = FakeStepTranslator(
         (MessageStep("When works for you?"), ScheduleStep(True))
     )
     solver: FakeSolver = FakeSolver(NoFeasibleSolution(Conflicts((), ())))
+    states: MemoryStateStore = MemoryStateStore(problem)
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues, solver
+    )[0]
+
+    outcome: MessageStep | Solution | Exhausted = conversation.respond(
+        "Can we talk about the schedule?"
+    )
+
     dialogue: tuple[Utterance, ...] = (
         Utterance(Speaker.USER, "Can we talk about the schedule?"),
     )
-    response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        dialogue, problem, None, ignore_save
-    )
-    assert response == Response(problem, MessageStep("When works for you?"))
+    assert outcome == MessageStep("When works for you?")
     assert translator.calls == [
         (dialogue, Summary(problem.calendar.grid, 0, 0, 0, 0, False), ())
     ]
@@ -178,79 +265,88 @@ def test_message_ends_without_scheduling() -> None:
 @pytest.mark.parametrize("saved", [True, False])
 @pytest.mark.parametrize("stability", [True, False])
 @pytest.mark.parametrize(
-    ("result", "outcome"),
+    "result",
     [
-        (
-            OptimalSolution(
-                Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
-            ),
-            OptimalSolution(
-                Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
-            ),
+        OptimalSolution(
+            Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
         ),
-        (
-            FeasibleSolution(
-                Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
-            ),
-            FeasibleSolution(
-                Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
-            ),
+        FeasibleSolution(
+            Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
         ),
-        (
-            NoFeasibleSolution(Conflicts((), ())),
-            NoFeasibleSolution(Conflicts((), ())),
-        ),
-        (SolutionNotFound("time_limit"), SolutionNotFound("time_limit")),
+        NoFeasibleSolution(Conflicts((), ())),
+        SolutionNotFound("time_limit"),
     ],
 )
 def test_apply_then_schedule_uses_working_problem_and_stability(
-    saved: bool, stability: bool, result: Solution, outcome: Solution
+    saved: bool, stability: bool, result: Solution
 ) -> None:
-    """Pass successful edits, the saved schedule, and stability to scheduling."""
+    """Schedule the accepted edit with the stored previous schedule and stability."""
     problem: SchedulingProblem = make_problem()
     previous: Schedule | None = Schedule((), ()) if saved else None
+    states: MemoryStateStore = MemoryStateStore(problem, previous)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     task: Task = make_task()
-    step: ApplyStep = ApplyStep((AddTask(task),))
+    apply_step: ApplyStep = ApplyStep((AddTask(task),))
     translator: FakeStepTranslator = FakeStepTranslator(
-        (step, ScheduleStep(stability), MessageStep("unused"))
+        (apply_step, ScheduleStep(stability), MessageStep("unused"))
     )
     solver: FakeSolver = FakeSolver(result)
-    response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        (), problem, previous, ignore_save
-    )
-    assert response.problem.tasks == (task,)
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues, solver
+    )[0]
+
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("Add a task.")
+
+    assert states.problem.tasks == (task,)
     assert problem.tasks == ()
-    assert response.outcome == outcome
-    assert solver.calls == [(response.problem, previous, stability)]
+    assert outcome is result
+    assert solver.calls == [(states.problem, previous, stability)]
     assert [call[1] for call in translator.calls] == [
         Summary(problem.calendar.grid, 0, 0, 0, 0, saved),
         Summary(problem.calendar.grid, 0, 1, 0, 0, saved),
     ]
-    assert translator.calls[1][2] == (ApplyRecord(step, Executed(response.problem)),)
+    assert translator.calls[1][2] == (
+        ApplyRecord(apply_step, Executed(states.problem)),
+    )
 
 
 def test_rejected_batch_is_recorded_and_can_be_corrected() -> None:
-    """Continue after rejection without retaining partial batch edits."""
+    """Record a rejection, then accept a corrected batch on the stored problem."""
     problem: SchedulingProblem = make_problem()
+    states: MemoryStateStore = MemoryStateStore(problem)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     task: Task = make_task()
-    rejected: ApplyStep = ApplyStep((AddTask(task), RemoveTask(TaskId("missing"))))
-    corrected: ApplyStep = ApplyStep((AddTask(task),))
+    rejected_step: ApplyStep = ApplyStep(
+        (AddTask(task), RemoveTask(TaskId("missing")))
+    )
+    corrected_step: ApplyStep = ApplyStep((AddTask(task),))
     translator: FakeStepTranslator = FakeStepTranslator(
-        (rejected, corrected, ScheduleStep(True))
+        (rejected_step, corrected_step, ScheduleStep(True))
     )
-    solver: FakeSolver = FakeSolver(
-        OptimalSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0))
+    solution: OptimalSolution = OptimalSolution(
+        Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)
     )
-    response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        (), problem, None, ignore_save
+    solver: FakeSolver = FakeSolver(solution)
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues, solver
+    )[0]
+
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("Add a task.")
+
+    rejected_record: StepRecord = translator.calls[1][2][0]
+    assert isinstance(rejected_record, ApplyRecord)
+    assert isinstance(rejected_record.result, Rejected)
+    assert rejected_record.result.violations.items[0].message == (
+        "Task missing does not exist"
     )
-    record: StepRecord = translator.calls[1][2][0]
-    assert isinstance(record, ApplyRecord)
-    assert isinstance(record.result, Rejected)
-    assert record.result.violations.items[0].message == "Task missing does not exist"
+    assert states.saved_problems == [states.problem]
     assert translator.calls[1][1].tasks == 0
-    assert response.problem.tasks == (task,)
-    assert len(translator.calls[2][2]) == 2
+    assert translator.calls[2][2] == (
+        rejected_record,
+        ApplyRecord(corrected_step, Executed(states.problem)),
+    )
+    assert outcome is solution
+    assert states.problem.tasks == (task,)
 
 
 @pytest.mark.parametrize(
@@ -273,127 +369,193 @@ def test_rejected_batch_is_recorded_and_can_be_corrected() -> None:
 def test_query_uses_working_problem_and_records_result(
     query: SchedulingQuery, result: AnswerResult
 ) -> None:
-    """Feed query answers and rejections into the next step."""
+    """Answer or reject a query after an accepted apply is stored."""
     problem: SchedulingProblem = make_problem()
+    previous: Schedule = Schedule((), ())
+    states: MemoryStateStore = MemoryStateStore(problem, previous)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     query_step: QueryStep = QueryStep(query)
     translator: FakeStepTranslator = FakeStepTranslator(
         (ApplyStep((AddTask(make_task()),)), query_step, MessageStep("done"))
     )
-    saved: list[SchedulingProblem] = []
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues
+    )[0]
 
-    def save(problem: SchedulingProblem) -> None:
-        saved.append(problem)
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("Add a task.")
 
-    response: Response = Conversation(
-        translator,
-        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
-    ).respond((), problem, Schedule((), ()), save)
-    assert response.problem is saved[0]
-    assert response.problem.tasks == (make_task(),)
+    assert outcome == MessageStep("done")
+    assert states.saved_problems == [states.problem]
+    assert states.problem.tasks == (make_task(),)
+    assert translator.calls[2][1].tasks == 1
     assert translator.calls[2][2][1] == QueryRecord(query_step, result)
 
 
-def test_apply_then_message_saves_before_the_next_translation() -> None:
+def test_accepted_apply_is_saved_before_the_next_translation() -> None:
     """Save an accepted apply before translating the next step."""
-    problem: SchedulingProblem = make_problem()
-    task: Task = make_task()
     events: list[str] = []
-    translator: FakeStepTranslator = FakeStepTranslator(
-        (ApplyStep((AddTask(task),)), MessageStep("done")), events
-    )
-    saved: list[SchedulingProblem] = []
-
-    def save(updated: SchedulingProblem) -> None:
-        events.append("save")
-        saved.append(updated)
-
-    response: Response = Conversation(
-        translator,
-        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
-    ).respond((), problem, None, save)
-
-    assert response.problem is saved[0]
-    assert response.problem.tasks == (task,)
-    assert events == ["translate", "save", "translate"]
-    assert len(saved) == 1
-
-
-def test_apply_then_translator_error_saves_before_error() -> None:
-    """Keep an accepted apply saved when a later translation raises."""
     problem: SchedulingProblem = make_problem()
-    task: Task = make_task()
-    events: list[str] = []
+    states: MemoryStateStore = MemoryStateStore(problem, events=events)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore(events=events)
     translator: FakeStepTranslator = FakeStepTranslator(
-        (ApplyStep((AddTask(task),)),), events, raise_on_call=2
+        (ApplyStep((AddTask(make_task()),)), MessageStep("done")), events
     )
-    saved: list[SchedulingProblem] = []
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues
+    )[0]
 
-    def save(updated: SchedulingProblem) -> None:
-        events.append("save")
-        saved.append(updated)
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("add a task")
 
-    conversation: Conversation = Conversation(
-        translator,
-        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
+    assert outcome == MessageStep("done")
+    assert events == ["translate", "save_problem", "translate", "save_dialogue"]
+    assert len(states.saved_problems) == 1
+
+
+def test_translator_error_keeps_accepted_apply_but_does_not_save_dialogue() -> None:
+    """Keep earlier accepted applies when translation raises without saving dialogue."""
+    events: list[str] = []
+    states: MemoryStateStore = MemoryStateStore(make_problem(), events=events)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore(events=events)
+    translator: FakeStepTranslator = FakeStepTranslator(
+        (ApplyStep((AddTask(make_task()),)),), events, raise_on_call=2
     )
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues
+    )[0]
 
     with pytest.raises(RuntimeError, match="translator failed"):
-        conversation.respond((), problem, None, save)
+        conversation.respond("add a task")
 
-    assert len(saved) == 1
-    assert saved[0].tasks == (task,)
-    assert events == ["translate", "save", "translate"]
+    assert len(states.saved_problems) == 1
+    assert states.problem.tasks == (make_task(),)
+    assert dialogues.saved == []
+    assert events == ["translate", "save_problem", "translate"]
 
 
 def test_rejected_apply_then_message_does_not_save() -> None:
-    """Leave the working problem unchanged after a rejected apply."""
+    """Leave the stored problem unchanged after a rejected apply."""
     problem: SchedulingProblem = make_problem()
+    states: MemoryStateStore = MemoryStateStore(problem)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     translator: FakeStepTranslator = FakeStepTranslator(
         (
             ApplyStep((RemoveTask(TaskId("missing")),)),
             MessageStep("Please clarify."),
         )
     )
-    saved: list[SchedulingProblem] = []
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues
+    )[0]
 
-    def save(updated: SchedulingProblem) -> None:
-        saved.append(updated)
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("Clarify.")
 
-    response: Response = Conversation(
-        translator,
-        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
-    ).respond((), problem, None, save)
-
-    assert response.problem is problem
-    assert saved == []
+    assert outcome == MessageStep("Please clarify.")
+    assert states.problem is problem
+    assert states.saved_problems == []
 
 
 def test_step_limit_returns_exhausted_after_repeated_rejections() -> None:
-    """Stop at the step limit without raising for repeated rejections."""
-    problem: SchedulingProblem = make_problem()
+    """Stop after STEP_LIMIT rejected steps without calling the solver."""
+    states: MemoryStateStore = MemoryStateStore(make_problem())
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     translator: FakeStepTranslator = FakeStepTranslator(
-        (ApplyStep((RemoveTask(TaskId("missing")),)),)
-        * STEP_LIMIT
+        (ApplyStep((RemoveTask(TaskId("missing")),)),) * STEP_LIMIT
         + (ScheduleStep(True),)
     )
     solver: FakeSolver = FakeSolver(NoFeasibleSolution(Conflicts((), ())))
-    response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        (), problem, None, ignore_save
-    )
-    assert response == Response(problem, Exhausted())
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues, solver
+    )[0]
+
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("Keep trying.")
+
+    assert outcome == Exhausted()
     assert len(translator.calls) == STEP_LIMIT
     assert len(translator.calls[-1][2]) == STEP_LIMIT - 1
     assert solver.calls == []
 
 
 def test_terminal_step_at_limit_is_honored() -> None:
-    """Allow the final permitted step to end the turn."""
+    """Honor a message returned on the final permitted translation step."""
+    states: MemoryStateStore = MemoryStateStore(make_problem())
+    dialogues: MemoryDialogueStore = MemoryDialogueStore()
     translator: FakeStepTranslator = FakeStepTranslator(
         (ApplyStep(()),) * (STEP_LIMIT - 1) + (MessageStep("done"),)
     )
-    response: Response = Conversation(
-        translator,
-        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
-    ).respond((), make_problem(), None, ignore_save)
-    assert response.outcome == MessageStep("done")
+    solver: FakeSolver = FakeSolver(NoFeasibleSolution(Conflicts((), ())))
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues, solver
+    )[0]
+
+    outcome: MessageStep | Solution | Exhausted = conversation.respond("Continue.")
+
+    assert outcome == MessageStep("done")
     assert len(translator.calls) == STEP_LIMIT
+    assert len(translator.calls[-1][2]) == STEP_LIMIT - 1
+    assert solver.calls == []
+
+
+@pytest.mark.parametrize(
+    ("steps", "solution", "assistant_text", "expected"),
+    [
+        ((MessageStep("Hello."),), NoFeasibleSolution(Conflicts((), ())), "Hello.", MessageStep("Hello.")),
+        (
+            (ScheduleStep(True),),
+            OptimalSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+            "Scheduled.",
+            OptimalSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+        ),
+        (
+            (ScheduleStep(False),),
+            FeasibleSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+            "Scheduled.",
+            FeasibleSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0)),
+        ),
+        (
+            (ScheduleStep(True),),
+            NoFeasibleSolution(Conflicts((), ())),
+            "No feasible solution.",
+            NoFeasibleSolution(Conflicts((), ())),
+        ),
+        (
+            (ScheduleStep(True),),
+            SolutionNotFound("time_limit"),
+            "Solution not found.",
+            SolutionNotFound("time_limit"),
+        ),
+        (
+            (ApplyStep((RemoveTask(TaskId("missing")),)),) * STEP_LIMIT,
+            NoFeasibleSolution(Conflicts((), ())),
+            "Step limit reached.",
+            Exhausted(),
+        ),
+    ],
+)
+def test_dialogue_saves_user_and_assistant_for_each_outcome(
+    steps: tuple[Step, ...],
+    solution: Solution,
+    assistant_text: str,
+    expected: object,
+) -> None:
+    """Save both turn utterances after every completed outcome."""
+    old: tuple[Utterance, ...] = (Utterance(Speaker.ASSISTANT, "Earlier."),)
+    dialogues: MemoryDialogueStore = MemoryDialogueStore(old)
+    translator: FakeStepTranslator = FakeStepTranslator(steps)
+    states: MemoryStateStore = MemoryStateStore(make_problem())
+    solver: FakeSolver = FakeSolver(solution)
+    conversation: Conversation = make_conversation(
+        translator, states, dialogues, solver
+    )[0]
+
+    outcome: MessageStep | Solution | Exhausted = conversation.respond(
+        "Latest request."
+    )
+
+    assert outcome == expected
+    assert dialogues.saved == [
+        (
+            *old,
+            Utterance(Speaker.USER, "Latest request."),
+            Utterance(Speaker.ASSISTANT, assistant_text),
+        )
+    ]

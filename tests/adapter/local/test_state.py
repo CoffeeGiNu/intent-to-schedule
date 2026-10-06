@@ -6,18 +6,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from intent_to_schedule.adapter.command_line_interface.state import (
-    CalendarInput,
+from intent_to_schedule.adapter.local.state import (
     ScheduleState,
     State,
-    load_state,
-    save_state,
     to_problem,
     to_problem_state,
     to_schedule,
     to_schedule_state,
 )
-from intent_to_schedule.adapter.data_model import DataModel
+from intent_to_schedule.adapter.local.store import load_state, save_state
+from intent_to_schedule.adapter.data_model import CalendarInputData, DataModel
 from intent_to_schedule.domain.calendar import Calendar, TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import (
     Condition,
@@ -108,7 +106,7 @@ def test_state_round_trip_every_condition(tmp_path: Path) -> None:
     assert '"date_range": "horizon"' in stored
 
 
-@pytest.mark.parametrize("model", [CalendarInput, ScheduleState])
+@pytest.mark.parametrize("model", [CalendarInputData, ScheduleState])
 def test_state_json_datetimes_require_utc_offsets(model: type[DataModel]) -> None:
     """Reject offset-free datetimes in calendar and schedule state."""
     data: dict[str, object] = (
@@ -119,7 +117,7 @@ def test_state_json_datetimes_require_utc_offsets(model: type[DataModel]) -> Non
             "people": [],
             "fixed_tasks": [],
         }
-        if model is CalendarInput
+        if model is CalendarInputData
         else {
             "items": [
                 {

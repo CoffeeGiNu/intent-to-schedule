@@ -22,6 +22,8 @@ from intent_to_schedule.application.query import (
     EvaluationQuery,
     ObjectivePolicyAnswer,
     ObjectivePolicyQuery,
+    Summary,
+    summarize,
 )
 from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import (
@@ -105,6 +107,30 @@ class Validator:
         )
 
 
+class MemoryStore:
+    def __init__(
+        self, problem: SchedulingProblem, previous: Schedule | None = None
+    ) -> None:
+        self.problem: SchedulingProblem = problem
+        self.previous: Schedule | None = previous
+        self.saved_problems: list[SchedulingProblem] = []
+        self.saved_previous: list[Schedule | None] = []
+
+    def load_problem(self) -> SchedulingProblem:
+        return self.problem
+
+    def save_problem(self, problem: SchedulingProblem) -> None:
+        self.problem = problem
+        self.saved_problems.append(problem)
+
+    def load_previous(self) -> Schedule | None:
+        return self.previous
+
+    def save_previous(self, previous: Schedule | None) -> None:
+        self.previous = previous
+        self.saved_previous.append(previous)
+
+
 @pytest.mark.parametrize("stability", [False, True])
 @pytest.mark.parametrize("saved", [False, True])
 @pytest.mark.parametrize(
@@ -138,15 +164,18 @@ def test_scheduling_passes_policy_previous_schedule_and_stability_to_solver(
         else None
     )
     original: SchedulingProblem = problem(first, second)
+    store: MemoryStore = MemoryStore(original, previous)
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
     solver: Solver = Solver(result)
-    assert Scheduling(solver, Validator(), policy).schedule(
-        original, previous, stability
-    ) is result
+    assert Scheduling(solver, Validator(), store, policy).schedule(stability) is result
     assert solver.problem is original
     assert solver.policy is policy
     assert solver.previous is previous
     assert solver.stability is stability
+    if isinstance(result, (OptimalSolution, FeasibleSolution)):
+        assert store.saved_previous == [result.schedule]
+    else:
+        assert store.saved_previous == []
 
 
 @pytest.mark.parametrize("solution_type", [OptimalSolution, FeasibleSolution])
@@ -160,42 +189,72 @@ def test_successful_solution_requires_summary(
 
 def test_scheduling_execute_returns_command_rejection() -> None:
     original: SchedulingProblem = problem()
+    store: MemoryStore = MemoryStore(original)
     validator: Validator = Validator()
-    scheduling: Scheduling = Scheduling(Solver(), validator)
+    scheduling: Scheduling = Scheduling(Solver(), validator, store)
 
     result: Executed | Rejected = scheduling.execute(
-        original, (RemoveTask(TaskId("missing")), AddTask(task("later")))
+        (RemoveTask(TaskId("missing")), AddTask(task("later")))
     )
 
     assert isinstance(result, Rejected)
     assert result.violations == Violations((Violation("Task missing does not exist"),))
     assert validator.problems == []
     assert original.tasks == ()
+    assert store.saved_problems == []
 
 
 def test_scheduling_execute_returns_merged_validator_rejection() -> None:
     original: SchedulingProblem = problem()
+    store: MemoryStore = MemoryStore(original)
     first: Validator = Validator("first")
     second: Validator = Validator("second")
-    scheduling: Scheduling = Scheduling(Solver(), AllOf(first, second))
+    scheduling: Scheduling = Scheduling(Solver(), AllOf(first, second), store)
 
-    result: Executed | Rejected = scheduling.execute(original, (AddTask(task("a")),))
+    result: Executed | Rejected = scheduling.execute((AddTask(task("a")),))
 
     assert isinstance(result, Rejected)
     assert result.violations == Violations((Violation("first"), Violation("second")))
     assert first.problems == second.problems
     assert first.problems[0].tasks == (task("a"),)
     assert original.tasks == ()
+    assert store.saved_problems == []
+
+
+def test_scheduling_execute_saves_accepted_problem() -> None:
+    original: SchedulingProblem = problem()
+    store: MemoryStore = MemoryStore(original)
+    scheduling: Scheduling = Scheduling(Solver(), Validator(), store)
+
+    result: Executed | Rejected = scheduling.execute((AddTask(task("a")),))
+
+    assert isinstance(result, Executed)
+    assert store.saved_problems == [result.problem]
+    assert store.problem is result.problem
 
 
 def test_scheduling_answers_with_its_objective_policy() -> None:
     """Return the scheduling service's exact objective policy."""
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
-    service: Scheduling = Scheduling(Solver(), AllOf(), policy)
-    result: AnswerResult = service.answer(ObjectivePolicyQuery(), problem(), None)
+    store: MemoryStore = MemoryStore(problem())
+    service: Scheduling = Scheduling(Solver(), AllOf(), store, policy)
+    result: AnswerResult = service.answer(ObjectivePolicyQuery())
     assert isinstance(result, Answered)
     assert isinstance(result.answer, ObjectivePolicyAnswer)
     assert result.answer.policy is policy
+
+
+def test_scheduling_summarizes_stored_problem_and_previous() -> None:
+    """Summarize the problem and previous schedule held by the store."""
+    item: Task = task("task")
+    value: SchedulingProblem = problem(item)
+    previous: Schedule = Schedule((), ())
+    store: MemoryStore = MemoryStore(value, previous)
+    service: Scheduling = Scheduling(Solver(), AllOf(), store)
+
+    result: Summary = service.summarize()
+
+    assert result == summarize(value, previous)
 
 
 def test_scheduling_evaluation_uses_its_objective_policy() -> None:
@@ -232,9 +291,10 @@ def test_scheduling_evaluation_uses_its_objective_policy() -> None:
         ),
         (),
     )
-    service: Scheduling = Scheduling(Solver(), AllOf(), policy)
+    store: MemoryStore = MemoryStore(value, previous)
+    service: Scheduling = Scheduling(Solver(), AllOf(), store, policy)
     query: EvaluationQuery = EvaluationQuery(False, None, None, 20)
-    result: AnswerResult = service.answer(query, value, previous)
+    result: AnswerResult = service.answer(query)
     assert isinstance(result, Answered)
     assert isinstance(result.answer, EvaluationAnswer)
     costs: dict[str, float] = {}
@@ -244,3 +304,5 @@ def test_scheduling_evaluation_uses_its_objective_policy() -> None:
         costs[evaluation.constraint.id.value] = evaluation.cost
     assert costs == {"bound": 7.0, "count": 21.0}
     assert result == query.answer(value, previous, policy)
+    assert store.saved_problems == []
+    assert store.saved_previous == []

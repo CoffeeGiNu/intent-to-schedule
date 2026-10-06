@@ -15,22 +15,27 @@ import pytest
 import intent_to_schedule.adapter.command_line_interface.main as main_module
 import intent_to_schedule.application.converse as converse
 from intent_to_schedule.adapter.command_line_interface.main import chat, main
-from intent_to_schedule.adapter.command_line_interface.state import (
-    CalendarInput,
+from intent_to_schedule.adapter.local.state import (
     ProblemState,
     State,
     UtteranceState,
-    load_state,
-    save_state,
     to_problem,
     to_problem_state,
     to_schedule,
     to_schedule_state,
 )
+from intent_to_schedule.adapter.local.store import (
+    LocalDialogueStore,
+    LocalStateStore,
+    load_state,
+    save_state,
+)
 from intent_to_schedule.adapter.data_model import (
+    CalendarInputData,
     ConstraintData,
     SoftRequirementData,
     TimeWindowConditionData,
+    convert_calendar_input,
 )
 from intent_to_schedule.adapter.mathopt.solve import MathOptSchedulingSolver
 from intent_to_schedule.application.command import AddTask
@@ -1101,18 +1106,12 @@ def test_apply_warns_only_for_the_constraint_the_batch_keeps(
 
 def query_state(tmp_path: Path) -> Path:
     """Create query state without applying commands or solving."""
-    calendar: CalendarInput = CalendarInput.model_validate(calendar_data())
+    calendar: CalendarInputData = CalendarInputData.model_validate(calendar_data())
     path: Path = tmp_path / "query-state.json"
     save_state(
         path,
         State(
-            problem=ProblemState(
-                calendar=calendar,
-                people=calendar.people,
-                tasks=(),
-                fixed_tasks=(),
-                constraints=(),
-            ),
+            problem=to_problem_state(convert_calendar_input(calendar)),
             previous=None,
             dialogue=(),
         ),
@@ -1367,8 +1366,11 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
     )
     solver.solve.return_value = schedule_result
     now: datetime | None = start - timedelta(days=2) if explicit_now else None
+    state_store: LocalStateStore = LocalStateStore(path)
+    dialogue_store: LocalDialogueStore = LocalDialogueStore(path)
+    service: Scheduling = Scheduling(solver, AllOf(), state_store)
     status: int = chat(
-        path, "new request", "demo-model", now, Scheduling(solver, AllOf())
+        "new request", "demo-model", now, service, dialogue_store
     )
     output: dict[str, object] = json.loads(capsys.readouterr().out)
     persisted: State = load_state(path)
@@ -1468,10 +1470,18 @@ def test_chat_saves_accepted_apply_before_later_translator_error(
     monkeypatch.setattr(main_module, "OpenAIStepTranslator", factory)
     client: MagicMock = MagicMock()
     monkeypatch.setattr(openai, "OpenAI", lambda: client)
-    service: Scheduling = Scheduling(MagicMock(), AllOf())
+    service: Scheduling = Scheduling(
+        MagicMock(), AllOf(), LocalStateStore(path)
+    )
 
     with pytest.raises(RuntimeError, match="translator failed"):
-        chat(path, "new request", "demo-model", None, service)
+        chat(
+            "new request",
+            "demo-model",
+            None,
+            service,
+            LocalDialogueStore(path),
+        )
 
     assert to_problem(load_state(path).problem).tasks == (added,)
 

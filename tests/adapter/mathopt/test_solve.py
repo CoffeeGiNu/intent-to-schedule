@@ -86,6 +86,24 @@ PEOPLE: frozenset[PersonId] = frozenset({PERSON})
 SOLVER: MathOptSchedulingSolver = MathOptSchedulingSolver()
 
 
+class InMemoryStore:
+    def __init__(self, problem: SchedulingProblem) -> None:
+        self.problem: SchedulingProblem = problem
+        self.previous: Schedule | None = None
+
+    def load_problem(self) -> SchedulingProblem:
+        return self.problem
+
+    def save_problem(self, problem: SchedulingProblem) -> None:
+        self.problem = problem
+
+    def load_previous(self) -> Schedule | None:
+        return self.previous
+
+    def save_previous(self, previous: Schedule | None) -> None:
+        self.previous = previous
+
+
 def task(
     name: str,
     *,
@@ -710,6 +728,7 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
     """Block all touched slots for present and future tasks."""
     review: Task = task("review", duration=HOUR, people=PEOPLE)
     original: SchedulingProblem = problem(review, end=START + 4 * HOUR)
+    store: InMemoryStore = InMemoryStore(original)
     scheduling: Scheduling = Scheduling(
         SOLVER,
         AllOf(
@@ -719,6 +738,7 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
             AlignedToSlots(),
             NonemptyTimeWindows(),
         ),
+        store,
     )
     fixed: FixedTask = FixedTask(
         TaskId("health-check"),
@@ -727,7 +747,7 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
         timedelta(minutes=duration),
         PEOPLE,
     )
-    added: Executed | Rejected = scheduling.execute(original, (AddTask(fixed),))
+    added: Executed | Rejected = scheduling.execute((AddTask(fixed),))
     assert isinstance(added, Executed)
     assert free_slots(added.problem, PERSON) == (
         True,
@@ -753,9 +773,7 @@ def test_added_fixed_task_blocks_available_starts_and_later_tasks(
     assert isinstance(first_solution, OptimalSolution)
     assert first_solution.schedule.scheduled[0].start in expected
     later: Task = replace(review, id=TaskId("later"))
-    with_later: Executed | Rejected = scheduling.execute(
-        added.problem, (AddTask(later),)
-    )
+    with_later: Executed | Rejected = scheduling.execute((AddTask(later),))
     assert isinstance(with_later, Executed)
     solution: Solution = SOLVER.solve(with_later.problem, DEFAULT_POLICY, None, True)
     assert isinstance(solution, OptimalSolution)
