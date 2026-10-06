@@ -114,8 +114,8 @@ def summarize_schedule(
     problem: SchedulingProblem,
     schedule: Schedule,
     policy: ObjectivePolicy,
-    previous: Schedule | None = None,
-    stability: bool = True,
+    previous: Schedule | None,
+    stability: bool,
 ) -> ScheduleSummary:
     """Compute objective costs and counts from a solved schedule."""
     evaluations: tuple[ConstraintEvaluation, ...] = evaluate_constraints(
