@@ -1253,7 +1253,7 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
     explicit_now: bool,
     stability: bool,
 ) -> None:
-    """Persist dialogue for every turn and problem changes only after scheduling."""
+    """Persist dialogue and accepted changes for every turn."""
     start: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
     horizon: TimeInterval = TimeInterval(start, start + timedelta(hours=3))
     existing: Task = Task(
@@ -1383,8 +1383,8 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
     assert factory.call_args.args[:2] == (client, "demo-model")
     assert factory.call_args.args[2]() == (now if explicit_now else start)
     assert translator.translate.call_args_list[1].args[1].tasks == 2
+    assert to_problem(persisted.problem).tasks == (existing, added)
     if outcome in {"message", "exhausted"}:
-        assert persisted.problem == state.problem
         assert persisted.previous == state.previous
         solver.solve.assert_not_called()
         if outcome == "message":
@@ -1396,7 +1396,6 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
             assert output == {"exhausted": True}
             assert persisted.dialogue[-1].text == "Step limit reached."
     else:
-        assert to_problem(persisted.problem).tasks == (existing, added)
         solver.solve.assert_called_once()
         if outcome == "no_feasible_solution":
             assert status == 2
@@ -1450,6 +1449,31 @@ def test_chat_persists_schedule_outcomes_and_uses_clock(
                 ],
             }
             assert persisted.dialogue[-1].text == "Scheduled."
+
+
+def test_chat_saves_accepted_apply_before_later_translator_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep an accepted apply saved when a later translation raises."""
+    path: Path = tmp_path / "state.json"
+    original: SchedulingProblem = problem()
+    added: Task = task("added")
+    save_problem(path, original)
+    translator: MagicMock = MagicMock()
+    translator.translate.side_effect = [
+        ApplyStep((AddTask(added),)),
+        RuntimeError("translator failed"),
+    ]
+    factory: MagicMock = MagicMock(return_value=translator)
+    monkeypatch.setattr(main_module, "OpenAIStepTranslator", factory)
+    client: MagicMock = MagicMock()
+    monkeypatch.setattr(openai, "OpenAI", lambda: client)
+    service: Scheduling = Scheduling(MagicMock(), AllOf())
+
+    with pytest.raises(RuntimeError, match="translator failed"):
+        chat(path, "new request", "demo-model", None, service)
+
+    assert to_problem(load_state(path).problem).tasks == (added,)
 
 
 @pytest.mark.parametrize(

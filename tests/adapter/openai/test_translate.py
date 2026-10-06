@@ -193,7 +193,8 @@ def test_translate_sends_summary_dialogue_and_step_results() -> None:
     prompt: str = messages[0]["content"]
     assert "query, apply, schedule, or message" in prompt
     assert "use schedule to create the schedule and end the turn" in prompt
-    assert "Changes are saved only when schedule is reached" in prompt
+    assert "An accepted apply is saved immediately" in prompt
+    assert "a rejected batch changes nothing" in prompt
     assert "Set schedule stability false" in prompt
     assert context["summary"] == {
         "kind": "summary",

@@ -62,8 +62,15 @@ from intent_to_schedule.domain.task import Importance, Task, TaskId
 class FakeStepTranslator:
     """Return scripted steps and capture their context."""
 
-    def __init__(self, steps: Sequence[Step]) -> None:
+    def __init__(
+        self,
+        steps: Sequence[Step],
+        events: list[str] | None = None,
+        raise_on_call: int | None = None,
+    ) -> None:
         self.steps: tuple[Step, ...] = tuple(steps)
+        self.events: list[str] | None = events
+        self.raise_on_call: int | None = raise_on_call
         self.calls: list[
             tuple[tuple[Utterance, ...], Summary, tuple[StepRecord, ...]]
         ] = []
@@ -75,6 +82,10 @@ class FakeStepTranslator:
         steps: Sequence[StepRecord],
     ) -> Step:
         self.calls.append((tuple(dialogue), summary, tuple(steps)))
+        if self.events is not None:
+            self.events.append("translate")
+        if self.raise_on_call == len(self.calls):
+            raise RuntimeError("translator failed")
         return self.steps[len(self.calls) - 1]
 
 
@@ -96,6 +107,10 @@ class FakeSolver:
         return self.result
 
 
+def ignore_save(problem: SchedulingProblem) -> None:
+    """Ignore a saved problem."""
+
+
 def test_conversation_queries_use_scheduling_policy() -> None:
     """Answer conversation queries with the scheduling service policy."""
     policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
@@ -104,7 +119,7 @@ def test_conversation_queries_use_scheduling_policy() -> None:
     service: Scheduling = Scheduling(
         FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf(), policy
     )
-    Conversation(translator, service).respond((), make_problem(), None)
+    Conversation(translator, service).respond((), make_problem(), None, ignore_save)
     assert translator.calls[1][2] == (
         QueryRecord(step, Answered(ObjectivePolicyAnswer(policy))),
     )
@@ -151,7 +166,7 @@ def test_message_ends_without_scheduling() -> None:
         Utterance(Speaker.USER, "Can we talk about the schedule?"),
     )
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        dialogue, problem, None
+        dialogue, problem, None, ignore_save
     )
     assert response == Response(problem, MessageStep("When works for you?"))
     assert translator.calls == [
@@ -201,7 +216,7 @@ def test_apply_then_schedule_uses_working_problem_and_stability(
     )
     solver: FakeSolver = FakeSolver(result)
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        (), problem, previous
+        (), problem, previous, ignore_save
     )
     assert response.problem.tasks == (task,)
     assert problem.tasks == ()
@@ -227,7 +242,7 @@ def test_rejected_batch_is_recorded_and_can_be_corrected() -> None:
         OptimalSolution(Schedule((), ()), ScheduleSummary(0.0, 0.0, 0.0, 0, 0, 0, 0))
     )
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        (), problem, None
+        (), problem, None, ignore_save
     )
     record: StepRecord = translator.calls[1][2][0]
     assert isinstance(record, ApplyRecord)
@@ -264,12 +279,93 @@ def test_query_uses_working_problem_and_records_result(
     translator: FakeStepTranslator = FakeStepTranslator(
         (ApplyStep((AddTask(make_task()),)), query_step, MessageStep("done"))
     )
+    saved: list[SchedulingProblem] = []
+
+    def save(problem: SchedulingProblem) -> None:
+        saved.append(problem)
+
     response: Response = Conversation(
         translator,
         Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
-    ).respond((), problem, Schedule((), ()))
-    assert response.problem is problem
+    ).respond((), problem, Schedule((), ()), save)
+    assert response.problem is saved[0]
+    assert response.problem.tasks == (make_task(),)
     assert translator.calls[2][2][1] == QueryRecord(query_step, result)
+
+
+def test_apply_then_message_saves_before_the_next_translation() -> None:
+    """Save an accepted apply before translating the next step."""
+    problem: SchedulingProblem = make_problem()
+    task: Task = make_task()
+    events: list[str] = []
+    translator: FakeStepTranslator = FakeStepTranslator(
+        (ApplyStep((AddTask(task),)), MessageStep("done")), events
+    )
+    saved: list[SchedulingProblem] = []
+
+    def save(updated: SchedulingProblem) -> None:
+        events.append("save")
+        saved.append(updated)
+
+    response: Response = Conversation(
+        translator,
+        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
+    ).respond((), problem, None, save)
+
+    assert response.problem is saved[0]
+    assert response.problem.tasks == (task,)
+    assert events == ["translate", "save", "translate"]
+    assert len(saved) == 1
+
+
+def test_apply_then_translator_error_saves_before_error() -> None:
+    """Keep an accepted apply saved when a later translation raises."""
+    problem: SchedulingProblem = make_problem()
+    task: Task = make_task()
+    events: list[str] = []
+    translator: FakeStepTranslator = FakeStepTranslator(
+        (ApplyStep((AddTask(task),)),), events, raise_on_call=2
+    )
+    saved: list[SchedulingProblem] = []
+
+    def save(updated: SchedulingProblem) -> None:
+        events.append("save")
+        saved.append(updated)
+
+    conversation: Conversation = Conversation(
+        translator,
+        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
+    )
+
+    with pytest.raises(RuntimeError, match="translator failed"):
+        conversation.respond((), problem, None, save)
+
+    assert len(saved) == 1
+    assert saved[0].tasks == (task,)
+    assert events == ["translate", "save", "translate"]
+
+
+def test_rejected_apply_then_message_does_not_save() -> None:
+    """Leave the working problem unchanged after a rejected apply."""
+    problem: SchedulingProblem = make_problem()
+    translator: FakeStepTranslator = FakeStepTranslator(
+        (
+            ApplyStep((RemoveTask(TaskId("missing")),)),
+            MessageStep("Please clarify."),
+        )
+    )
+    saved: list[SchedulingProblem] = []
+
+    def save(updated: SchedulingProblem) -> None:
+        saved.append(updated)
+
+    response: Response = Conversation(
+        translator,
+        Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
+    ).respond((), problem, None, save)
+
+    assert response.problem is problem
+    assert saved == []
 
 
 def test_step_limit_returns_exhausted_after_repeated_rejections() -> None:
@@ -282,7 +378,7 @@ def test_step_limit_returns_exhausted_after_repeated_rejections() -> None:
     )
     solver: FakeSolver = FakeSolver(NoFeasibleSolution(Conflicts((), ())))
     response: Response = Conversation(translator, Scheduling(solver, AllOf())).respond(
-        (), problem, None
+        (), problem, None, ignore_save
     )
     assert response == Response(problem, Exhausted())
     assert len(translator.calls) == STEP_LIMIT
@@ -298,6 +394,6 @@ def test_terminal_step_at_limit_is_honored() -> None:
     response: Response = Conversation(
         translator,
         Scheduling(FakeSolver(NoFeasibleSolution(Conflicts((), ()))), AllOf()),
-    ).respond((), make_problem(), None)
+    ).respond((), make_problem(), None, ignore_save)
     assert response.outcome == MessageStep("done")
     assert len(translator.calls) == STEP_LIMIT
