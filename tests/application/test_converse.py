@@ -84,7 +84,11 @@ class FakeSolver:
         self.calls: list[tuple[SchedulingProblem, Schedule | None, bool]] = []
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
+        self,
+        problem: SchedulingProblem,
+        policy: ObjectivePolicy,
+        previous: Schedule | None,
+        stability: bool,
     ) -> Schedule | Infeasible:
         self.calls.append((problem, previous, stability))
         return self.result

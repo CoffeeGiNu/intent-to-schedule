@@ -69,13 +69,19 @@ class Solver:
     ) -> None:
         self.result: Schedule | Infeasible = result
         self.problem: SchedulingProblem | None = None
+        self.policy: ObjectivePolicy | None = None
         self.previous: Schedule | None = None
         self.stability: bool | None = None
 
     def solve(
-        self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
+        self,
+        problem: SchedulingProblem,
+        policy: ObjectivePolicy,
+        previous: Schedule | None,
+        stability: bool,
     ) -> Schedule | Infeasible:
         self.problem = problem
+        self.policy = policy
         self.previous = previous
         self.stability = stability
         return self.result
@@ -95,7 +101,7 @@ class Validator:
 
 @pytest.mark.parametrize("stability", [False, True])
 @pytest.mark.parametrize("saved", [False, True])
-def test_scheduling_passes_previous_schedule_and_stability_to_solver(
+def test_scheduling_passes_policy_previous_schedule_and_stability_to_solver(
     saved: bool, stability: bool
 ) -> None:
     first: Task = task("a")
@@ -117,11 +123,13 @@ def test_scheduling_passes_previous_schedule_and_stability_to_solver(
         else None
     )
     original: SchedulingProblem = problem(first, second)
+    policy: ObjectivePolicy = replace(DEFAULT_POLICY, per_count=3.0)
     solver: Solver = Solver()
-    assert Scheduling(solver, Validator()).solve(
+    assert Scheduling(solver, Validator(), policy).solve(
         original, previous, stability
     ) == Infeasible(Conflicts((), ()))
     assert solver.problem is original
+    assert solver.policy is policy
     assert solver.previous is previous
     assert solver.stability is stability
 

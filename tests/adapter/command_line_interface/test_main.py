@@ -1474,7 +1474,9 @@ def test_solve_option_passes_previous_schedule(
     status, output = invoke(capsys, "--state", str(path), "solve", *arguments)
     assert status == 0
     assert output == {"summary": solve_summary(), "items": []}
-    solver.assert_called_once_with(to_problem(state.problem), previous, stability)
+    solver.assert_called_once_with(
+        to_problem(state.problem), DEFAULT_POLICY, previous, stability
+    )
     assert to_schedule(load_state(path).previous) == previous
 
 

@@ -132,7 +132,7 @@ def bound(
 
 def solve_details(value: SchedulingProblem) -> tuple[float, dict[TaskId, int | None]]:
     """Return the objective and selected start slots."""
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY, None, True)
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
     )
@@ -172,7 +172,7 @@ def appointment_problem(
 
 def assert_costs(value: SchedulingProblem, expected: float) -> Schedule:
     """Check that the solver objective equals the real-time violation cost."""
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY, None, True)
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
     )
@@ -268,7 +268,7 @@ def test_compiled_problem_has_only_movable_task_variables() -> None:
         FIXED.id, MOVABLE.id, TaskGapRelation.EXACTLY, timedelta(0)
     )
     compiled: CompiledProblem = compile_problem(
-        appointment_problem(condition), DEFAULT_POLICY
+        appointment_problem(condition), DEFAULT_POLICY, None, True
     )
     assert (
         set(compiled.starts)
@@ -351,7 +351,7 @@ def test_outside_fixed_gap_is_inactive_when_movable_drops(
         fixed_tasks=(fixed,),
         constraints=(HardConstraint(ConstraintId("gap"), condition),),
     )
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY, None, True)
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
     )
@@ -487,7 +487,7 @@ def test_hard_daily_limit_checks_date_without_slot_start(
         fixed_tasks=(fixed,),
         constraints=(HardConstraint(ConstraintId("daily"), condition),),
     )
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY, None, True)
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
     )
@@ -562,7 +562,7 @@ def test_hard_fixed_time_bound_uses_real_outside_boundary(
         fixed_tasks=(fixed,),
         constraints=(HardConstraint(ConstraintId("bound"), condition),),
     )
-    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY)
+    compiled: CompiledProblem = compile_problem(value, DEFAULT_POLICY, None, True)
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
     )
@@ -769,7 +769,7 @@ def test_available_starts_match_compiled_start_candidates() -> None:
     given: SchedulingProblem = problem(
         item, fixed_tasks=(meeting, late), end=START + 4 * HOUR
     )
-    compiled: CompiledProblem = compile_problem(given, DEFAULT_POLICY)
+    compiled: CompiledProblem = compile_problem(given, DEFAULT_POLICY, None, True)
     result: AnswerResult = AvailableStartsQuery(
         item.participant_ids, item.duration, None, 100
     ).answer(given, None)
@@ -959,7 +959,7 @@ def test_multi_task_hard_intrusion_matches_separate_infeasibility() -> None:
     constraints: tuple[Constraint, ...]
     for constraints in ((combined,), separate):
         compiled: CompiledProblem = compile_problem(
-            replace(base, constraints=constraints), DEFAULT_POLICY
+            replace(base, constraints=constraints), DEFAULT_POLICY, None, True
         )
         result: mathopt.SolveResult = mathopt.solve(
             compiled.model, mathopt.SolverType.GSCIP
@@ -997,7 +997,7 @@ def test_start_candidates_skip_slots_blocked_for_participants(
         participants,
     )
     compiled: CompiledProblem = compile_problem(
-        problem(item, fixed_tasks=(fixed,)), DEFAULT_POLICY
+        problem(item, fixed_tasks=(fixed,)), DEFAULT_POLICY, None, True
     )
     assert tuple(compiled.placements[item.id]) == expected
 
@@ -1055,7 +1055,7 @@ def test_previous_dropped_tasks_have_no_stability_cost() -> None:
     item: Task = task("movable", required=False)
     previous: Schedule = Schedule((), (DroppedTask(item.id, "Previous name"),))
     compiled: CompiledProblem = compile_problem(
-        problem(item, end=START + SLOT), DEFAULT_POLICY, previous
+        problem(item, end=START + SLOT), DEFAULT_POLICY, previous, True
     )
     result: mathopt.SolveResult = mathopt.solve(
         compiled.model, mathopt.SolverType.GSCIP
