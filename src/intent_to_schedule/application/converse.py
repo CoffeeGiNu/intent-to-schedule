@@ -4,14 +4,14 @@ from dataclasses import dataclass
 from intent_to_schedule.application.command import Executed, ExecuteResult
 from intent_to_schedule.application.query import AnswerResult, Summary, summarize
 from intent_to_schedule.application.schedule import Scheduling
-from intent_to_schedule.application.solve import SolveResult
+from intent_to_schedule.application.solve import Solution
 from intent_to_schedule.application.translate import (
     ApplyRecord,
     ApplyStep,
     MessageStep,
     QueryRecord,
     QueryStep,
-    SolveStep,
+    ScheduleStep,
     Step,
     StepRecord,
     StepTranslator,
@@ -33,9 +33,11 @@ class Response:
     """Updated problem and outcome of one conversation turn."""
 
     problem: SchedulingProblem
-    outcome: MessageStep | SolveResult | Exhausted
+    outcome: MessageStep | Solution | Exhausted
 
 
+# TODO: once the conversation outgrows a demo, move converse, translate, and the
+# OpenAI adapter into their own feature package.
 class Conversation:
     """Use case that handles one turn of a conversation."""
 
@@ -49,7 +51,7 @@ class Conversation:
         problem: SchedulingProblem,
         previous: Schedule | None,
     ) -> Response:
-        """Run translation steps until a reply, solve, or step limit."""
+        """Run translation steps until a reply, schedule, or step limit."""
         working: SchedulingProblem = problem
         steps: list[StepRecord] = []
         for _ in range(STEP_LIMIT):
@@ -65,10 +67,10 @@ class Conversation:
                 steps.append(ApplyRecord(step, result))
                 if isinstance(result, Executed):
                     working = result.problem
-            elif isinstance(step, SolveStep):
+            elif isinstance(step, ScheduleStep):
                 return Response(
                     working,
-                    self._scheduling.solve(working, previous, step.stability),
+                    self._scheduling.schedule(working, previous, step.stability),
                 )
             else:
                 return Response(problem, step)

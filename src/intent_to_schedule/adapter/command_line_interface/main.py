@@ -49,8 +49,11 @@ from intent_to_schedule.application.schedule import Scheduling
 from intent_to_schedule.application.solve import (
     Conflicts,
     ConflictsNotFound,
-    Infeasible,
-    Solved,
+    FeasibleSolution,
+    NoFeasibleSolution,
+    OptimalSolution,
+    Solution,
+    SolutionNotFound,
 )
 from intent_to_schedule.application.translate import MessageStep
 from intent_to_schedule.domain.consistency import (
@@ -107,19 +110,25 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "Hard violations come first, then highest soft costs. Without a saved solution, has_previous is false and items are empty. "
         "objective_policy returns the current drop_costs, weights, per_count, stability_drop_cost_ratio, hard_violation_weight, and required_drop_cost. "
         "agenda returns one person's working intervals, items, and free intervals for each date in date_range, \"horizon\" by default or start and end dates, including dates without working time. "
-        "Items are the person's fixed tasks and the tasks placed for the person in the last saved solution, with participants recorded at solve time; they may predate current changes. "
+        "Items are the person's fixed tasks and the tasks placed for the person in the last saved solution, with participants recorded when scheduled; they may predate current changes. "
         "Listing limit defaults to 20, with a maximum of 100; total counts matches before limiting and truncated indicates omitted items. Exits 1 on rejection.",
     ),
-    "solve": (
-        "Solve the problem and store the schedule",
-        "Prints {summary, items}. summary contains total_cost, costs (dropped_tasks, soft_constraints, stability), "
+    "schedule": (
+        "Schedule the problem and store the schedule",
+        "Prints one JSON document. status is optimal, feasible, no_feasible_solution, or solution_not_found. "
+        "Exit codes: 0, 2, and 3 for optimal or feasible, no_feasible_solution, and solution_not_found respectively. "
+        "Optimal and feasible results return {status, summary, items}; both replace the previous schedule. "
+        "A no_feasible_solution result returns {status, conflicts}; a solution_not_found result returns {status, reason}. "
+        "A reason is time_limit when a time limit stops scheduling, otherwise the MathOpt termination reason in lowercase, such as numerical_error. "
+        "Those two results leave the previous schedule unchanged. "
+        "summary contains total_cost, costs (dropped_tasks, soft_constraints, stability), "
         "and counts (scheduled_tasks, dropped_tasks, violated_soft_constraints, moved_tasks). "
         "The objective adds importance-based optional drop costs, weighted soft violations in hours (daily counts scaled by per_count), "
         "and stability costs from previous starts, weight * hours / (1 + weight * hours / limit) with the stability strength weight and limit = stability_drop_cost_ratio times the drop cost; "
         "they grow with every hour moved but stay below limit. Hard constraints require zero violation. "
         "Moved counts and stability costs are zero without a previous schedule or with --no-stability. "
         "Use query evaluation for constraint breakdowns and query objective_policy for current weights. "
-        "If infeasible, exits 2 and prints {infeasible: true, conflicts} from a relaxed solve that permits hard violations and required drops at costs above every soft cost. "
+        "If no feasible schedule exists, conflicts come from a relaxed solve that permits hard violations and required drops at costs above every soft cost. "
         "When the relaxed solve finds a schedule, conflicts.status is found; "
         "conflicts.constraints lists broken hard constraints in the evaluation item shape plus related_constraint_ids, the other hard constraints referencing the same tasks; "
         "conflicts.dropped_required_tasks lists task_id, name, and reason (no_free_start if participants share no free start, otherwise conflict). "
@@ -130,8 +139,14 @@ COMMANDS: dict[str, tuple[str, str]] = {
     ),
     "chat": (
         "Run a demonstration conversation turn with OpenAI",
-        "Uses query, apply, solve, or message steps, with a limit of 12. "
-        "Saves problem changes only on solve. "
+        "Uses query, apply, schedule, or message steps, with a limit of 12. "
+        "A schedule result has status optimal, feasible, no_feasible_solution, or solution_not_found. "
+        "Schedule results return {status, summary, items}, {status, conflicts}, or {status, reason}, according to the status. "
+        "A reason is time_limit when a time limit stops scheduling, otherwise the MathOpt termination reason in lowercase, such as numerical_error. "
+        "Exit codes: 0, 2, and 3 for optimal or feasible, no_feasible_solution, and solution_not_found respectively. "
+        "The assistant text is Scheduled. for optimal or feasible, No feasible solution. for no_feasible_solution, and Solution not found. for solution_not_found. "
+        "An optimal or feasible result saves the working problem, previous schedule, and dialogue. "
+        "A no_feasible_solution or solution_not_found result saves the working problem and dialogue and keeps the previous schedule. "
         "Reads OPENAI_API_KEY and OPENAI_BASE_URL from the environment.",
     ),
     "help": ("Print this message or the help of the given subcommand", ""),
@@ -143,7 +158,7 @@ def parser() -> JsonParser:
     root: JsonParser = JsonParser(
         prog="intent-to-schedule",
         usage="%(prog)s [OPTIONS] <COMMAND>",
-        description="Query a stored scheduling problem, apply commands, and solve it. Results are JSON; help is text.",
+        description="Query a stored scheduling problem, apply commands, and schedule it. Results are JSON; help is text.",
         add_help=False,
     )
     root._optionals.title = "Options"
@@ -207,11 +222,11 @@ def parser() -> JsonParser:
                     metavar="<FILE>",
                     help="Read a query from this JSON file [default: standard input]",
                 )
-            case "solve":
+            case "schedule":
                 command.add_argument(
                     "--no-stability",
                     action="store_true",
-                    help="Ignore the previous schedule and solve from scratch",
+                    help="Ignore the previous schedule and schedule from scratch",
                 )
             case "chat":
                 command.add_argument(
@@ -350,18 +365,19 @@ def query(path: Path, input_path: Path | None, service: Scheduling) -> int:
     return 0
 
 
-def schedule_output(result: Solved) -> dict[str, object]:
-    """Describe a solved schedule with its saved entries."""
+def schedule_output(result: OptimalSolution | FeasibleSolution) -> dict[str, object]:
+    """Describe a scheduled result."""
     form: ScheduleState | None = to_schedule_state(result.schedule)
     assert form is not None
     return {
+        "status": "optimal" if isinstance(result, OptimalSolution) else "feasible",
         "summary": schedule_summary_record(result.summary),
         **form.model_dump(mode="json"),
     }
 
 
-def infeasible_output(result: Infeasible) -> dict[str, object]:
-    """Describe an infeasible solve with its conflicts or why none were found."""
+def no_feasible_solution_output(result: NoFeasibleSolution) -> dict[str, object]:
+    """Describe a proven absence of a feasible schedule."""
     conflicts: dict[str, object]
     reason: str
     match result.conflicts:
@@ -369,20 +385,28 @@ def infeasible_output(result: Infeasible) -> dict[str, object]:
             conflicts = {"status": "found", **conflicts_record(result.conflicts)}
         case ConflictsNotFound(reason=reason):
             conflicts = {"status": "not_found", "reason": reason}
-    return {"infeasible": True, "conflicts": conflicts}
+    return {"status": "no_feasible_solution", "conflicts": conflicts}
 
 
-def solve(path: Path, service: Scheduling, stability: bool) -> int:
-    """Solve the current problem and persist the result."""
+def solution_not_found_output(result: SolutionNotFound) -> dict[str, object]:
+    """Describe a schedule search that ended without a result."""
+    return {"status": "solution_not_found", "reason": result.reason}
+
+
+def schedule(path: Path, service: Scheduling, stability: bool) -> int:
+    """Schedule the current problem and persist a found schedule."""
     state: State = load_state(path)
     problem: SchedulingProblem = to_problem(state.problem)
     previous: Schedule | None = to_schedule(state.previous)
-    result: Solved | Infeasible = service.solve(problem, previous, stability)
+    result: Solution = service.schedule(problem, previous, stability)
     match result:
-        case Infeasible():
-            emit(infeasible_output(result))
+        case NoFeasibleSolution():
+            emit(no_feasible_solution_output(result))
             return 2
-        case Solved(schedule=schedule):
+        case SolutionNotFound():
+            emit(solution_not_found_output(result))
+            return 3
+        case OptimalSolution(schedule=schedule) | FeasibleSolution(schedule=schedule):
             save_state(
                 path, state.model_copy(update={"previous": to_schedule_state(schedule)})
             )
@@ -426,12 +450,17 @@ def chat(
             assistant_text = "Step limit reached."
             output = {"exhausted": True}
             status = 1
-        case Infeasible():
+        case NoFeasibleSolution():
             updates["problem"] = to_problem_state(response.problem)
-            assistant_text = "Infeasible."
-            output = infeasible_output(response.outcome)
+            assistant_text = "No feasible solution."
+            output = no_feasible_solution_output(response.outcome)
             status = 2
-        case Solved(schedule=schedule):
+        case SolutionNotFound():
+            updates["problem"] = to_problem_state(response.problem)
+            assistant_text = "Solution not found."
+            output = solution_not_found_output(response.outcome)
+            status = 3
+        case OptimalSolution(schedule=schedule) | FeasibleSolution(schedule=schedule):
             updates["problem"] = to_problem_state(response.problem)
             updates["previous"] = to_schedule_state(schedule)
             assistant_text = "Scheduled."
@@ -481,8 +510,8 @@ def main(argv: list[str] | None = None) -> int:
                 return apply(path, args.file, service)
             case "query":
                 return query(path, args.file, service)
-            case "solve":
-                return solve(path, service, not args.no_stability)
+            case "schedule":
+                return schedule(path, service, not args.no_stability)
             case "chat":
                 return chat(path, args.text, args.model, args.now, service)
     except ConsistencyError as error:

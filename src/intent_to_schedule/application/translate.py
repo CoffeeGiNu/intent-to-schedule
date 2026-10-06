@@ -41,11 +41,11 @@ class ApplyStep:
 
 
 @dataclass(frozen=True)
-class SolveStep:
-    """Step that solves the problem and ends the turn."""
+class ScheduleStep:
+    """Step that schedules the problem and ends the turn."""
 
     stability: bool
-    """Whether to keep Tasks near their previous start."""
+    """Whether to keep tasks near their previous start."""
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class MessageStep:
     text: str
 
 
-type Step = QueryStep | ApplyStep | SolveStep | MessageStep
+type Step = QueryStep | ApplyStep | ScheduleStep | MessageStep
 """Next step chosen for an utterance."""
 
 

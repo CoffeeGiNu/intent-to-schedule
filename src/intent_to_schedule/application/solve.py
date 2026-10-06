@@ -16,8 +16,8 @@ from intent_to_schedule.domain.task import Task, TaskId
 
 
 @dataclass(frozen=True)
-class Solved:
-    """Result with a schedule and its objective summary."""
+class OptimalSolution:
+    """Optimal schedule and objective summary."""
 
     schedule: Schedule
     summary: ScheduleSummary
@@ -65,14 +65,31 @@ class ConflictsNotFound:
 
 
 @dataclass(frozen=True)
-class Infeasible:
-    """Result indicating that no feasible schedule exists."""
+class FeasibleSolution:
+    """Feasible schedule and objective summary."""
+
+    schedule: Schedule
+    summary: ScheduleSummary
+
+
+@dataclass(frozen=True)
+class NoFeasibleSolution:
+    """Proven absence of a feasible schedule."""
 
     conflicts: Conflicts | ConflictsNotFound
     """What a relaxed solve gave up, or why it found no schedule."""
 
 
-type SolveResult = Solved | Infeasible
+@dataclass(frozen=True)
+class SolutionNotFound:
+    """Solve stopped without a solution or infeasibility proof."""
+
+    reason: str
+
+
+type Solution = (
+    OptimalSolution | FeasibleSolution | NoFeasibleSolution | SolutionNotFound
+)
 """Result of solving a SchedulingProblem."""
 
 
@@ -85,7 +102,7 @@ class SchedulingSolver(Protocol):
         policy: ObjectivePolicy,
         previous: Schedule | None,
         stability: bool,
-    ) -> Schedule | Infeasible: ...
+    ) -> Solution: ...
 
 
 def find_conflicts(

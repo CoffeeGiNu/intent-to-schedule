@@ -185,7 +185,7 @@ class ScheduledTaskData(DataModel):
     start: AwareDatetime
     end: AwareDatetime
     participant_ids: tuple[PersonIdField, ...] = Field(
-        description="Participants recorded at solve time, unchanged after the task is edited or removed."
+        description="Participants recorded when scheduled, unchanged after the task is edited or removed."
     )
 
     @field_serializer("start", "end", when_used="json")
@@ -314,21 +314,21 @@ class TaskContentData(DataModel):
         description="Length as an ISO 8601 duration, such as PT1H. Must be positive and a multiple of the calendar slot."
     )
     participant_ids: tuple[PersonIdField, ...] = Field(
-        description="Existing people who take part. Solve places the task only where every participant is available and free of fixed tasks, and keeps each person's movable tasks from overlapping. With an empty array, availability does not limit the start."
+        description="Existing people who take part. Schedule places the task only where every participant is available and free of fixed tasks, and keeps each person's movable tasks from overlapping. With an empty array, availability does not limit the start."
     )
     importance: Literal["low", "medium", "high"] = Field(
-        description="Cost of dropping the task: low, medium, or high selects a value from drop_costs in the objective_policy query. Solve pays it when an optional task is unscheduled. It also bounds the stability cost, for required tasks too."
+        description="Cost of dropping the task: low, medium, or high selects a value from drop_costs in the objective_policy query. Schedule pays it when an optional task is unscheduled. It also bounds the stability cost, for required tasks too."
     )
     required: bool = Field(
-        description="true makes solve schedule the task; solve is infeasible if it cannot. false makes the task optional: solve may drop it and pay its importance-based drop cost."
+        description="true requires schedule to place the task; if no feasible schedule exists, the result is no_feasible_solution. false makes the task optional: schedule may drop it and pay its importance-based drop cost."
     )
     stability: Literal["weak", "normal", "strong"] = Field(
-        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task, and not with solve --no-stability."
+        description="Strength of the cost of moving the task from its previous start: weak, normal, or strong selects a value from weights in the objective_policy query. The cost grows with the hours moved and does not exceed stability_drop_cost_ratio times the task's importance-based drop cost. It applies only when the previous schedule placed the task, and not with schedule --no-stability."
     )
 
 
 class NewTaskData(TaskContentData):
-    """A movable task to add, placed by solve, with an optional supplied identifier."""
+    """A movable task to add with an optional supplied identifier."""
 
     id: TaskIdField | None = Field(
         default=None,
@@ -357,7 +357,7 @@ class FixedTaskContentData(DataModel):
         description="Length as an ISO 8601 duration, such as PT1H30M. Must not be negative; it need not be a multiple of the calendar slot."
     )
     participant_ids: tuple[PersonIdField, ...] = Field(
-        description="Existing people whose time it occupies. Every slot the task touches is unavailable to them in available_starts and solve."
+        description="Existing people whose time it occupies. Every slot the task touches is unavailable to them in available_starts and schedule."
     )
 
 
@@ -413,7 +413,7 @@ class TimeBoundConditionData(DataModel):
         description="at_or_before is an inclusive latest time; at_or_after is an inclusive earliest time; at is exact equality. Soft violations are hours late, early, or away from the target, respectively."
     )
     at: AwareDatetime = Field(
-        description="Target date and time, such as 2026-10-19T17:00:00+09:00; include the calendar offset. Compared without rounding; hard at is infeasible for a required movable task if the target is between slot boundaries."
+        description="Target date and time, such as 2026-10-19T17:00:00+09:00; include the calendar offset. Compared without rounding; a hard exact time between slot boundaries gives a required movable task no feasible schedule."
     )
 
 
@@ -498,7 +498,7 @@ class HardRequirementData(DataModel):
 
 
 class SoftRequirementData(DataModel):
-    """A preference whose weighted violation adds to the solve cost."""
+    """A preference whose weighted violation adds to the schedule cost."""
 
     kind: Literal["soft"] = Field(
         description="soft permits violations and penalizes them alongside other preferences, dropping optional tasks, and moving previous placements. Unscheduled tasks have no condition violation."
@@ -701,7 +701,7 @@ class AgendaQueryData(DataModel):
     """Read one person's working time, items, and free time for each date."""
 
     kind: Literal["agenda"] = Field(
-        description="Returns person_id, has_previous, and days in date order, including dates without working time. Each day has date, working intervals with overlapping or adjacent intervals merged, items, and free intervals. items are the person's fixed tasks (type fixed) and tasks placed for the person in the last saved solution (type scheduled), in start order, each with task_id, name, start, end, and participant_ids. Scheduled items keep the names, times, and participants recorded at solve time, so they may differ from current tasks. An item crossing midnight appears on both dates. free is working time minus items, using real times without slot rounding; it ignores movable tasks not in the saved solution and constraints.",
+        description="Returns person_id, has_previous, and days in date order, including dates without working time. Each day has date, working intervals with overlapping or adjacent intervals merged, items, and free intervals. items are the person's fixed tasks (type fixed) and tasks placed for the person in the last saved solution (type scheduled), in start order, each with task_id, name, start, end, and participant_ids. Scheduled items keep the names, times, and participants recorded when scheduled, so they may differ from current tasks. An item crossing midnight appears on both dates. free is working time minus items, using real times without slot rounding; it ignores movable tasks not in the saved solution and constraints.",
     )
     person_id: PersonIdField = Field(
         description="Existing person identifier; an unknown identifier is rejected."
@@ -777,7 +777,7 @@ class PreviousScheduleQueryData(DataModel):
     """Read entries of the last saved solution."""
 
     kind: Literal["previous_schedule"] = Field(
-        description="previous_schedule returns has_previous and entries with status scheduled, task_id, name, start, and end, or status dropped, task_id, and name. Scheduled entries come first in start order. Names and ends are recorded at solve time and may predate current changes. With no saved solution, has_previous is false and items are empty."
+        description="previous_schedule returns has_previous and entries with status scheduled, task_id, name, start, and end, or status dropped, task_id, and name. Scheduled entries come first in start order. Names and ends are recorded when scheduled and may predate current changes. With no saved solution, has_previous is false and items are empty."
     )
     filter: PreviousScheduleFilterData = Field(
         default_factory=PreviousScheduleFilterData,
@@ -792,7 +792,7 @@ class AvailableStartsQueryData(DataModel):
     """Find start times when every participant is free."""
 
     kind: Literal["available_starts"] = Field(
-        description="available_starts returns start times on slot boundaries, in time order, where every participant is available and free of fixed tasks for the whole duration. Movable tasks, their previous placements, and constraints are not considered; solve makes the final decision. Candidates may overlap each other."
+        description="available_starts returns start times on slot boundaries, in time order, where every participant is available and free of fixed tasks for the whole duration. Movable tasks, their previous placements, and constraints are not considered; schedule makes the final decision. Candidates may overlap each other."
     )
     participant_ids: tuple[PersonIdField, ...] = Field(
         description="Existing people who must all be free. An empty array checks only the horizon and windows."
@@ -979,7 +979,7 @@ def _window_warning(task: Task, relation: TimeRelation, constraint: Constraint) 
     consequence: str = (
         "this soft constraint is violated whenever the task is scheduled."
         if isinstance(constraint, SoftConstraint)
-        else "this hard constraint makes solve infeasible because the task is required."
+        else "this hard constraint makes scheduling infeasible because the task is required."
         if task.required
         else "this hard constraint keeps the task unscheduled."
     )
@@ -1194,7 +1194,7 @@ def answer_record(answer: Answer) -> dict[str, object]:
             record.update(
                 kind="available_starts",
                 items=[start.isoformat() for start in answer.items],
-                note="Movable Tasks and constraints are not considered; use solve for the final schedule.",
+                note="Movable Tasks and constraints are not considered; use schedule for the final schedule.",
             )
     return {"kind": record["kind"], **record}
 

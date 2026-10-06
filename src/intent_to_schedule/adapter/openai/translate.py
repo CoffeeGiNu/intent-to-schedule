@@ -26,7 +26,7 @@ from intent_to_schedule.application.translate import (
     ApplyStep,
     MessageStep,
     QueryStep,
-    SolveStep,
+    ScheduleStep,
     Speaker,
     Step,
     StepRecord,
@@ -49,10 +49,10 @@ class ApplyOutput(DataModel):
     commands: tuple[CommandData, ...]
 
 
-class SolveOutput(DataModel):
-    """Structured output for a solve step."""
+class ScheduleOutput(DataModel):
+    """Structured output for a schedule step."""
 
-    kind: Literal["solve"]
+    kind: Literal["schedule"]
     stability: bool
 
 
@@ -66,7 +66,7 @@ class MessageOutput(DataModel):
 class StepOutput(DataModel):
     """Root of the structured output for a translation step."""
 
-    result: QueryOutput | ApplyOutput | SolveOutput | MessageOutput
+    result: QueryOutput | ApplyOutput | ScheduleOutput | MessageOutput
 
 
 def convert_step_output(output: StepOutput) -> Step:
@@ -80,25 +80,25 @@ def convert_step_output(output: StepOutput) -> Step:
             return QueryStep(convert_query(query))
         case ApplyOutput(commands=commands):
             return ApplyStep(tuple(convert_command(command) for command in commands))
-        case SolveOutput(stability=stability):
-            return SolveStep(stability)
+        case ScheduleOutput(stability=stability):
+            return ScheduleStep(stability)
         case MessageOutput(text=text):
             return MessageStep(text)
 
 
 _STEP_PROMPT: str = (
-    "Choose one next step for the latest user utterance: query, apply, solve, or message. "
+    "Choose one next step for the latest user utterance: query, apply, schedule, or message. "
     "Context contains the current time, a summary of the working problem, and results of earlier steps in this turn. "
     "Use query to discover details and identifiers; use apply to add, replace, or remove tasks and constraints. "
-    "After applying all requested changes, use solve to schedule and end the turn. "
+    "After applying all requested changes, use schedule to create the schedule and end the turn. "
     "Use message to answer a question or ask for clarification and end the turn. "
-    "Changes are saved only when solve is reached; message discards edits made during this turn. "
+    "Changes are saved only when schedule is reached; message discards edits made during this turn. "
     "Use only person, task, and constraint identifiers returned by queries or successful apply results; never invent identifiers. "
     "Query people to resolve names, then tasks to resolve movable or fixed events by name, date, and participants. "
     "Use select one when exactly one match is needed; narrow ambiguous matches or ask the user instead of guessing. "
     "Query constraints before changing them and previous_schedule for previous task placements. "
     "previous_schedule is the last obtained solution and may differ from the current problem. "
-    "available_starts gives free candidates without movable tasks or constraints; solve makes the final decision. "
+    "available_starts gives free candidates without movable tasks or constraints; schedule makes the final decision. "
     "After adding a task, read its generated identifier from the executed result before referencing it in another apply. "
     "Rejected steps leave the working problem unchanged; use their explanations to correct the next step or ask the user. "
     "A task with start is fixed; without start it is movable. "
@@ -111,7 +111,7 @@ _STEP_PROMPT: str = (
     "Importance low, medium, or high means how much it matters to do the Task at all. "
     "Required means the Task must be scheduled, including expressions such as 'must' or 'definitely'; this does not make its placement preferences hard. "
     "Stability means how strongly to keep the Task at its previous time. "
-    'Set solve stability false only for a clear request to rebuild the whole schedule, such as "redo everything" or "start over"; true for partial changes and additions. '
+    'Set schedule stability false only for a clear request to rebuild the whole schedule, such as "redo everything" or "start over"; true for partial changes and additions. '
     "If it is unclear whether existing placements should be rebuilt, use message to ask whether rearranging the whole schedule is acceptable. "
     "Use add_constraint with a constraint containing requirement and condition, plus an optional id and label. "
     "The response returns constraint_id; label describes the request and has no scheduling effect. "

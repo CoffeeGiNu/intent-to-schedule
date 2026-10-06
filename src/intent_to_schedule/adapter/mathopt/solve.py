@@ -3,11 +3,19 @@ from datetime import datetime, timedelta
 from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
+from intent_to_schedule.application.objective import (
+    ScheduleSummary,
+    summarize_schedule,
+)
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.application.solve import (
     ConflictsNotFound,
-    Infeasible,
+    FeasibleSolution,
+    NoFeasibleSolution,
+    OptimalSolution,
     SchedulingSolver,
+    Solution,
+    SolutionNotFound,
     find_conflicts,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -32,26 +40,35 @@ class MathOptSchedulingSolver(SchedulingSolver):
         policy: ObjectivePolicy,
         previous: Schedule | None,
         stability: bool,
-    ) -> Schedule | Infeasible:
-        """Solve a SchedulingProblem, explaining infeasibility with a relaxed solve."""
+    ) -> Solution:
+        """Solve a problem and explain proven infeasibility with a relaxed solve."""
         termination: mathopt.Termination
         schedule: Schedule | None
-        termination, schedule = self._schedule(
+        termination, schedule = self._solve(
             problem, policy, previous, stability, False
         )
         if schedule is not None:
-            return schedule
+            summary: ScheduleSummary = summarize_schedule(
+                problem, schedule, policy, previous, stability
+            )
+            if termination.reason is mathopt.TerminationReason.OPTIMAL:
+                return OptimalSolution(schedule, summary)
+            return FeasibleSolution(schedule, summary)
+        if termination.reason is mathopt.TerminationReason.NO_SOLUTION_FOUND:
+            return SolutionNotFound(_termination_reason(termination))
         if termination.reason is not mathopt.TerminationReason.INFEASIBLE:
             raise RuntimeError(f"MathOpt solve failed: {termination.reason}")
         relaxed: Schedule | None
-        termination, relaxed = self._schedule(
+        termination, relaxed = self._solve(
             problem, policy, previous, stability, True
         )
         if relaxed is None:
-            return Infeasible(ConflictsNotFound(_termination_reason(termination)))
-        return Infeasible(find_conflicts(problem, relaxed, policy))
+            return NoFeasibleSolution(
+                ConflictsNotFound(_termination_reason(termination))
+            )
+        return NoFeasibleSolution(find_conflicts(problem, relaxed, policy))
 
-    def _schedule(
+    def _solve(
         self,
         problem: SchedulingProblem,
         policy: ObjectivePolicy,

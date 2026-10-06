@@ -6,22 +6,16 @@ from intent_to_schedule.application.command import (
     SchedulingCommand,
     execute_commands,
 )
-from intent_to_schedule.application.objective import summarize_schedule
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import AnswerResult, SchedulingQuery
-from intent_to_schedule.application.solve import (
-    Infeasible,
-    SchedulingSolver,
-    Solved,
-    SolveResult,
-)
+from intent_to_schedule.application.solve import SchedulingSolver, Solution
 from intent_to_schedule.domain.consistency import Validator, Violations
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
 
 
 class Scheduling:
-    """Use case that applies commands and solves a SchedulingProblem."""
+    """Use case that applies commands and schedules a SchedulingProblem."""
 
     def __init__(
         self,
@@ -54,16 +48,10 @@ class Scheduling:
             return Rejected(violations)
         return result
 
-    def solve(
+    def schedule(
         self, problem: SchedulingProblem, previous: Schedule | None, stability: bool
-    ) -> SolveResult:
-        """Solve a problem, keeping Tasks near their previous start with stability."""
-        result: Schedule | Infeasible = self._solver.solve(
+    ) -> Solution:
+        """Schedule a problem with the service objective policy."""
+        return self._solver.solve(
             problem, self._policy, previous, stability
-        )
-        if isinstance(result, Infeasible):
-            return result
-        return Solved(
-            result,
-            summarize_schedule(problem, result, self._policy, previous, stability),
         )
