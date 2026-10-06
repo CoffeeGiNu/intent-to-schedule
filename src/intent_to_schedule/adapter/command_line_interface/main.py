@@ -62,13 +62,8 @@ from intent_to_schedule.application.solve import (
 )
 from intent_to_schedule.application.translate import MessageStep
 from intent_to_schedule.domain.consistency import (
-    AlignedToSlots,
-    AllOf,
-    AvailabilityForEveryone,
+    DEFAULT_VALIDATOR,
     ConsistencyError,
-    ReferencesExist,
-    NonemptyTimeWindows,
-    UniqueIds,
     Validator,
     Violations,
 )
@@ -378,13 +373,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             emit(load_state(path).model_dump(mode="json"))
             return 0
-        validator: AllOf = AllOf(
-            UniqueIds(),
-            ReferencesExist(),
-            AvailabilityForEveryone(),
-            AlignedToSlots(),
-            NonemptyTimeWindows(),
-        )
+        validator: Validator = DEFAULT_VALIDATOR
         state_store: LocalStateStore = LocalStateStore(path)
         dialogue_store: LocalDialogueStore = LocalDialogueStore(path)
         service: Scheduling = scheduling(validator, state_store)

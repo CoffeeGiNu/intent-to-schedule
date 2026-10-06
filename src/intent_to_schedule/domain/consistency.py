@@ -215,3 +215,13 @@ class NonemptyTimeWindows:
             )
             violations.append(Violation(message))
         return Violations(tuple(violations))
+
+
+DEFAULT_VALIDATOR: Validator = AllOf(
+    UniqueIds(),
+    ReferencesExist(),
+    AvailabilityForEveryone(),
+    AlignedToSlots(),
+    NonemptyTimeWindows(),
+)
+"""Consistency every stored scheduling problem must keep."""
