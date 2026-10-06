@@ -20,7 +20,7 @@ class Solved:
     """Result with a schedule and its objective summary."""
 
     schedule: Schedule
-    summary: ScheduleSummary | None = None
+    summary: ScheduleSummary
 
 
 class DropReason(Enum):
@@ -81,7 +81,7 @@ class SchedulingSolver(Protocol):
 
     def solve(
         self, problem: SchedulingProblem, previous: Schedule | None
-    ) -> SolveResult: ...
+    ) -> Schedule | Infeasible: ...
 
 
 def find_conflicts(

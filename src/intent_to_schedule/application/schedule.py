@@ -9,7 +9,12 @@ from intent_to_schedule.application.command import (
 from intent_to_schedule.application.objective import summarize_schedule
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import AnswerResult, SchedulingQuery
-from intent_to_schedule.application.solve import SchedulingSolver, Solved, SolveResult
+from intent_to_schedule.application.solve import (
+    Infeasible,
+    SchedulingSolver,
+    Solved,
+    SolveResult,
+)
 from intent_to_schedule.domain.consistency import Validator, Violations
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule
@@ -53,10 +58,9 @@ class Scheduling:
         self, problem: SchedulingProblem, previous: Schedule | None
     ) -> SolveResult:
         """Solve a problem, keeping Tasks near their previous start."""
-        result: SolveResult = self._solver.solve(problem, previous)
-        if isinstance(result, Solved) and result.summary is None:
-            return Solved(
-                result.schedule,
-                summarize_schedule(problem, result.schedule, self._policy, previous),
-            )
-        return result
+        result: Schedule | Infeasible = self._solver.solve(problem, previous)
+        if isinstance(result, Infeasible):
+            return result
+        return Solved(
+            result, summarize_schedule(problem, result, self._policy, previous)
+        )

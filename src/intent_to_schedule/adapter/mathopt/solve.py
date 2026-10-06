@@ -3,14 +3,11 @@ from datetime import datetime, timedelta
 from ortools.math_opt.python import mathopt
 
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
-from intent_to_schedule.application.objective import summarize_schedule
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.application.solve import (
     ConflictsNotFound,
     Infeasible,
     SchedulingSolver,
-    Solved,
-    SolveResult,
     find_conflicts,
 )
 from intent_to_schedule.domain.problem import SchedulingProblem
@@ -33,15 +30,13 @@ class MathOptSchedulingSolver(SchedulingSolver):
 
     def solve(
         self, problem: SchedulingProblem, previous: Schedule | None = None
-    ) -> SolveResult:
+    ) -> Schedule | Infeasible:
         """Solve a SchedulingProblem, explaining infeasibility with a relaxed solve."""
         termination: mathopt.Termination
         schedule: Schedule | None
         termination, schedule = self._schedule(problem, previous, False)
         if schedule is not None:
-            return Solved(
-                schedule, summarize_schedule(problem, schedule, self.policy, previous)
-            )
+            return schedule
         if termination.reason is not mathopt.TerminationReason.INFEASIBLE:
             raise RuntimeError(f"MathOpt solve failed: {termination.reason}")
         relaxed: Schedule | None
