@@ -27,7 +27,12 @@ from intent_to_schedule.application.command import (
     ReplaceTask,
     SchedulingCommand,
 )
-from intent_to_schedule.application.objective import ConstraintEvaluation, ScheduleSummary
+from intent_to_schedule.application.objective import (
+    ConstraintEvaluation,
+    HardConstraintEvaluation,
+    ScheduleSummary,
+    SoftConstraintEvaluation,
+)
 from intent_to_schedule.application.query import (
     AgendaAnswer,
     AgendaDay,
@@ -997,10 +1002,14 @@ def _violation_record(amount: float, unit: ViolationUnit) -> dict[str, object]:
 def _violation_part_record(
     part: ViolationPart, item: ConstraintEvaluation
 ) -> dict[str, object]:
-    """Describe a task or date's violation and cost."""
+    """Describe a task or date's violation and, for a soft constraint, its cost."""
     record: dict[str, object] = {
         "violation": _violation_record(part.amount, item.violation.unit),
-        "cost": part.amount * item.coefficient if item.coefficient is not None else None,
+        **(
+            {"cost": part.amount * item.coefficient}
+            if isinstance(item, SoftConstraintEvaluation)
+            else {}
+        ),
     }
     match part:
         case TaskViolationPart():
@@ -1012,17 +1021,21 @@ def _violation_part_record(
 def _evaluation_record(item: ConstraintEvaluation) -> dict[str, object]:
     """Describe a constraint evaluation with its breakdown."""
     constraint: Constraint = item.constraint
-    requirement: dict[str, str] = (
-        {"kind": "soft", "strength": constraint.strength.value}
-        if isinstance(constraint, SoftConstraint)
-        else {"kind": "hard"}
-    )
+    requirement: dict[str, str]
+    cost: dict[str, float]
+    match item:
+        case HardConstraintEvaluation():
+            requirement = {"kind": "hard"}
+            cost = {}
+        case SoftConstraintEvaluation():
+            requirement = {"kind": "soft", "strength": item.constraint.strength.value}
+            cost = {"cost": item.cost}
     return {
         "constraint_id": constraint.id.value,
         "label": constraint.label,
         "requirement": requirement,
         "violation": _violation_record(item.violation.amount, item.violation.unit),
-        "cost": item.cost,
+        **cost,
         "breakdown": [
             _violation_part_record(part, item) for part in item.violation.breakdown
         ],

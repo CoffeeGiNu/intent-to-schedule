@@ -6,7 +6,11 @@ from datetime import datetime, timedelta
 from intent_to_schedule.application.policy import ObjectivePolicy
 from intent_to_schedule.domain.calendar import TimeGrid, TimeInterval
 from intent_to_schedule.domain.condition import DailyLimitCondition
-from intent_to_schedule.domain.constraint import Constraint, SoftConstraint
+from intent_to_schedule.domain.constraint import (
+    Constraint,
+    HardConstraint,
+    SoftConstraint,
+)
 from intent_to_schedule.domain.measure import AggregateQuantity
 from intent_to_schedule.domain.problem import SchedulingProblem
 from intent_to_schedule.domain.schedule import Schedule, ScheduledTask
@@ -15,13 +19,29 @@ from intent_to_schedule.domain.violation import CriterionViolation, measure_crit
 
 
 @dataclass(frozen=True)
-class ConstraintEvaluation:
-    """A constraint's measured violation and policy cost."""
+class HardConstraintEvaluation:
+    """A hard constraint's measured violation."""
 
-    constraint: Constraint
+    constraint: HardConstraint
     violation: CriterionViolation
-    cost: float | None
-    coefficient: float | None
+
+
+@dataclass(frozen=True)
+class SoftConstraintEvaluation:
+    """A soft constraint's measured violation and policy cost."""
+
+    constraint: SoftConstraint
+    violation: CriterionViolation
+    coefficient: float
+
+    @property
+    def cost(self) -> float:
+        """Policy cost of the violation."""
+        return self.coefficient * self.violation.amount
+
+
+type ConstraintEvaluation = HardConstraintEvaluation | SoftConstraintEvaluation
+"""Hard or soft constraint evaluation."""
 
 
 @dataclass(frozen=True)
@@ -73,21 +93,18 @@ def evaluate_constraints(
             violations[0].unit,
             tuple(part for item in violations for part in item.breakdown),
         )
-        coefficient: float | None = None
-        if isinstance(constraint, SoftConstraint):
-            scale: float = (
-                policy.per_count
-                if isinstance(constraint.condition, DailyLimitCondition)
-                and constraint.condition.quantity is AggregateQuantity.COUNT
-                else 1.0
-            )
-            coefficient = policy.weight(constraint.strength) * scale
+        if isinstance(constraint, HardConstraint):
+            evaluations.append(HardConstraintEvaluation(constraint, violation))
+            continue
+        scale: float = (
+            policy.per_count
+            if isinstance(constraint.condition, DailyLimitCondition)
+            and constraint.condition.quantity is AggregateQuantity.COUNT
+            else 1.0
+        )
         evaluations.append(
-            ConstraintEvaluation(
-                constraint,
-                violation,
-                coefficient * violation.amount if coefficient is not None else None,
-                coefficient,
+            SoftConstraintEvaluation(
+                constraint, violation, policy.weight(constraint.strength) * scale
             )
         )
     return tuple(evaluations)
@@ -123,12 +140,17 @@ def summarize_schedule(
             policy.drop_cost(tasks[item.task_id].importance)
             for item in schedule.dropped
         ),
-        sum(item.cost for item in evaluations if item.cost is not None),
+        sum(
+            item.cost
+            for item in evaluations
+            if isinstance(item, SoftConstraintEvaluation)
+        ),
         stability_cost,
         len(schedule.scheduled),
         len(schedule.dropped),
         sum(
-            item.cost is not None and item.violation.amount > 0 for item in evaluations
+            isinstance(item, SoftConstraintEvaluation) and item.violation.amount > 0
+            for item in evaluations
         ),
         moved_tasks,
     )

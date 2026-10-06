@@ -3,7 +3,12 @@ from datetime import date, datetime, time, timedelta
 from enum import Enum
 
 from intent_to_schedule.application.command import Rejected
-from intent_to_schedule.application.objective import ConstraintEvaluation, evaluate_constraints
+from intent_to_schedule.application.objective import (
+    ConstraintEvaluation,
+    HardConstraintEvaluation,
+    SoftConstraintEvaluation,
+    evaluate_constraints,
+)
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.domain.time_windows import (
     DateRange,
@@ -357,11 +362,16 @@ class EvaluationQuery:
                 ),
                 key=lambda item: (
                     0
-                    if item.cost is None and item.violation.amount > 0
+                    if isinstance(item, HardConstraintEvaluation)
+                    and item.violation.amount > 0
                     else 1
-                    if item.cost is not None
+                    if isinstance(item, SoftConstraintEvaluation)
                     else 2,
-                    -(item.cost if item.cost is not None else item.violation.amount),
+                    -(
+                        item.cost
+                        if isinstance(item, SoftConstraintEvaluation)
+                        else item.violation.amount
+                    ),
                     item.constraint.id.value,
                 ),
             )
