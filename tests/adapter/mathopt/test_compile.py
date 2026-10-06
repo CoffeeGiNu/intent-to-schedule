@@ -10,6 +10,7 @@ from ortools.math_opt.python import mathopt
 from intent_to_schedule.adapter.mathopt.compile import CompiledProblem, compile_problem
 from intent_to_schedule.application.objective import (
     ConstraintEvaluation,
+    SoftConstraintEvaluation,
     evaluate_constraints,
 )
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
@@ -53,6 +54,7 @@ from intent_to_schedule.domain.time_windows import (
     TimeWindow,
     WholeHorizon,
 )
+from intent_to_schedule.domain.violation import DateViolationPart, ViolationPart
 
 START: datetime = datetime(2026, 10, 1, 9, tzinfo=timezone(timedelta(hours=9)))
 SLOT: timedelta = timedelta(minutes=30)
@@ -202,11 +204,21 @@ def assert_costs(value: SchedulingProblem, expected: float) -> Schedule:
     )
     assert len(evaluations) == 1
     evaluation: ConstraintEvaluation = evaluations[0]
+    assert isinstance(evaluation, SoftConstraintEvaluation)
     assert evaluation.violation.amount == pytest.approx(expected)
-    assert evaluation.coefficient is not None
     assert evaluation.cost == pytest.approx(expected * evaluation.coefficient)
     assert result.objective_value() == pytest.approx(evaluation.cost)
     return schedule
+
+
+def breakdown_dates(evaluation: ConstraintEvaluation) -> tuple[date, ...]:
+    """Read the dates of a daily violation breakdown."""
+    dates: list[date] = []
+    part: ViolationPart
+    for part in evaluation.violation.breakdown:
+        assert isinstance(part, DateViolationPart)
+        dates.append(part.calendar_date)
+    return tuple(dates)
 
 
 def two_tasks() -> SchedulingProblem:
@@ -322,7 +334,7 @@ def test_fixed_daily_values_use_real_start_date_in_grid_offset(
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
-    assert tuple(part.calendar_date for part in evaluation.violation.breakdown) == (
+    assert breakdown_dates(evaluation) == (
         date(2026, 10, 1),
         date(2026, 10, 2),
     )
@@ -453,7 +465,7 @@ def test_fixed_daily_limit_covers_horizon_dates_without_slot_starts(
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
-    assert tuple(part.calendar_date for part in evaluation.violation.breakdown) == (
+    assert breakdown_dates(evaluation) == (
         date(2026, 10, 1),
         date(2026, 10, 2),
     )
@@ -529,7 +541,7 @@ def test_daily_breakdown_includes_dates_without_slot_starts(
     evaluation: ConstraintEvaluation = evaluate_constraints(
         value, schedule, DEFAULT_POLICY
     )[0]
-    assert tuple(part.calendar_date for part in evaluation.violation.breakdown) == (
+    assert breakdown_dates(evaluation) == (
         date(2026, 10, 1),
         date(2026, 10, 2),
         date(2026, 10, 3),

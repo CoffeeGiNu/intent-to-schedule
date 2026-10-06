@@ -1585,7 +1585,7 @@ def test_schedule_entries_survive_task_changes(
     status, output = invoke(capsys, "--state", str(path), "apply")
     assert status == 0
     status, output = invoke(capsys, "--state", str(path), "schedule")
-    expected: list[dict[str, str]] = [
+    expected: list[dict[str, str | list[str]]] = [
         {
             "status": "scheduled",
             "task_id": "review",

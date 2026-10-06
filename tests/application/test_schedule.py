@@ -9,7 +9,11 @@ from intent_to_schedule.application.command import (
     Rejected,
     RemoveTask,
 )
-from intent_to_schedule.application.objective import ScheduleSummary
+from intent_to_schedule.application.objective import (
+    ConstraintEvaluation,
+    ScheduleSummary,
+    SoftConstraintEvaluation,
+)
 from intent_to_schedule.application.policy import DEFAULT_POLICY, ObjectivePolicy
 from intent_to_schedule.application.query import (
     Answered,
@@ -233,8 +237,10 @@ def test_scheduling_evaluation_uses_its_objective_policy() -> None:
     result: AnswerResult = service.answer(query, value, previous)
     assert isinstance(result, Answered)
     assert isinstance(result.answer, EvaluationAnswer)
-    assert {item.constraint.id.value: item.cost for item in result.answer.items} == {
-        "bound": 7.0,
-        "count": 21.0,
-    }
+    costs: dict[str, float] = {}
+    evaluation: ConstraintEvaluation
+    for evaluation in result.answer.items:
+        assert isinstance(evaluation, SoftConstraintEvaluation)
+        costs[evaluation.constraint.id.value] = evaluation.cost
+    assert costs == {"bound": 7.0, "count": 21.0}
     assert result == query.answer(value, previous, policy)
