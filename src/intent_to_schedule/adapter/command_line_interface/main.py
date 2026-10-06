@@ -106,7 +106,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "Filters are violated_only (default false), constraint_ids, and task_ids, combined with and. "
         "Hard violations come first, then highest soft costs. Without a saved solution, has_previous is false and items are empty. "
         "objective_policy returns the current drop_costs, weights, per_count, stability_drop_cost_ratio, hard_violation_weight, and required_drop_cost. "
-        "agenda returns one person's working intervals, items, and free intervals for each date in an optional date_range, including dates without working time. "
+        "agenda returns one person's working intervals, items, and free intervals for each date in date_range, \"horizon\" by default or start and end dates, including dates without working time. "
         "Items are the person's fixed tasks and the tasks placed for the person in the last saved solution, with participants recorded at solve time; they may predate current changes. "
         "Listing limit defaults to 20, with a maximum of 100; total counts matches before limiting and truncated indicates omitted items. Exits 1 on rejection.",
     ),
